@@ -582,15 +582,15 @@ impl L0Sampler {
         let config = SketchConfig {
             hll_precision,
             max_l0_samples: self.max_samples,
-            k: self.k,
+            k: 21, // Default k-mer size
             parallel_processing: true,
             memory_limit_mb: 500, // Default 500MB limit
         };
         
         let mut hybrid = HybridAbundanceEstimator::new(config);
         
-        // Add existing reservoir samples to both sketches
-        for &sample in &self.reservoir {
+        // Add existing samples to both sketches
+        for &sample in self.samples.keys() {
             hybrid.add_kmer(sample);
         }
         

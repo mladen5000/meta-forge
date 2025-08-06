@@ -443,10 +443,10 @@ impl MetagenomicsDatabase {
             for example in examples {
                 // Compress features if enabled
                 let features_data = if self.config.enable_compression {
-                    let serialized = bincode::encode_to_vec(&example.features, bincode::config::standard())?;
+                    let serialized = bincode::serialize(&example.features)?;
                     compress(&serialized)
                 } else {
-                    bincode::encode_to_vec(&example.features, bincode::config::standard())?
+                    bincode::serialize(&example.features)?
                 };
                 
                 stmt.execute(params![
@@ -594,13 +594,11 @@ impl MetagenomicsDatabase {
             let features: Vec<f64> = if self.config.enable_compression {
                 let decompressed = decompress(&features_blob, feature_dim * 8) // f64 = 8 bytes
                     .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
-                let (decoded, _) = bincode::decode_from_slice(&decompressed, bincode::config::standard())
-                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
-                decoded
+                bincode::deserialize(&decompressed)
+                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?
             } else {
-                let (decoded, _) = bincode::decode_from_slice(&features_blob, bincode::config::standard())
-                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
-                decoded
+                bincode::deserialize(&features_blob)
+                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?
             };
             
             Ok(TrainingExample {

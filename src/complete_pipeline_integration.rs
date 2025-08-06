@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use anyhow::{Result, Context};
@@ -182,7 +183,7 @@ enum DatabaseOps {
     },
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum AnalysisMode {
     /// Fast analysis with basic features
     Fast,
@@ -496,7 +497,7 @@ impl MetagenomicsPipeline {
     /// Estimate abundance profiles
     async fn estimate_abundance(&self, reads: &[CorrectedRead]) -> Result<AbundanceProfile> {
         // Mock abundance estimation - would use actual HyperLogLog + L0 sampling
-        let mut abundant_kmers = ahash::AHashMap::new();
+        let mut abundant_kmers = std::collections::HashMap::new();
         
         for i in 0..100 {
             abundant_kmers.insert(i, fastrand::f64() * 100.0);
@@ -506,8 +507,6 @@ impl MetagenomicsPipeline {
             unique_kmers: abundant_kmers.len() as u64 * 10,
             abundant_kmers,
             total_kmers: reads.len() as u64 * 50, // Rough estimate
-            diversity_score: 0.75,
-            compression_ratio: 0.3,
         })
     }
     
@@ -528,14 +527,14 @@ impl MetagenomicsPipeline {
                 n50: assembly_results.assembly_stats.n50,
                 mean_coverage: assembly_results.assembly_stats.mean_coverage,
                 unique_species: classifications.iter().map(|c| &c.taxonomy_name).collect::<std::collections::HashSet<_>>().len(),
-                diversity_index: abundance_profile.diversity_score,
+                diversity_index: calculate_shannon_diversity(&abundance_profile.abundant_kmers),
             },
             quality_metrics: QualityMetrics {
                 assembly_completeness: 0.85,
                 classification_confidence: classifications.iter().map(|c| c.confidence).sum::<f64>() / classifications.len() as f64,
                 coverage_uniformity: 0.75,
             },
-            taxonomic_composition: classifications.clone(),
+            taxonomic_composition: classifications.to_vec(),
             abundance_data: abundance_profile.clone(),
             performance_metrics: PerformanceMetrics {
                 total_processing_time: std::time::Duration::from_secs(300), // Mock
@@ -1109,6 +1108,26 @@ meta-pipeline analyze *.fastq --threads 16 --memory 32 --mode accurate
 # Low-memory mode for limited resources
 meta-pipeline analyze sample.fastq --config low_memory_config.toml
 "#;
+
+/// Calculate Shannon diversity index from abundance data
+fn calculate_shannon_diversity(abundant_kmers: &std::collections::HashMap<u64, f64>) -> f64 {
+    if abundant_kmers.is_empty() {
+        return 0.0;
+    }
+    
+    let total: f64 = abundant_kmers.values().sum();
+    if total == 0.0 {
+        return 0.0;
+    }
+    
+    abundant_kmers.values()
+        .filter(|&&count| count > 0.0)
+        .map(|&count| {
+            let p = count / total;
+            -p * p.ln()
+        })
+        .sum()
+}
 
 pub fn print_usage_examples() {
     println!("{}", USAGE_EXAMPLES);
