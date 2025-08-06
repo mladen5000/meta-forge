@@ -1,12 +1,20 @@
 [package]
 name = "meta-forge"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["Mladen Rasic <youremail@example.com>"]
 description = "Metagenomic data analysis and LLM integration toolkit"
 license = "MIT"
 repository = "https://github.com/mladen5000/meta-forge"
 readme = "README.md"
+
+[[bin]]
+name = "meta-forge"
+path = "src/main.rs"
+
+[lib]
+name = "meta_forge"
+path = "src/lib.rs"
 
 [dependencies]
 

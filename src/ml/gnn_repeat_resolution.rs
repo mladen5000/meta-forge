@@ -1,4 +1,4 @@
-use crate::core_data_structures::{GraphEdge, GraphFragment};
+use crate::core::data_structures::{GraphEdge, GraphFragment};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

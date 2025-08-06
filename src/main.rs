@@ -1,18 +1,57 @@
-pub mod adaptive_k_assembly;
-pub mod assembly_graph_construction;
-pub mod complete_pipeline_integration;
-pub mod comprehensive_test_suite;
-pub mod configuration_management;
-pub mod core_data_structures;
-pub mod database_integration;
-pub mod feature_extraction;
-pub mod genomic_validator;
-pub mod gnn_repeat_resolution;
-pub mod integrated_pipeline;
-pub mod learned_bloom_filter;
-pub mod performance_profiler;
-pub mod streaming_abundance_estimator;
+use anyhow::Result;
+use clap::Parser;
+use meta_forge::pipeline::complete_integration::{Cli, Commands, MetagenomicsPipeline};
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Initialize logging
+    let log_level = if cli.verbose { "debug" } else { "info" };
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
+        .init();
+
+    match cli.command {
+        Commands::Analyze {
+            input,
+            sample_name,
+            database: _database,
+            mode,
+        } => {
+            let sample_name = sample_name.unwrap_or_else(|| {
+                input[0]
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("sample")
+                    .to_string()
+            });
+
+            let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
+
+            // Note: CLI parameter overrides would need to be implemented
+            // in the pipeline configuration system
+
+            let results = pipeline.run_analysis(&input, &sample_name, mode).await?;
+
+            println!("✅ Analysis completed successfully!");
+            println!("📊 Results:");
+            println!("   Sample: {}", results.sample_name);
+            println!("   Contigs: {}", results.assembly_results.contigs.len());
+            println!(
+                "   Total length: {} bp",
+                results.assembly_results.assembly_stats.total_length
+            );
+            println!("   N50: {} bp", results.assembly_results.assembly_stats.n50);
+            println!(
+                "   Processing time: {:.2} seconds",
+                results.processing_time.as_secs_f64()
+            );
+        }
+        _ => {
+            println!("Command not yet implemented in simplified main.rs");
+        }
+    }
+
+    Ok(())
 }

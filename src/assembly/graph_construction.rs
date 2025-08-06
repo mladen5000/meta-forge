@@ -40,7 +40,7 @@ use petgraph::{Directed, Graph, graph::NodeIndex};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::core_data_structures::*;
+use crate::core::data_structures::*;
 
 /* ------------------------------------------------------------------------- */
 /*                           ASSEMBLY GRAPH BUILDER                          */
@@ -782,7 +782,7 @@ impl AssemblyGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core_data_structures::*;
+    use crate::core::data_structures::*;
 
     #[test]
     fn builder_smoke_test() {

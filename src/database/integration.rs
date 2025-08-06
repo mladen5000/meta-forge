@@ -8,8 +8,8 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use crate::core_data_structures::*;
-use crate::assembly_graph_construction::{AssemblyStats, Contig};
+use crate::core::data_structures::*;
+use crate::assembly::graph_construction::{AssemblyStats, Contig};
 
 /// Comprehensive database management for metagenomics pipeline
 pub struct MetagenomicsDatabase {

@@ -1,19 +1,19 @@
 use anyhow::Result;
 use criterion::BenchmarkId;
 #[cfg(feature = "bench")]
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
 use tempfile::tempdir;
+use tempfile::NamedTempFile;
 
-use crate::assembly_graph_construction::AssemblyGraphBuilder;
-use crate::core_data_structures::*;
-use crate::database_integration::*;
-use crate::feature_extraction::AdvancedFeatureExtractor;
-use crate::feature_extraction::FeatureConfig;
-use crate::feature_extraction::PatternRecognizers;
+use meta_forge::assembly::graph_construction::AssemblyGraphBuilder;
+use meta_forge::core::data_structures::*;
+use meta_forge::database::integration::*;
+use meta_forge::features::extraction::{
+    AdvancedFeatureExtractor, FeatureConfig, PatternRecognizers,
+};
 
 /// Comprehensive test suite for the enhanced metagenomics pipeline
 /// Tests functionality, performance, correctness, and edge cases
@@ -696,7 +696,7 @@ mod property_tests {
 #[cfg(test)]
 mod benchmarks {
     use super::*;
-    use criterion::{Criterion, black_box};
+    use criterion::{black_box, Criterion};
 
     pub fn benchmark_kmer_extraction(c: &mut Criterion) {
         let extractor = MinimizerExtractor::new(15, 21);

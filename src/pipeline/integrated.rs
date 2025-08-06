@@ -20,7 +20,7 @@ use petgraph::{Directed, Graph};
 use petgraph::graph::NodeIndex; // Graph algorithms
 
 // Core data structures
-use crate::core_data_structures::{GraphFragment, GraphNode, GraphEdge};
+use crate::core::data_structures::{GraphFragment, GraphNode, GraphEdge};
 
 // Performance & Utilities
 use ahash::AHashMap; // Faster hashing
@@ -490,7 +490,7 @@ impl AdaptiveAssembler {
                 nodes: AHashMap::new(),
                 edges: Vec::new(),
                 fragment_id: 0,
-                coverage_stats: crate::core_data_structures::CoverageStats::default(),
+                coverage_stats: crate::core::data_structures::CoverageStats::default(),
             },
         };
         

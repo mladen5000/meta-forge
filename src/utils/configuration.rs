@@ -316,7 +316,7 @@ impl ConfigurationManager {
         // Start with default configuration
         config_builder = config_builder.add_source(
             config::File::from_str(
-                include_str!("../config/default.toml"),
+                include_str!("../../config/default.toml"),
                 FileFormat::Toml
             )
         );
