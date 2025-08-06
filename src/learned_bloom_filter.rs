@@ -266,7 +266,7 @@ impl LearnedBloomFilter {
         };
 
         let serialized =
-            bincode::serialize(&model_data).map_err(|e| anyhow!("Serialization failed: {}", e))?;
+            bincode::encode_to_vec(&model_data, bincode::config::standard()).map_err(|e| anyhow!("Serialization failed: {}", e))?;
 
         println!(
             "Model exported, size: {} bytes ({:.2} MB)",

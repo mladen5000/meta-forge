@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 use crate::core_data_structures::*;
 use crate::feature_extraction::*;
+use crate::assembly_graph_construction::{AssemblyStats, Contig};
+use crate::integrated_pipeline::AssemblyStats as IntegratedAssemblyStats;
 
 /// Comprehensive database management for metagenomics pipeline
 pub struct MetagenomicsDatabase {
@@ -432,28 +434,30 @@ impl MetagenomicsDatabase {
         let conn = self.connection.write();
         let tx = conn.unchecked_transaction()?;
         
-        let mut stmt = tx.prepare(
-            "INSERT INTO sequence_features (sequence_id, features, feature_dim, feature_version, taxonomy_id) 
-             VALUES (?1, ?2, ?3, ?4, ?5)"
-        )?;
-        
-        for example in examples {
-            // Compress features if enabled
-            let features_data = if self.config.enable_compression {
-                let serialized = bincode::serialize(&example.features)?;
-                compress(&serialized)
-            } else {
-                bincode::serialize(&example.features)?
-            };
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO sequence_features (sequence_id, features, feature_dim, feature_version, taxonomy_id) 
+                 VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
             
-            stmt.execute(params![
-                example.sequence_id,
-                features_data,
-                example.features.len(),
-                example.feature_version,
-                example.taxonomy_id,
-            ])?;
-        }
+            for example in examples {
+                // Compress features if enabled
+                let features_data = if self.config.enable_compression {
+                    let serialized = bincode::encode_to_vec(&example.features, bincode::config::standard())?;
+                    compress(&serialized)
+                } else {
+                    bincode::encode_to_vec(&example.features, bincode::config::standard())?
+                };
+                
+                stmt.execute(params![
+                    example.sequence_id,
+                    features_data,
+                    example.features.len(),
+                    example.feature_version,
+                    example.taxonomy_id,
+                ])?;
+            }
+        } // stmt is dropped here
         
         tx.commit()?;
         println!("✅ Inserted {} training examples", examples.len());
@@ -508,24 +512,26 @@ impl MetagenomicsDatabase {
         let conn = self.connection.write();
         let tx = conn.unchecked_transaction()?;
         
-        let mut stmt = tx.prepare(
-            "INSERT INTO contigs (assembly_id, contig_name, sequence, length, coverage, gc_content) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-        )?;
-        
-        for contig in contigs {
-            let contig_name = format!("contig_{}", contig.id);
-            let gc_content = calculate_gc_content(&contig.sequence);
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO contigs (assembly_id, contig_name, sequence, length, coverage, gc_content) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            )?;
             
-            stmt.execute(params![
-                assembly_id,
-                contig_name,
-                contig.sequence,
-                contig.length,
-                contig.coverage,
-                gc_content,
-            ])?;
-        }
+            for contig in contigs {
+                let contig_name = format!("contig_{}", contig.id);
+                let gc_content = calculate_gc_content(&contig.sequence);
+                
+                stmt.execute(params![
+                    assembly_id,
+                    contig_name,
+                    contig.sequence,
+                    contig.length,
+                    contig.coverage,
+                    gc_content,
+                ])?;
+            }
+        } // stmt is dropped here
         
         tx.commit()?;
         println!("✅ Stored {} contigs for assembly {}", contigs.len(), assembly_id);
@@ -588,11 +594,13 @@ impl MetagenomicsDatabase {
             let features: Vec<f64> = if self.config.enable_compression {
                 let decompressed = decompress(&features_blob, feature_dim * 8) // f64 = 8 bytes
                     .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
-                bincode::deserialize(&decompressed)
-                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?
+                let (decoded, _) = bincode::decode_from_slice(&decompressed, bincode::config::standard())
+                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
+                decoded
             } else {
-                bincode::deserialize(&features_blob)
-                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?
+                let (decoded, _) = bincode::decode_from_slice(&features_blob, bincode::config::standard())
+                    .map_err(|e| rusqlite::Error::InvalidColumnType(1, "features".to_string(), rusqlite::types::Type::Blob))?;
+                decoded
             };
             
             Ok(TrainingExample {
@@ -745,13 +753,13 @@ impl MetagenomicsDatabase {
         };
         
         // Insert k-mers
-        {
+        let kmer_count = {
             let mut kmer_stmt = tx.prepare(
                 "INSERT INTO kmer_index (kmer_hash, kmer_sequence, k_size, sequence_id, position) 
                  VALUES (?1, ?2, ?3, ?4, ?5)"
             )?;
             
-            let mut kmer_count = 0;
+            let mut count = 0;
             for (sequence_id, sequence) in sequences {
                 for (pos, window) in sequence.as_bytes().windows(k_size).enumerate() {
                     if let Ok(kmer) = std::str::from_utf8(window) {
@@ -765,15 +773,16 @@ impl MetagenomicsDatabase {
                             pos,
                         ])?;
                         
-                        kmer_count += 1;
+                        count += 1;
                         
-                        if kmer_count % 10000 == 0 {
-                            println!("  Processed {} k-mers", kmer_count);
+                        if count % 10000 == 0 {
+                            println!("  Processed {} k-mers", count);
                         }
                     }
                 }
             }
-        } // kmer_stmt is dropped here
+            count
+        }; // kmer_stmt is dropped here, return count
         
         tx.commit()?;
         println!("✅ Built k-mer index with {} k-mers", kmer_count);

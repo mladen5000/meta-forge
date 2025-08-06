@@ -24,6 +24,9 @@ use petgraph::algo::{connected_components, tarjan_scc};
 use petgraph::{Directed, Graph};
 use petgraph::graph::{EdgeIndex, NodeIndex}; // Graph algorithms
 
+// Core data structures
+use crate::core_data_structures::{GraphFragment, GraphNode, GraphEdge};
+
 // Performance & Utilities
 use ahash::{AHashMap, AHashSet, RandomState}; // Faster hashing
 use bincode; // Fast serialization
@@ -149,9 +152,7 @@ impl EnhancedMetaPipeline {
         println!("📊 Processing sample: {}", fastq_path.display());
 
         // Start streaming pipeline with parallel stages
-        let results = self
-            .thread_pool
-            .install(|| self.run_streaming_pipeline(fastq_path))?;
+        let results = self.run_streaming_pipeline(fastq_path)?;
 
         Ok(results)
     }

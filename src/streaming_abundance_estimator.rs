@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 /// Hybrid streaming sketch combining HyperLogLog (F₀) with L₀ sampling
+#[derive(Clone)]
 pub struct HybridAbundanceEstimator {
     /// HyperLogLog for cardinality estimation
     hyperloglog: HyperLogLog,
@@ -16,6 +17,7 @@ pub struct HybridAbundanceEstimator {
 }
 
 /// HyperLogLog implementation for F₀ (unique count) estimation
+#[derive(Clone)]
 pub struct HyperLogLog {
     /// Number of buckets (2^precision)
     num_buckets: usize,
@@ -28,6 +30,7 @@ pub struct HyperLogLog {
 }
 
 /// L₀ sampler for retaining representative elements
+#[derive(Clone)]
 pub struct L0Sampler {
     /// Current sample set with priorities
     samples: HashMap<u64, f64>,
@@ -53,7 +56,7 @@ pub struct SketchConfig {
     memory_limit_mb: usize,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SketchStats {
     /// Total k-mers processed
     total_kmers: u64,
@@ -573,7 +576,7 @@ pub fn process_multiple_fastq_parallel(
 }
 
 /// Integration with existing pipeline
-impl crate::L0Sampler {
+impl L0Sampler {
     /// Upgrade existing L0Sampler to hybrid estimator
     pub fn upgrade_to_hybrid(&self, hll_precision: u8) -> HybridAbundanceEstimator {
         let config = SketchConfig {

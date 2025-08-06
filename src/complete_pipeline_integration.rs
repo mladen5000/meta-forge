@@ -11,6 +11,7 @@ use crate::feature_extraction::*;
 use crate::database_integration::*;
 use crate::configuration_management::*;
 use crate::comprehensive_test_suite::*;
+use crate::integrated_pipeline::AbundanceProfile;
 
 /// Enhanced Metagenomics Pipeline - Complete Integration
 /// 
@@ -750,6 +751,15 @@ pub struct AnalysisReport {
     pub taxonomic_composition: Vec<TaxonomicClassification>,
     pub abundance_data: AbundanceProfile,
     pub performance_metrics: PerformanceMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceMetrics {
+    pub total_processing_time: std::time::Duration,
+    pub peak_memory_usage: usize,
+    pub reads_processed: u64,
+    pub errors_corrected: u64,
+    pub repeats_resolved: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

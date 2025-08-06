@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
+use crate::core_data_structures::GraphFragment;
 
 /// GNN-based system for resolving repeats in minimiser graphs
 pub struct RepeatResolverGNN {
@@ -123,7 +124,7 @@ impl RepeatResolverGNN {
     }
 
     /// Convert minimiser graph to GNN input format
-    pub fn prepare_graph_input(&self, graph: &crate::Graph) -> Result<MinimiserGraphGNN> {
+    pub fn prepare_graph_input(&self, graph: &GraphFragment) -> Result<MinimiserGraphGNN> {
         let mut gnn_graph = MinimiserGraphGNN {
             node_features: HashMap::new(),
             edges: HashMap::new(),
@@ -276,7 +277,7 @@ impl RepeatResolverGNN {
 
     /// Apply GNN predictions to resolve repeats in assembly
     pub fn resolve_repeats(&self, 
-        graph: &mut crate::Graph, 
+        graph: &mut GraphFragment, 
         predictions: &[EdgePrediction]
     ) -> Result<ResolvedGraph> {
         let mut resolved = ResolvedGraph {
@@ -323,7 +324,7 @@ impl RepeatResolverGNN {
         Ok(resolved)
     }
 
-    fn analyze_repeat_region(&self, pred: &EdgePrediction, graph: &crate::Graph) -> Result<RepeatRegion> {
+    fn analyze_repeat_region(&self, pred: &EdgePrediction, graph: &GraphFragment) -> Result<RepeatRegion> {
         Ok(RepeatRegion {
             repeat_type: pred.repeat_type.clone(),
             nodes: vec![pred.from_node, pred.to_node],
@@ -627,7 +628,7 @@ impl NodeFeatureExtractor {
         &self,
         node_id: u64,
         neighbors: &HashMap<u64, u32>,
-        graph: &crate::Graph,
+        graph: &GraphFragment,
     ) -> Result<Vec<f32>> {
         let mut features = vec![0.0; self.feature_dim];
         
@@ -667,7 +668,7 @@ impl NodeFeatureExtractor {
         from_node: u64,
         to_node: u64,
         weight: u32,
-        graph: &crate::Graph,
+        graph: &GraphFragment,
     ) -> Result<Vec<f32>> {
         let mut features = vec![0.0; 8]; // Simplified edge features
         
@@ -689,7 +690,7 @@ impl NodeFeatureExtractor {
         Ok(features)
     }
 
-    fn compute_clustering_coefficient(&self, node_id: u64, graph: &crate::Graph) -> Result<f32> {
+    fn compute_clustering_coefficient(&self, node_id: u64, graph: &GraphFragment) -> Result<f32> {
         if let Some(neighbors) = graph.edges.get(&node_id) {
             if neighbors.len() < 2 {
                 return Ok(0.0);
@@ -742,7 +743,7 @@ impl NodeFeatureExtractor {
             .count()
     }
 
-    fn nodes_share_neighbors(&self, node_a: u64, node_b: u64, graph: &crate::Graph) -> Result<bool> {
+    fn nodes_share_neighbors(&self, node_a: u64, node_b: u64, graph: &GraphFragment) -> Result<bool> {
         if let (Some(neighbors_a), Some(neighbors_b)) = (graph.edges.get(&node_a), graph.edges.get(&node_b)) {
             let common_neighbors: HashSet<_> = neighbors_a.keys()
                 .filter(|k| neighbors_b.contains_key(k))
@@ -812,7 +813,7 @@ pub enum ResolutionStrategy {
 
 /// Integration with existing pipeline
 pub fn resolve_repeats_in_pipeline(
-    graph: &mut crate::Graph,
+    graph: &mut GraphFragment,
     model_path: Option<&str>,
 ) -> Result<ResolvedGraph> {
     let mut resolver = RepeatResolverGNN::new(model_path)?;
@@ -838,7 +839,7 @@ mod tests {
         neighbors.insert(123, 5);
         neighbors.insert(456, 3);
         
-        let mut graph = crate::Graph::default();
+        let mut graph = GraphFragment::default();
         graph.edges.insert(789, neighbors.clone());
         
         let features = extractor.extract_node_features(789, &neighbors, &graph).unwrap();
