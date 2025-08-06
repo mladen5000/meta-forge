@@ -12,6 +12,18 @@ readme = "README.md"
 name = "meta-forge"
 path = "src/main.rs"
 
+[[bin]]
+name = "test-paired-reads"
+path = "src/bin/test_paired_reads.rs"
+
+[[bin]]
+name = "demo-progress"
+path = "src/bin/demo_progress.rs"
+
+[[bin]]
+name = "integrated-demo"
+path = "src/bin/integrated_demo.rs"
+
 [lib]
 name = "meta_forge"
 path = "src/lib.rs"
