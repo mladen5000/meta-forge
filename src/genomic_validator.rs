@@ -89,7 +89,7 @@ impl GenomicDataValidator {
             passed: true,
             warnings: Vec::new(),
             errors: Vec::new(),
-            metrics,
+            metrics: metrics.clone(),
         };
 
         // ---- Hard failures -------------------------------------------------
