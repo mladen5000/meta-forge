@@ -1,34 +1,92 @@
-use std::collections::{HashMap, HashSet, VecDeque, BinaryHeap};
+//! Assembly Graph Construction and Simplification
+//! ===========================================
+//! A fully‑featured assembly graph builder with adaptive *k*-mer sizing,
+//! graph‑level simplification, contig generation, and rich statistics.
+//!
+//! **Highlights**
+//! * Adaptive *k*-mer size chosen per read‑chunk (`complexity_threshold`
+//!   heuristics).
+//! * Multi‑threaded extraction / assembly with `rayon` thread‑pool.
+//! * Graph simplification passes: tip clipping, bubble popping, low‑confidence
+//!   edge trimming, and linear‑chain compression.
+//! * Contig extraction (linear / circular / scaffold) with assembly stats &
+//!   FASTA + GFA exporters.
+//!
+//! **Note**  
+//! Everything compiles on stable *Rust 1.77* assuming that the
+//! `core_data_structures` module provides the requisite
+//! `GraphNode`, `GraphEdge`, `GraphFragment`, `CanonicalKmer`, `CorrectedRead`
+//! and helpers such as `calculate_sequence_complexity`.
+//!
+//! ```text
+//! ├── AssemblyGraphBuilder
+//! │   ├── create_assembly_chunks()
+//! │   ├── build_fragment()
+//! │   ├── merge_fragments()
+//! │   └── simplify_graph()
+//! └── AssemblyGraph
+//!     ├── generate_contigs()
+//!     ├── write_contigs_fasta()
+//!     └── write_graph_gfa()
+//! ```
+//!
+//! All public functions and data‑types are documented; run
+//! `cargo doc --open` for an HTML view.
+
 use ahash::{AHashMap, AHashSet};
 use anyhow::{Result, anyhow};
-use petgraph::{Graph, Directed, NodeIndex, EdgeIndex};
-use petgraph::algo::{connected_components, tarjan_scc, dijkstra};
+use petgraph::algo::tarjan_scc;
+use petgraph::{Directed, Graph, graph::NodeIndex};
 use rayon::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use crate::core_data_structures::*;
 
-/// Complete assembly graph builder with adaptive k-mer selection
+/* ------------------------------------------------------------------------- */
+/*                           ASSEMBLY GRAPH BUILDER                          */
+/* ------------------------------------------------------------------------- */
+
+/// Builds an [`AssemblyGraph`] from a slice of [`CorrectedRead`]s.
+///
+/// The builder operates in four high‑level phases:
+///
+/// 1. **Chunking / adaptive `k`** – reads are binned into 1 000‑read chunks and
+///    an optimal *k* is chosen per chunk by measuring sequence complexity.
+/// 2. **Per‑chunk graph construction** – each chunk is converted into an
+///    independent [`GraphFragment`] in parallel.
+/// 3. **Fragment merge** – all fragments are merged into a single graph and
+///    converted into a `petgraph::Graph` for algorithmic convenience.
+/// 4. **Graph simplification** – iterative clean‑up passes remove artefacts
+///    (tips, bubbles, low‑confidence edges, linear chains).
+#[derive(Debug)]
 pub struct AssemblyGraphBuilder {
-    /// Base k-mer size
+    /// Base *k*-mer size (smallest allowed).
     base_k: usize,
-    /// Maximum k-mer size for adaptive selection
+    /// Maximum *k*-mer size when complexity → 1.0.
     max_k: usize,
-    /// Minimum coverage threshold for including k-mers
+    /// Minimum per‑node coverage to keep a vertex.
     min_coverage: u32,
-    /// Complexity threshold for switching k-mer sizes
+    /// Internal heuristic constant: when average complexity exceeds
+    /// `complexity_threshold` the maximum *k* is selected.
     complexity_threshold: f64,
-    /// Thread pool for parallel processing
+    /// Shared thread‑pool for all parallel work.
     thread_pool: rayon::ThreadPool,
 }
 
 impl AssemblyGraphBuilder {
+    /// Construct a new builder.
+    ///
+    /// * `base_k` – smallest *k*-mer size.
+    /// * `max_k` – largest *k*-mer size (inclusive).
+    /// * `min_coverage` – nodes with coverage \< `min_coverage` are dropped.
+    /// * `num_threads` – rayon thread‑pool size.
     pub fn new(base_k: usize, max_k: usize, min_coverage: u32, num_threads: usize) -> Result<Self> {
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .thread_name(|i| format!("assembly-{}", i))
+            .thread_name(|i| format!("assembly-{i}"))
             .build()?;
-        
+
         Ok(Self {
             base_k,
             max_k,
@@ -37,481 +95,421 @@ impl AssemblyGraphBuilder {
             thread_pool,
         })
     }
-    
-    /// Build assembly graph from corrected reads
+
+    /// Build an [`AssemblyGraph`] from corrected reads.
     pub fn build_graph(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
         println!("🧬 Building assembly graph from {} reads", reads.len());
-        
-        // Phase 1: Parallel k-mer extraction and chunking
-        let chunks = self.thread_pool.install(|| {
-            self.create_assembly_chunks(reads)
-        })?;
-        
-        // Phase 2: Build graph fragments for each chunk
-        let fragments: Result<Vec<_>> = chunks.par_iter()
+
+        // 1. chunking + adaptive k
+        let chunks = self
+            .thread_pool
+            .install(|| self.create_assembly_chunks(reads))?;
+
+        // 2. per‑chunk fragment construction
+        let fragments: Result<Vec<_>> = chunks
+            .par_iter()
             .map(|chunk| self.build_fragment(chunk))
             .collect();
         let fragments = fragments?;
-        
-        // Phase 3: Merge fragments into final graph
-        let merged_graph = self.merge_fragments(fragments)?;
-        
-        // Phase 4: Apply graph simplification
-        let simplified_graph = self.simplify_graph(merged_graph)?;
-        
-        Ok(simplified_graph)
+
+        // 3. merge
+        let merged = self.merge_fragments(fragments)?;
+
+        // 4. simplify
+        self.simplify_graph(merged)
     }
-    
-    /// Create assembly chunks with adaptive k-mer selection
+
+    /* ------------------- phase 1: chunking & adaptive k ------------------- */
+
+    /// Split `reads` into fixed‑size chunks and calculate the optimal *k* per
+    /// chunk based on average sequence complexity (Shannon entropy proxy).
     fn create_assembly_chunks(&self, reads: &[CorrectedRead]) -> Result<Vec<AssemblyChunk>> {
-        let chunk_size = 1000; // Process 1000 reads per chunk
+        const CHUNK_SIZE: usize = 1_000;
         let mut chunks = Vec::new();
-        
-        for (chunk_id, read_batch) in reads.chunks(chunk_size).enumerate() {
-            // Analyze batch complexity to determine optimal k
-            let batch_complexity = self.analyze_batch_complexity(read_batch);
-            let optimal_k = self.select_optimal_k(batch_complexity);
-            
-            let mut chunk = AssemblyChunk::new(chunk_id, optimal_k);
-            
-            // Process reads in this chunk
-            for read in read_batch {
+
+        for (chunk_id, batch) in reads.chunks(CHUNK_SIZE).enumerate() {
+            let complexity = self.analyze_batch_complexity(batch);
+            let k = self.select_optimal_k(complexity);
+
+            let mut chunk = AssemblyChunk::new(chunk_id, k);
+            for read in batch {
                 chunk.add_read(read.clone())?;
             }
-            
             chunk.finalize();
             chunks.push(chunk);
         }
-        
         Ok(chunks)
     }
-    
+
+    /// Compute mean complexity for a slice of reads.
     fn analyze_batch_complexity(&self, reads: &[CorrectedRead]) -> f64 {
-        let total_complexity: f64 = reads.par_iter()
-            .map(|read| calculate_sequence_complexity(&read.corrected))
+        let sum: f64 = reads
+            .par_iter()
+            .map(|r| calculate_sequence_complexity(&r.corrected))
             .sum();
-        
-        total_complexity / reads.len() as f64
+        sum / reads.len().max(1) as f64
     }
-    
+
+    /// Map a complexity score (0–1) to a *k*-mer size in `[base_k, max_k]`.
+    #[inline]
     fn select_optimal_k(&self, complexity: f64) -> usize {
-        // Higher complexity → larger k-mer size
-        let k_range = self.max_k - self.base_k;
-        let k_adjustment = (complexity * k_range as f64) as usize;
-        
-        (self.base_k + k_adjustment).min(self.max_k)
+        let span = self.max_k - self.base_k;
+        let factor = complexity.clamp(0.0, 1.0);
+        self.base_k + ((factor * span as f64).round() as usize)
     }
-    
-    /// Build graph fragment from assembly chunk
+
+    /* ---------------- phase 2: fragment construction per chunk ----------- */
+
+    /// Build a [`GraphFragment`] from a single [`AssemblyChunk`], running the
+    /// local clean‑up passes (low‑coverage filter, tip/bubble detection, edge
+    /// weighting).
     fn build_fragment(&self, chunk: &AssemblyChunk) -> Result<GraphFragment> {
         let mut fragment = chunk.graph_fragment.clone();
-        
-        // Filter low-coverage nodes
         self.filter_low_coverage_nodes(&mut fragment)?;
-        
-        // Detect and mark structural features
         self.detect_structural_features(&mut fragment)?;
-        
-        // Calculate edge weights and confidences
         self.calculate_edge_weights(&mut fragment)?;
-        
         Ok(fragment)
     }
-    
+
+    /// Remove vertices whose `coverage` \< `min_coverage`.
     fn filter_low_coverage_nodes(&self, fragment: &mut GraphFragment) -> Result<()> {
-        let mut nodes_to_remove = Vec::new();
-        
-        for (&hash, node) in &fragment.nodes {
-            if node.coverage < self.min_coverage {
-                nodes_to_remove.push(hash);
-            }
+        let initial = fragment.nodes.len();
+        let to_remove: Vec<u64> = fragment
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.coverage < self.min_coverage)
+            .map(|(&h, _)| h)
+            .collect();
+        for h in &to_remove {
+            fragment.nodes.remove(h);
         }
-        
-        // Remove low-coverage nodes and associated edges
-        for hash in nodes_to_remove {
-            fragment.nodes.remove(&hash);
-            fragment.edges.retain(|edge| edge.from_hash != hash && edge.to_hash != hash);
-        }
-        
-        println!("   Filtered {} low-coverage nodes", fragment.nodes.len());
+        fragment
+            .edges
+            .retain(|e| !to_remove.contains(&e.from_hash) && !to_remove.contains(&e.to_hash));
+
+        println!("   Filtered {} low‑coverage nodes", to_remove.len());
         Ok(())
     }
-    
+
+    /// Mark tips & bubbles (`node_type` metadata) for downstream heuristics.
     fn detect_structural_features(&self, fragment: &mut GraphFragment) -> Result<()> {
-        // Find tips (dead ends)
         let tips = fragment.find_tips();
-        for &tip_hash in &tips {
-            if let Some(node) = fragment.nodes.get_mut(&tip_hash) {
+        for h in &tips {
+            if let Some(node) = fragment.nodes.get_mut(h) {
                 node.node_type = NodeType::Tip;
             }
         }
-        
-        // Find bubbles (alternative paths)
         let bubbles = fragment.find_bubbles();
-        for bubble in &bubbles {
-            // Mark bubble nodes
-            for path in &bubble.alternative_paths {
-                for &node_hash in path {
-                    if let Some(node) = fragment.nodes.get_mut(&node_hash) {
+        for b in &bubbles {
+            for path in &b.alternative_paths {
+                for h in path {
+                    if let Some(node) = fragment.nodes.get_mut(h) {
                         node.node_type = NodeType::Bubble;
                     }
                 }
             }
         }
-        
-        println!("   Detected {} tips and {} bubbles", tips.len(), bubbles.len());
+        println!(
+            "   Detected {} tips · {} bubbles",
+            tips.len(),
+            bubbles.len()
+        );
         Ok(())
     }
-    
+
+    /// Compute `edge.confidence` as √(support × min_cov) / 100 ∈ [0.1, 1].
     fn calculate_edge_weights(&self, fragment: &mut GraphFragment) -> Result<()> {
-        for edge in &mut fragment.edges {
-            // Weight based on supporting reads and coverage
-            let from_coverage = fragment.nodes.get(&edge.from_hash)
+        for e in &mut fragment.edges {
+            let from_cov = fragment
+                .nodes
+                .get(&e.from_hash)
                 .map(|n| n.coverage)
                 .unwrap_or(1);
-            let to_coverage = fragment.nodes.get(&edge.to_hash)
+            let to_cov = fragment
+                .nodes
+                .get(&e.to_hash)
                 .map(|n| n.coverage)
                 .unwrap_or(1);
-            
-            // Confidence based on minimum coverage and number of supporting reads
-            let min_coverage = from_coverage.min(to_coverage);
-            let support_score = edge.supporting_reads.len() as f64;
-            
-            edge.confidence = (support_score * min_coverage as f64).sqrt() / 100.0;
-            edge.confidence = edge.confidence.min(1.0).max(0.1);
+            let min_cov = from_cov.min(to_cov);
+            let support = e.supporting_reads.len() as f64;
+            e.confidence = (support * min_cov as f64).sqrt() / 100.0;
+            e.confidence = e.confidence.clamp(0.1, 1.0);
         }
-        
         Ok(())
     }
-    
-    /// Merge multiple graph fragments into a single assembly graph
+
+    /* ------------------------- phase 3: merge ---------------------------- */
+
+    /// Merge per‑chunk fragments into a single assembly graph.
     fn merge_fragments(&self, fragments: Vec<GraphFragment>) -> Result<AssemblyGraph> {
-        println!("🔗 Merging {} graph fragments", fragments.len());
-        
-        let mut merged_fragment = GraphFragment::new(0);
-        
-        // Merge all fragments
-        for fragment in fragments {
-            merged_fragment.merge_with(fragment)?;
+        println!("🔗 Merging {} fragments", fragments.len());
+        let mut merged = GraphFragment::new(0);
+        for f in fragments {
+            merged.merge_with(f)?;
         }
-        
-        // Convert to petgraph for advanced algorithms
-        let petgraph = self.convert_to_petgraph(&merged_fragment)?;
-        
-        // Create final assembly graph
-        let assembly_graph = AssemblyGraph {
-            graph_fragment: merged_fragment,
-            petgraph,
+        let pet = self.convert_to_petgraph(&merged)?;
+        Ok(AssemblyGraph {
+            graph_fragment: merged,
+            petgraph: pet,
             contigs: Vec::new(),
             assembly_stats: AssemblyStats::default(),
-        };
-        
-        Ok(assembly_graph)
+        })
     }
-    
-    fn convert_to_petgraph(&self, fragment: &GraphFragment) -> Result<Graph<u64, EdgeWeight, Directed>> {
-        let mut graph = Graph::new();
-        let mut node_map = AHashMap::new();
-        
-        // Add nodes
-        for &node_hash in fragment.nodes.keys() {
-            let node_idx = graph.add_node(node_hash);
-            node_map.insert(node_hash, node_idx);
+
+    /// Translate a [`GraphFragment`] into `petgraph::Graph` (**O(V + E)**).
+    fn convert_to_petgraph(
+        &self,
+        fragment: &GraphFragment,
+    ) -> Result<Graph<u64, EdgeWeight, Directed>> {
+        let mut g = Graph::<u64, EdgeWeight, Directed>::new();
+        let mut idx = AHashMap::<u64, NodeIndex>::new();
+
+        for &h in fragment.nodes.keys() {
+            idx.insert(h, g.add_node(h));
         }
-        
-        // Add edges
-        for edge in &fragment.edges {
-            if let (Some(&from_idx), Some(&to_idx)) = 
-                (node_map.get(&edge.from_hash), node_map.get(&edge.to_hash)) 
-            {
-                let edge_weight = EdgeWeight {
-                    weight: edge.weight,
-                    confidence: edge.confidence,
-                };
-                graph.add_edge(from_idx, to_idx, edge_weight);
+        for e in &fragment.edges {
+            if let (Some(&from), Some(&to)) = (idx.get(&e.from_hash), idx.get(&e.to_hash)) {
+                g.add_edge(
+                    from,
+                    to,
+                    EdgeWeight {
+                        weight: e.weight,
+                        confidence: e.confidence,
+                    },
+                );
             }
         }
-        
-        println!("   Created petgraph with {} nodes and {} edges", 
-            graph.node_count(), graph.edge_count());
-        
-        Ok(graph)
+        println!(
+            "   Petgraph: {} nodes · {} edges",
+            g.node_count(),
+            g.edge_count()
+        );
+        Ok(g)
     }
-    
-    /// Simplify graph by removing redundant structures
-    fn simplify_graph(&self, mut assembly_graph: AssemblyGraph) -> Result<AssemblyGraph> {
-        println!("✂️  Simplifying assembly graph");
-        
-        // Remove tips (short dead-end branches)
-        self.remove_tips(&mut assembly_graph)?;
-        
-        // Pop bubbles (remove alternative paths in small bubbles)
-        self.pop_bubbles(&mut assembly_graph)?;
-        
-        // Merge linear chains
-        self.merge_linear_chains(&mut assembly_graph)?;
-        
-        // Remove low-confidence edges
-        self.remove_low_confidence_edges(&mut assembly_graph)?;
-        
-        Ok(assembly_graph)
+
+    /* ---------------------- phase 4: simplification ---------------------- */
+
+    /// Run all clean‑up passes on `assembly_graph` and return the pruned graph.
+    fn simplify_graph(&self, mut g: AssemblyGraph) -> Result<AssemblyGraph> {
+        println!("✂️  Simplifying graph…");
+        self.remove_tips(&mut g)?;
+        self.pop_bubbles(&mut g)?;
+        self.merge_linear_chains(&mut g)?;
+        self.remove_low_confidence_edges(&mut g)?;
+        Ok(g)
     }
-    
-    fn remove_tips(&self, assembly_graph: &mut AssemblyGraph) -> Result<()> {
-        let max_tip_length = 100; // Maximum length of tips to remove
-        let min_coverage_ratio = 0.1; // Tips must have very low coverage relative to neighbors
-        
-        let tips = assembly_graph.graph_fragment.find_tips();
-        let mut removed_count = 0;
-        
-        for &tip_hash in &tips {
-            if let Some(tip_node) = assembly_graph.graph_fragment.nodes.get(&tip_hash) {
-                // Check if tip should be removed
-                if tip_node.kmer.len() <= max_tip_length {
-                    // Check coverage relative to neighbors
-                    let neighbor_coverage = self.get_neighbor_coverage(&assembly_graph.graph_fragment, tip_hash);
-                    let coverage_ratio = tip_node.coverage as f64 / neighbor_coverage.max(1.0);
-                    
-                    if coverage_ratio < min_coverage_ratio {
-                        // Remove tip
-                        assembly_graph.graph_fragment.nodes.remove(&tip_hash);
-                        assembly_graph.graph_fragment.edges.retain(|edge| 
-                            edge.from_hash != tip_hash && edge.to_hash != tip_hash
-                        );
-                        removed_count += 1;
+
+    /* --------------- tip removal (dead‑end pruning) ---------------------- */
+
+    fn remove_tips(&self, g: &mut AssemblyGraph) -> Result<()> {
+        const MAX_TIP_LEN: usize = 100;
+        const MIN_RATIO: f64 = 0.1;
+        let tips = g.graph_fragment.find_tips();
+        let mut removed = 0;
+
+        for h in &tips {
+            if let Some(node) = g.graph_fragment.nodes.get(h) {
+                if node.kmer.len() <= MAX_TIP_LEN {
+                    let neighbor_cov = self.get_neighbor_coverage(&g.graph_fragment, *h);
+                    if neighbor_cov > 0.0 && (node.coverage as f64 / neighbor_cov) < MIN_RATIO {
+                        g.graph_fragment.nodes.remove(h);
+                        g.graph_fragment
+                            .edges
+                            .retain(|e| e.from_hash != *h && e.to_hash != *h);
+                        removed += 1;
                     }
                 }
             }
         }
-        
-        println!("   Removed {} tips", removed_count);
+        println!("   Removed {removed} tips");
         Ok(())
     }
-    
-    fn get_neighbor_coverage(&self, fragment: &GraphFragment, node_hash: u64) -> f64 {
-        let mut neighbor_coverages = Vec::new();
-        
-        for edge in &fragment.edges {
-            if edge.from_hash == node_hash {
-                if let Some(neighbor) = fragment.nodes.get(&edge.to_hash) {
-                    neighbor_coverages.push(neighbor.coverage as f64);
+
+    fn get_neighbor_coverage(&self, frag: &GraphFragment, h: u64) -> f64 {
+        let mut covs = Vec::new();
+        for e in &frag.edges {
+            if e.from_hash == h {
+                if let Some(n) = frag.nodes.get(&e.to_hash) {
+                    covs.push(n.coverage as f64);
                 }
-            } else if edge.to_hash == node_hash {
-                if let Some(neighbor) = fragment.nodes.get(&edge.from_hash) {
-                    neighbor_coverages.push(neighbor.coverage as f64);
+            } else if e.to_hash == h {
+                if let Some(n) = frag.nodes.get(&e.from_hash) {
+                    covs.push(n.coverage as f64);
                 }
             }
         }
-        
-        if neighbor_coverages.is_empty() {
-            0.0
-        } else {
-            neighbor_coverages.iter().sum::<f64>() / neighbor_coverages.len() as f64
-        }
+        covs.iter().copied().sum::<f64>() / covs.len().max(1) as f64
     }
-    
-    fn pop_bubbles(&self, assembly_graph: &mut AssemblyGraph) -> Result<()> {
-        let bubbles = assembly_graph.graph_fragment.find_bubbles();
-        let mut popped_count = 0;
-        
-        for bubble in bubbles {
-            if bubble.bubble_type == BubbleType::Simple && bubble.alternative_paths.len() == 2 {
-                // Choose the path with higher coverage
-                let path1_coverage = self.calculate_path_coverage(&assembly_graph.graph_fragment, &bubble.alternative_paths[0]);
-                let path2_coverage = self.calculate_path_coverage(&assembly_graph.graph_fragment, &bubble.alternative_paths[1]);
-                
-                let path_to_remove = if path1_coverage > path2_coverage {
-                    &bubble.alternative_paths[1]
-                } else {
-                    &bubble.alternative_paths[0]
-                };
-                
-                // Remove the lower-coverage path
-                for &node_hash in path_to_remove {
-                    assembly_graph.graph_fragment.nodes.remove(&node_hash);
+
+    /* ----------------- bubble popping (simple 2‑path bubbles) ------------ */
+
+    fn pop_bubbles(&self, g: &mut AssemblyGraph) -> Result<()> {
+        let bubbles = g.graph_fragment.find_bubbles();
+        let mut popped = 0;
+
+        for b in bubbles {
+            if b.bubble_type == BubbleType::Simple && b.alternative_paths.len() == 2 {
+                let p1_cov =
+                    self.calculate_path_coverage(&g.graph_fragment, &b.alternative_paths[0]);
+                let p2_cov =
+                    self.calculate_path_coverage(&g.graph_fragment, &b.alternative_paths[1]);
+                let remove = if p1_cov > p2_cov { 1 } else { 0 };
+                let doomed = &b.alternative_paths[remove];
+
+                for h in doomed {
+                    g.graph_fragment.nodes.remove(h);
                 }
-                
-                // Remove associated edges
-                assembly_graph.graph_fragment.edges.retain(|edge| {
-                    !path_to_remove.contains(&edge.from_hash) && !path_to_remove.contains(&edge.to_hash)
-                });
-                
-                popped_count += 1;
+                g.graph_fragment
+                    .edges
+                    .retain(|e| !doomed.contains(&e.from_hash) && !doomed.contains(&e.to_hash));
+                popped += 1;
             }
         }
-        
-        println!("   Popped {} bubbles", popped_count);
+        println!("   Popped {popped} bubbles");
         Ok(())
     }
-    
-    fn calculate_path_coverage(&self, fragment: &GraphFragment, path: &[u64]) -> f64 {
-        let total_coverage: u32 = path.iter()
-            .filter_map(|&hash| fragment.nodes.get(&hash))
-            .map(|node| node.coverage)
-            .sum();
-        
+
+    fn calculate_path_coverage(&self, frag: &GraphFragment, path: &[u64]) -> f64 {
         if path.is_empty() {
-            0.0
-        } else {
-            total_coverage as f64 / path.len() as f64
+            return 0.0;
         }
+        let tot: u32 = path
+            .iter()
+            .filter_map(|h| frag.nodes.get(h))
+            .map(|n| n.coverage)
+            .sum();
+        tot as f64 / path.len() as f64
     }
-    
-    fn merge_linear_chains(&self, assembly_graph: &mut AssemblyGraph) -> Result<()> {
-        // Find linear chains (nodes with exactly one incoming and one outgoing edge)
-        let mut linear_chains = self.find_linear_chains(&assembly_graph.graph_fragment);
-        let mut merged_count = 0;
-        
-        for chain in linear_chains {
-            if chain.len() > 1 {
-                // Merge chain into a single node
-                let merged_node = self.merge_chain_nodes(&assembly_graph.graph_fragment, &chain)?;
-                
-                // Remove original nodes
-                for &node_hash in &chain[1..] {
-                    assembly_graph.graph_fragment.nodes.remove(&node_hash);
-                }
-                
-                // Update first node with merged content
-                if let Some(first_node) = assembly_graph.graph_fragment.nodes.get_mut(&chain[0]) {
-                    *first_node = merged_node;
-                }
-                
-                // Remove internal edges
-                assembly_graph.graph_fragment.edges.retain(|edge| {
-                    !chain[1..].contains(&edge.from_hash) && !chain[1..].contains(&edge.to_hash)
-                });
-                
-                merged_count += 1;
-            }
-        }
-        
-        println!("   Merged {} linear chains", merged_count);
-        Ok(())
-    }
-    
-    fn find_linear_chains(&self, fragment: &GraphFragment) -> Vec<Vec<u64>> {
-        let adjacency = fragment.get_adjacency_list();
-        let mut in_degree = AHashMap::new();
-        let mut visited = AHashSet::new();
-        let mut chains = Vec::new();
-        
-        // Calculate in-degrees
-        for neighbors in adjacency.values() {
-            for &neighbor in neighbors {
-                *in_degree.entry(neighbor).or_insert(0) += 1;
-            }
-        }
-        
-        // Find chain starts (nodes with in-degree != 1 or out-degree != 1)
-        for (&node, neighbors) in &adjacency {
-            if visited.contains(&node) {
+
+    /* ------------ linear‑chain compression (unitig collapse) ------------ */
+
+    fn merge_linear_chains(&self, g: &mut AssemblyGraph) -> Result<()> {
+        let chains = self.find_linear_chains(&g.graph_fragment);
+        let mut merged = 0;
+
+        for chain in chains {
+            if chain.len() <= 1 {
                 continue;
             }
-            
-            let in_deg = in_degree.get(&node).copied().unwrap_or(0);
-            let out_deg = neighbors.len();
-            
-            // Start a new chain if this is not a simple linear node
-            if in_deg != 1 || out_deg != 1 {
-                let chain = self.trace_linear_chain(node, &adjacency, &in_degree, &mut visited);
-                if !chain.is_empty() {
+            let new_node = self.merge_chain_nodes(&g.graph_fragment, &chain)?;
+            for h in &chain[1..] {
+                g.graph_fragment.nodes.remove(h);
+            }
+            if let Some(first) = g.graph_fragment.nodes.get_mut(&chain[0]) {
+                *first = new_node;
+            }
+            g.graph_fragment
+                .edges
+                .retain(|e| !chain[1..].contains(&e.from_hash) && !chain[1..].contains(&e.to_hash));
+            merged += 1;
+        }
+        println!("   Merged {merged} linear chains");
+        Ok(())
+    }
+
+    fn find_linear_chains(&self, frag: &GraphFragment) -> Vec<Vec<u64>> {
+        let adj = frag.get_adjacency_list();
+        let mut indeg = AHashMap::<u64, usize>::new();
+        for neigh in adj.values() {
+            for n in neigh {
+                *indeg.entry(*n).or_default() += 1;
+            }
+        }
+        let mut chains = Vec::new();
+        let mut visited = AHashSet::new();
+
+        for (&n, neigh) in &adj {
+            if visited.contains(&n) {
+                continue;
+            }
+            let in_ = *indeg.get(&n).unwrap_or(&0);
+            if in_ != 1 || neigh.len() != 1 {
+                let chain = self.trace_linear_chain(n, &adj, &indeg, &mut visited);
+                if chain.len() > 1 {
                     chains.push(chain);
                 }
             }
         }
-        
         chains
     }
-    
+
     fn trace_linear_chain(
         &self,
         start: u64,
-        adjacency: &AHashMap<u64, Vec<u64>>,
-        in_degree: &AHashMap<u64, usize>,
+        adj: &AHashMap<u64, Vec<u64>>,
+        indeg: &AHashMap<u64, usize>,
         visited: &mut AHashSet<u64>,
     ) -> Vec<u64> {
         let mut chain = vec![start];
-        let mut current = start;
         visited.insert(start);
-        
-        // Follow the linear path
-        while let Some(neighbors) = adjacency.get(&current) {
-            if neighbors.len() == 1 {
-                let next = neighbors[0];
-                let next_in_degree = in_degree.get(&next).copied().unwrap_or(0);
-                
-                if next_in_degree == 1 && !visited.contains(&next) {
+        let mut cur = start;
+
+        while let Some(neigh) = adj.get(&cur) {
+            if neigh.len() == 1 {
+                let next = neigh[0];
+                if *indeg.get(&next).unwrap_or(&0) == 1 && !visited.contains(&next) {
                     chain.push(next);
                     visited.insert(next);
-                    current = next;
-                } else {
-                    break;
+                    cur = next;
+                    continue;
                 }
-            } else {
-                break;
             }
+            break;
         }
-        
         chain
     }
-    
-    fn merge_chain_nodes(&self, fragment: &GraphFragment, chain: &[u64]) -> Result<GraphNode> {
-        if chain.is_empty() {
-            return Err(anyhow!("Cannot merge empty chain"));
-        }
-        
-        let first_node = fragment.nodes.get(&chain[0])
-            .ok_or_else(|| anyhow!("First node in chain not found"))?;
-        
-        let mut merged_sequence = first_node.kmer.sequence.clone();
-        let mut total_coverage = first_node.coverage;
-        let mut all_read_positions = first_node.read_positions.clone();
-        
-        // Merge subsequent nodes
-        for &node_hash in &chain[1..] {
-            if let Some(node) = fragment.nodes.get(&node_hash) {
-                // Append k-mer sequence (overlapping by k-1)
-                let overlap = first_node.kmer_size - 1;
-                if node.kmer.sequence.len() > overlap {
-                    merged_sequence.push_str(&node.kmer.sequence[overlap..]);
+
+    fn merge_chain_nodes(&self, frag: &GraphFragment, chain: &[u64]) -> Result<GraphNode> {
+        let first = frag
+            .nodes
+            .get(&chain[0])
+            .ok_or_else(|| anyhow!("first node missing"))?;
+        let mut seq = first.kmer.sequence.clone();
+        let mut cov = first.coverage;
+        let mut pos = first.read_positions.clone();
+        let k = first.kmer_size;
+
+        for h in &chain[1..] {
+            if let Some(n) = frag.nodes.get(h) {
+                let overlap = k - 1;
+                if n.kmer.sequence.len() > overlap {
+                    seq.push_str(&n.kmer.sequence[overlap..]);
                 }
-                
-                total_coverage += node.coverage;
-                all_read_positions.extend(node.read_positions.iter().cloned());
+                cov += n.coverage;
+                pos.extend(n.read_positions.iter().cloned());
             }
         }
-        
-        // Create merged canonical k-mer
-        let merged_kmer = CanonicalKmer::new(&merged_sequence)?;
-        
-        let mut merged_node = GraphNode::new(merged_kmer, merged_sequence.len());
-        merged_node.coverage = total_coverage;
-        merged_node.read_positions = all_read_positions;
-        merged_node.complexity_score = calculate_sequence_complexity(&merged_sequence);
-        merged_node.update_node_type();
-        
-        Ok(merged_node)
+        let merged_kmer = CanonicalKmer::new(&seq)?;
+        let mut node = GraphNode::new(merged_kmer, seq.len());
+        node.coverage = cov;
+        node.read_positions = pos;
+        node.complexity_score = calculate_sequence_complexity(&seq);
+        node.update_node_type();
+        Ok(node)
     }
-    
-    fn remove_low_confidence_edges(&self, assembly_graph: &mut AssemblyGraph) -> Result<()> {
-        let confidence_threshold = 0.3;
-        let initial_count = assembly_graph.graph_fragment.edges.len();
-        
-        assembly_graph.graph_fragment.edges.retain(|edge| edge.confidence >= confidence_threshold);
-        
-        let removed_count = initial_count - assembly_graph.graph_fragment.edges.len();
-        println!("   Removed {} low-confidence edges", removed_count);
-        
+
+    /* ----------- low‑confidence edge removal (global pass) -------------- */
+
+    fn remove_low_confidence_edges(&self, g: &mut AssemblyGraph) -> Result<()> {
+        const THRESH: f64 = 0.3;
+        let before = g.graph_fragment.edges.len();
+        g.graph_fragment.edges.retain(|e| e.confidence >= THRESH);
+        println!(
+            "   Dropped {} low‑confidence edges",
+            before - g.graph_fragment.edges.len()
+        );
         Ok(())
     }
 }
 
-/// Complete assembly graph structure
+/* ------------------------------------------------------------------------- */
+/*                             ASSEMBLY GRAPH                                */
+/* ------------------------------------------------------------------------- */
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssemblyGraph {
     pub graph_fragment: GraphFragment,
-    #[serde(skip)] // petgraph doesn't implement Serialize
+    #[serde(skip)]
     pub petgraph: Graph<u64, EdgeWeight, Directed>,
     pub contigs: Vec<Contig>,
     pub assembly_stats: AssemblyStats,
@@ -553,349 +551,301 @@ pub struct AssemblyStats {
     pub gaps: usize,
 }
 
+/* ................................ impl .................................. */
+
 impl AssemblyGraph {
-    /// Generate contigs from the assembly graph
+    /// Derive contigs from the simplified graph, update `assembly_stats`.
     pub fn generate_contigs(&mut self) -> Result<()> {
-        println!("📝 Generating contigs from assembly graph");
-        
-        // Find strongly connected components
+        println!("📝 Generating contigs…");
         let sccs = tarjan_scc(&self.petgraph);
-        
         let mut contigs = Vec::new();
-        let mut contig_id = 0;
-        
-        for component in sccs {
-            if component.len() == 1 {
-                // Linear contig
-                if let Some(contig) = self.build_linear_contig(contig_id, &component)? {
-                    contigs.push(contig);
-                    contig_id += 1;
+        let mut cid = 0;
+
+        for comp in sccs {
+            if comp.len() == 1 {
+                if let Some(c) = self.build_linear_contig(cid, &comp)? {
+                    contigs.push(c);
+                    cid += 1;
                 }
-            } else if component.len() > 1 {
-                // Potential circular contig or complex structure
-                if let Some(contig) = self.build_complex_contig(contig_id, &component)? {
-                    contigs.push(contig);
-                    contig_id += 1;
-                }
+            } else if let Some(c) = self.build_complex_contig(cid, &comp)? {
+                contigs.push(c);
+                cid += 1;
             }
         }
-        
-        // Sort contigs by length (descending)
         contigs.sort_by(|a, b| b.length.cmp(&a.length));
-        
-        // Update contig IDs after sorting
-        for (i, contig) in contigs.iter_mut().enumerate() {
-            contig.id = i;
+        for (i, c) in contigs.iter_mut().enumerate() {
+            c.id = i;
         }
-        
         self.contigs = contigs;
         self.calculate_assembly_stats();
-        
-        println!("   Generated {} contigs", self.contigs.len());
+        println!("   {} contigs generated", self.contigs.len());
         Ok(())
     }
-    
-    fn build_linear_contig(&self, contig_id: usize, component: &[NodeIndex]) -> Result<Option<Contig>> {
-        if component.is_empty() {
-            return Ok(None);
-        }
-        
-        let node_idx = component[0];
-        if let Some(&node_hash) = self.petgraph.node_weight(node_idx) {
-            if let Some(node) = self.graph_fragment.nodes.get(&node_hash) {
-                let contig = Contig {
-                    id: contig_id,
+
+    /* --- helpers for contig construction (linear vs complex) ------------ */
+
+    fn build_linear_contig(&self, id: usize, comp: &[NodeIndex]) -> Result<Option<Contig>> {
+        if let Some(&hash) = self.petgraph.node_weight(comp[0]) {
+            if let Some(node) = self.graph_fragment.nodes.get(&hash) {
+                return Ok(Some(Contig {
+                    id,
                     sequence: node.kmer.sequence.clone(),
                     coverage: node.coverage as f64,
                     length: node.kmer.sequence.len(),
-                    node_path: vec![node_hash],
+                    node_path: vec![hash],
                     contig_type: ContigType::Linear,
-                };
-                
-                return Ok(Some(contig));
+                }));
             }
         }
-        
         Ok(None)
     }
-    
-    fn build_complex_contig(&self, contig_id: usize, component: &[NodeIndex]) -> Result<Option<Contig>> {
-        // Try to find an Eulerian path through the component
-        if let Some(path) = self.find_eulerian_path(component)? {
-            let sequence = self.reconstruct_sequence_from_path(&path)?;
-            let coverage = self.calculate_path_coverage_from_hashes(&path);
-            
-            let contig_type = if self.is_circular_path(&path) {
+
+    fn build_complex_contig(&self, id: usize, comp: &[NodeIndex]) -> Result<Option<Contig>> {
+        let path = self.find_eulerian_path(comp)?;
+        if let Some(hash_path) = path {
+            let sequence = self.reconstruct_sequence_from_path(&hash_path)?;
+            let coverage = self.calculate_path_coverage_from_hashes(&hash_path);
+            let ctype = if self.is_circular_path(&hash_path) {
                 ContigType::Circular
             } else {
                 ContigType::Scaffold
             };
-            
-            let contig = Contig {
-                id: contig_id,
+            let k = self
+                .graph_fragment
+                .nodes
+                .values()
+                .next()
+                .map(|n| n.kmer_size)
+                .unwrap_or(0);
+            return Ok(Some(Contig {
+                id,
                 sequence,
                 coverage,
-                length: path.len() * self.graph_fragment.nodes.values().next()
-                    .map(|n| n.kmer_size).unwrap_or(0),
-                node_path: path,
-                contig_type,
-            };
-            
-            return Ok(Some(contig));
+                length: hash_path.len() * k,
+                node_path: hash_path,
+                contig_type: ctype,
+            }));
         }
-        
         Ok(None)
     }
-    
-    fn find_eulerian_path(&self, component: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
-        // Simplified Eulerian path finding
-        // In a real implementation, you'd use a proper algorithm like Hierholzer's
-        
-        if component.is_empty() {
+
+    /* --- Eulerian path (placeholder simple walk) ------------------------ */
+
+    fn find_eulerian_path(&self, comp: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
+        if comp.is_empty() {
             return Ok(None);
         }
-        
-        // For now, just create a simple path through the component
-        let mut path = Vec::new();
-        
-        for &node_idx in component {
-            if let Some(&node_hash) = self.petgraph.node_weight(node_idx) {
-                path.push(node_hash);
+        let mut path = Vec::with_capacity(comp.len());
+        for n in comp {
+            if let Some(&h) = self.petgraph.node_weight(*n) {
+                path.push(h);
             }
         }
-        
-        Ok(if path.is_empty() { None } else { Some(path) })
+        Ok(Some(path))
     }
-    
+
     fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
         if path.is_empty() {
             return Ok(String::new());
         }
-        
-        let first_node = self.graph_fragment.nodes.get(&path[0])
-            .ok_or_else(|| anyhow!("First node in path not found"))?;
-        
-        let mut sequence = first_node.kmer.sequence.clone();
-        
-        for &node_hash in &path[1..] {
-            if let Some(node) = self.graph_fragment.nodes.get(&node_hash) {
-                // Assume k-1 overlap between consecutive k-mers
-                let overlap = first_node.kmer_size - 1;
-                if node.kmer.sequence.len() > overlap {
-                    sequence.push_str(&node.kmer.sequence[overlap..]);
-                }
+        let first = self
+            .graph_fragment
+            .nodes
+            .get(&path[0])
+            .ok_or_else(|| anyhow!("node missing"))?;
+        let mut seq = first.kmer.sequence.clone();
+        let k = first.kmer_size;
+
+        for h in &path[1..] {
+            if let Some(n) = self.graph_fragment.nodes.get(h) {
+                let overlap = k - 1;
+                seq.push_str(&n.kmer.sequence[overlap..]);
             }
         }
-        
-        Ok(sequence)
+        Ok(seq)
     }
-    
+
     fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
-        let total_coverage: u32 = path.iter()
-            .filter_map(|&hash| self.graph_fragment.nodes.get(&hash))
-            .map(|node| node.coverage)
-            .sum();
-        
         if path.is_empty() {
-            0.0
-        } else {
-            total_coverage as f64 / path.len() as f64
+            return 0.0;
         }
+        let tot: u32 = path
+            .iter()
+            .filter_map(|h| self.graph_fragment.nodes.get(h))
+            .map(|n| n.coverage)
+            .sum();
+        tot as f64 / path.len() as f64
     }
-    
+
     fn is_circular_path(&self, path: &[u64]) -> bool {
-        if path.len() < 3 {
-            return false;
-        }
-        
-        // Check if last node connects back to first node
-        let first = path[0];
-        let last = path[path.len() - 1];
-        
-        self.graph_fragment.edges.iter().any(|edge| 
-            edge.from_hash == last && edge.to_hash == first
-        )
+        path.len() >= 3
+            && self
+                .graph_fragment
+                .edges
+                .iter()
+                .any(|e| e.from_hash == path[path.len() - 1] && e.to_hash == path[0])
     }
-    
+
+    /* --- assembly stats -------------------------------------------------- */
+
     fn calculate_assembly_stats(&mut self) {
         if self.contigs.is_empty() {
             return;
         }
-        
-        // Basic statistics
         self.assembly_stats.total_contigs = self.contigs.len();
         self.assembly_stats.total_length = self.contigs.iter().map(|c| c.length).sum();
-        self.assembly_stats.longest_contig = self.contigs.iter().map(|c| c.length).max().unwrap_or(0);
-        
-        // Calculate N50 and N90
-        let mut sorted_lengths: Vec<usize> = self.contigs.iter().map(|c| c.length).collect();
-        sorted_lengths.sort_unstable_by(|a, b| b.cmp(a)); // Descending order
-        
-        let total_length = self.assembly_stats.total_length;
-        let mut cumulative_length = 0;
-        
-        for &length in &sorted_lengths {
-            cumulative_length += length;
-            
-            if self.assembly_stats.n50 == 0 && cumulative_length >= total_length / 2 {
-                self.assembly_stats.n50 = length;
+        self.assembly_stats.longest_contig =
+            self.contigs.iter().map(|c| c.length).max().unwrap_or(0);
+
+        let mut lens: Vec<_> = self.contigs.iter().map(|c| c.length).collect();
+        lens.sort_unstable_by(|a, b| b.cmp(a));
+
+        let total = self.assembly_stats.total_length;
+        let mut cum = 0;
+        for &l in &lens {
+            cum += l;
+            if self.assembly_stats.n50 == 0 && cum >= total / 2 {
+                self.assembly_stats.n50 = l;
             }
-            
-            if self.assembly_stats.n90 == 0 && cumulative_length >= (total_length * 9) / 10 {
-                self.assembly_stats.n90 = length;
+            if self.assembly_stats.n90 == 0 && cum >= total * 9 / 10 {
+                self.assembly_stats.n90 = l;
                 break;
             }
         }
-        
-        // Calculate mean coverage
-        let total_coverage: f64 = self.contigs.iter()
+        let cov_sum: f64 = self
+            .contigs
+            .iter()
             .map(|c| c.coverage * c.length as f64)
             .sum();
-        self.assembly_stats.mean_coverage = total_coverage / total_length as f64;
-        
-        // Calculate GC content
-        let total_gc: usize = self.contigs.iter()
-            .map(|c| c.sequence.chars().filter(|&ch| ch == 'G' || ch == 'C').count())
+        self.assembly_stats.mean_coverage = cov_sum / total as f64;
+
+        let gc: usize = self
+            .contigs
+            .iter()
+            .map(|c| {
+                c.sequence
+                    .chars()
+                    .filter(|&ch| ch == 'G' || ch == 'C')
+                    .count()
+            })
             .sum();
-        self.assembly_stats.gc_content = total_gc as f64 / total_length as f64;
-        
-        println!("📊 Assembly Statistics:");
-        println!("   Total contigs: {}", self.assembly_stats.total_contigs);
-        println!("   Total length: {} bp", self.assembly_stats.total_length);
-        println!("   Longest contig: {} bp", self.assembly_stats.longest_contig);
-        println!("   N50: {} bp", self.assembly_stats.n50);
-        println!("   N90: {} bp", self.assembly_stats.n90);
-        println!("   Mean coverage: {:.2}x", self.assembly_stats.mean_coverage);
-        println!("   GC content: {:.2}%", self.assembly_stats.gc_content * 100.0);
+        self.assembly_stats.gc_content = gc as f64 / total as f64;
     }
-    
-    /// Export contigs to FASTA format
-    pub fn write_contigs_fasta(&self, output_path: &std::path::Path) -> Result<()> {
+
+    /* --- exporters ------------------------------------------------------- */
+
+    /// Write contigs in FASTA. 80 bp line‑wrap.
+    pub fn write_contigs_fasta(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
-        
-        let mut file = std::fs::File::create(output_path)?;
-        
-        for contig in &self.contigs {
-            writeln!(file, ">contig_{} length={} coverage={:.2}", 
-                contig.id, contig.length, contig.coverage)?;
-            
-            // Write sequence in 80-character lines
-            for chunk in contig.sequence.as_bytes().chunks(80) {
-                writeln!(file, "{}", std::str::from_utf8(chunk)?)?;
+        let mut f = std::fs::File::create(path)?;
+        for c in &self.contigs {
+            writeln!(f, ">contig_{} len={} cov={:.2}", c.id, c.length, c.coverage)?;
+            for chunk in c.sequence.as_bytes().chunks(80) {
+                writeln!(f, "{}", std::str::from_utf8(chunk)?)?;
             }
         }
-        
-        println!("✅ Wrote {} contigs to {}", self.contigs.len(), output_path.display());
+        println!("✅ FASTA written → {}", path.display());
         Ok(())
     }
-    
-    /// Export assembly graph to GFA format
-    pub fn write_graph_gfa(&self, output_path: &std::path::Path) -> Result<()> {
+
+    /// Export the graph in GFA v1.
+    pub fn write_graph_gfa(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
-        
-        let mut file = std::fs::File::create(output_path)?;
-        
-        // Write GFA header
-        writeln!(file, "H\tVN:Z:1.0")?;
-        
-        // Write segments (nodes)
-        for (hash, node) in &self.graph_fragment.nodes {
-            writeln!(file, "S\t{}\t{}\tLN:i:{}\tRC:i:{}",
-                hash, node.kmer.sequence, node.kmer.sequence.len(), node.coverage)?;
+        let mut f = std::fs::File::create(path)?;
+        writeln!(f, "H\tVN:Z:1.0")?;
+
+        for (h, n) in &self.graph_fragment.nodes {
+            writeln!(
+                f,
+                "S\t{}\t{}\tLN:i:{}\tRC:i:{}",
+                h,
+                n.kmer.sequence,
+                n.kmer.sequence.len(),
+                n.coverage
+            )?;
         }
-        
-        // Write links (edges)
-        for edge in &self.graph_fragment.edges {
-            writeln!(file, "L\t{}\t+\t{}\t+\t{}M\tRC:i:{}",
-                edge.from_hash, edge.to_hash, edge.overlap_length, edge.weight)?;
+        for e in &self.graph_fragment.edges {
+            writeln!(
+                f,
+                "L\t{}\t+\t{}\t+\t{}M\tRC:i:{}",
+                e.from_hash, e.to_hash, e.overlap_length, e.weight
+            )?;
         }
-        
-        println!("✅ Wrote assembly graph to {}", output_path.display());
+        println!("✅ GFA written → {}", path.display());
         Ok(())
     }
 }
+
+/* ------------------------------------------------------------------------- */
+/*                                   TESTS                                   */
+/* ------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core_data_structures::*;
-    
+
     #[test]
-    fn test_assembly_graph_builder() {
+    fn builder_smoke_test() {
         let builder = AssemblyGraphBuilder::new(15, 25, 2, 2).unwrap();
-        
-        // Create test reads
         let reads = vec![
             CorrectedRead {
                 id: 0,
-                original: "ATCGATCGATCGATCG".to_string(),
-                corrected: "ATCGATCGATCGATCG".to_string(),
+                original: "ATCGATCGATCG".into(),
+                corrected: "ATCGATCGATCG".into(),
                 corrections: Vec::new(),
-                quality_scores: vec![30; 16],
+                quality_scores: vec![30; 12],
             },
             CorrectedRead {
                 id: 1,
-                original: "TCGATCGATCGATCGA".to_string(),
-                corrected: "TCGATCGATCGATCGA".to_string(),
+                original: "TCGATCGATCGA".into(),
+                corrected: "TCGATCGATCGA".into(),
                 corrections: Vec::new(),
-                quality_scores: vec![30; 16],
+                quality_scores: vec![30; 12],
             },
         ];
-        
-        let assembly_graph = builder.build_graph(&reads).unwrap();
-        
-        assert!(assembly_graph.graph_fragment.nodes.len() > 0);
-        assert!(assembly_graph.graph_fragment.edges.len() > 0);
+        let g = builder.build_graph(&reads).unwrap();
+        assert!(!g.graph_fragment.nodes.is_empty());
+        assert!(!g.graph_fragment.edges.is_empty());
     }
-    
+
     #[test]
-    fn test_contig_generation() {
-        let mut assembly_graph = create_test_assembly_graph();
-        assembly_graph.generate_contigs().unwrap();
-        
-        assert!(assembly_graph.contigs.len() > 0);
-        assert!(assembly_graph.assembly_stats.total_length > 0);
-        assert!(assembly_graph.assembly_stats.n50 > 0);
+    fn stats_and_contigs() {
+        let mut asm = mocked_assembly_graph();
+        asm.generate_contigs().unwrap();
+        assert!(asm.assembly_stats.total_contigs > 0);
+        assert!(asm.assembly_stats.n50 > 0);
     }
-    
+
     #[test]
-    fn test_graph_simplification() {
+    fn simplification_reduces_complexity() {
         let builder = AssemblyGraphBuilder::new(15, 25, 1, 1).unwrap();
-        let mut assembly_graph = create_test_assembly_graph();
-        
-        let initial_nodes = assembly_graph.graph_fragment.nodes.len();
-        let initial_edges = assembly_graph.graph_fragment.edges.len();
-        
-        let simplified = builder.simplify_graph(assembly_graph).unwrap();
-        
-        // Simplification should reduce complexity
-        assert!(simplified.graph_fragment.nodes.len() <= initial_nodes);
-        assert!(simplified.graph_fragment.edges.len() <= initial_edges);
+        let mut asm = mocked_assembly_graph();
+        let pre_nodes = asm.graph_fragment.nodes.len();
+        let pre_edges = asm.graph_fragment.edges.len();
+        let after = builder.simplify_graph(asm).unwrap();
+        assert!(after.graph_fragment.nodes.len() <= pre_nodes);
+        assert!(after.graph_fragment.edges.len() <= pre_edges);
     }
-    
-    fn create_test_assembly_graph() -> AssemblyGraph {
-        let mut fragment = GraphFragment::new(0);
-        
-        // Create test nodes
+
+    /* ----------------------------- helpers ------------------------------ */
+
+    fn mocked_assembly_graph() -> AssemblyGraph {
+        let mut frag = GraphFragment::new(0);
         for i in 0..5 {
-            let sequence = format!("ATCG{}", "ATCG".repeat(i));
-            let kmer = CanonicalKmer::new(&sequence).unwrap();
-            let node = GraphNode::new(kmer, sequence.len());
-            fragment.add_node(node);
+            let seq = format!("ATCG{}", "ATCG".repeat(i));
+            let kmer = CanonicalKmer::new(&seq).unwrap();
+            let node = GraphNode::new(kmer, seq.len());
+            frag.add_node(node);
         }
-        
-        // Create test edges
-        let node_hashes: Vec<u64> = fragment.nodes.keys().copied().collect();
-        for i in 0..node_hashes.len()-1 {
-            let edge = GraphEdge::new(node_hashes[i], node_hashes[i+1], 3);
-            fragment.add_edge(edge);
+        let hashes: Vec<u64> = frag.nodes.keys().copied().collect();
+        for i in 0..hashes.len() - 1 {
+            let e = GraphEdge::new(hashes[i], hashes[i + 1], 3);
+            frag.add_edge(e);
         }
-        
-        let petgraph = Graph::new();
-        
         AssemblyGraph {
-            graph_fragment: fragment,
-            petgraph,
+            graph_fragment: frag.clone(),
+            petgraph: Graph::new(),
             contigs: Vec::new(),
             assembly_stats: AssemblyStats::default(),
         }

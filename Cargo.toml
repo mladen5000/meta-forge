@@ -13,6 +13,7 @@ readme = "README.md"
 # --- Core Data Structures & Concurrency ---
 ahash = "0.8.12"
 dashmap = "6.1.0"
+fxhash = "0.2.1"
 parking_lot = "0.12.4"
 
 # --- Configuration, CLI, and Utilities ---
@@ -31,6 +32,7 @@ ndarray = "0.16.1"
 ort = "1.16.3"
 petgraph = "0.8.2"
 smartcore = "0.4.2"
+fastrand = "2"
 
 # --- Error Handling, Logging, Observability ---
 anyhow = "1.0.98"
@@ -43,6 +45,8 @@ bio = "2.3.0"
 # --- Database & Serialization ---
 rusqlite = "0.37.0"
 serde = { version = "1.0.219", features = ["derive"] }
+proptest = "1.7.0"
+bincode = "2.0.1"
 
 [features]
 # Optional/benchmarking features

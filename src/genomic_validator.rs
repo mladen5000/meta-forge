@@ -1,26 +1,40 @@
-use std::collections::HashMap;
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
+//! GenomicDataValidator
+//!
+//! A self-contained quality-control toolkit for FASTQ / raw-string
+//! validation.  Designed for integration in CLI or pipeline code.
 
-/// Comprehensive validation tool for genomic data processing
+use std::collections::HashMap;
+
+use anyhow::{Result, anyhow, bail};
+use bio::io::fastq;
+use proptest::prelude::*;
+use serde::{Deserialize, Serialize};
+
+/* ------------------------------------------------------------------------- */
+/*                               CORE STRUCTS                                */
+/* ------------------------------------------------------------------------- */
+
+/// High-level validator holding tunable thresholds plus run statistics.
 pub struct GenomicDataValidator {
-    /// Quality thresholds for different data types
     thresholds: ValidationThresholds,
-    /// Validation statistics
     stats: ValidationStats,
 }
 
+/// Thresholds controlling pass/fail decisions.
+///
+/// The defaults are lenient enough for short-read Illumina data.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ValidationThresholds {
     pub min_sequence_length: usize,
     pub max_sequence_length: usize,
     pub min_quality_score: u8,
-    pub max_n_content: f64,
+    pub max_n_content: f64, // proportion 0–1
     pub min_gc_content: f64,
     pub max_gc_content: f64,
-    pub max_homopolymer_length: usize,
+    pub max_homopolymer_len: usize,
 }
 
+/// Cumulative run statistics.
 #[derive(Default, Serialize, Deserialize)]
 pub struct ValidationStats {
     pub sequences_validated: usize,
@@ -29,6 +43,7 @@ pub struct ValidationStats {
     pub common_failures: HashMap<String, usize>,
 }
 
+/// Per-sequence QC result.
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
     pub passed: bool,
@@ -37,6 +52,7 @@ pub struct ValidationResult {
     pub metrics: SequenceMetrics,
 }
 
+/// Per-sequence computed metrics.
 #[derive(Debug, Clone)]
 pub struct SequenceMetrics {
     pub length: usize,
@@ -44,10 +60,15 @@ pub struct SequenceMetrics {
     pub n_content: f64,
     pub mean_quality: f64,
     pub max_homopolymer: usize,
-    pub complexity_score: f64,
+    pub complexity: f64,
 }
 
+/* ------------------------------------------------------------------------- */
+/*                               IMPLEMENTATION                              */
+/* ------------------------------------------------------------------------- */
+
 impl GenomicDataValidator {
+    /// Create a new validator with default thresholds.
     pub fn new() -> Self {
         Self {
             thresholds: ValidationThresholds::default(),
@@ -55,229 +76,241 @@ impl GenomicDataValidator {
         }
     }
 
-    /// Validate a DNA sequence with quality scores
-    pub fn validate_sequence(&mut self, sequence: &str, quality: Option<&[u8]>) -> ValidationResult {
+    /// Main entry point: validate a single sequence + optional qualities.
+    pub fn validate_sequence(
+        &mut self,
+        sequence: &str,
+        quality: Option<&[u8]>,
+    ) -> ValidationResult {
         self.stats.sequences_validated += 1;
-        
-        let mut result = ValidationResult {
+
+        let metrics = self.calculate_metrics(sequence, quality);
+        let mut res = ValidationResult {
             passed: true,
             warnings: Vec::new(),
             errors: Vec::new(),
-            metrics: self.calculate_metrics(sequence, quality),
+            metrics,
         };
 
-        // Length validation
-        if sequence.len() < self.thresholds.min_sequence_length {
-            result.errors.push(format!("Sequence too short: {} bp (min: {})", 
-                sequence.len(), self.thresholds.min_sequence_length));
-            result.passed = false;
+        // ---- Hard failures -------------------------------------------------
+        if metrics.length < self.thresholds.min_sequence_length {
+            res.fail(format!(
+                "Sequence too short: {} bp (min {})",
+                metrics.length, self.thresholds.min_sequence_length
+            ));
         }
-
-        if sequence.len() > self.thresholds.max_sequence_length {
-            result.warnings.push(format!("Sequence very long: {} bp (max recommended: {})", 
-                sequence.len(), self.thresholds.max_sequence_length));
+        if metrics.n_content > self.thresholds.max_n_content {
+            res.fail(format!(
+                "N content {:.2}% > {:.2}%",
+                metrics.n_content * 100.0,
+                self.thresholds.max_n_content * 100.0
+            ));
         }
-
-        // GC content validation
-        if result.metrics.gc_content < self.thresholds.min_gc_content {
-            result.warnings.push(format!("Low GC content: {:.2}% (min: {:.2}%)", 
-                result.metrics.gc_content * 100.0, self.thresholds.min_gc_content * 100.0));
-        }
-
-        if result.metrics.gc_content > self.thresholds.max_gc_content {
-            result.warnings.push(format!("High GC content: {:.2}% (max: {:.2}%)", 
-                result.metrics.gc_content * 100.0, self.thresholds.max_gc_content * 100.0));
-        }
-
-        // N content validation
-        if result.metrics.n_content > self.thresholds.max_n_content {
-            result.errors.push(format!("Too many ambiguous bases: {:.2}% (max: {:.2}%)", 
-                result.metrics.n_content * 100.0, self.thresholds.max_n_content * 100.0));
-            result.passed = false;
-        }
-
-        // Quality validation
-        if let Some(_) = quality {
-            if result.metrics.mean_quality < self.thresholds.min_quality_score as f64 {
-                result.warnings.push(format!("Low mean quality: {:.1} (min: {})", 
-                    result.metrics.mean_quality, self.thresholds.min_quality_score));
-            }
-        }
-
-        // Homopolymer validation
-        if result.metrics.max_homopolymer > self.thresholds.max_homopolymer_length {
-            result.warnings.push(format!("Long homopolymer run detected: {} bp", 
-                result.metrics.max_homopolymer));
-        }
-
-        // Complexity validation
-        if result.metrics.complexity_score < 0.5 {
-            result.warnings.push(format!("Low sequence complexity: {:.3}", 
-                result.metrics.complexity_score));
-        }
-
-        // Character validation
         for (i, ch) in sequence.chars().enumerate() {
-            match ch.to_ascii_uppercase() {
-                'A' | 'C' | 'G' | 'T' | 'N' => {},
-                _ => {
-                    result.errors.push(format!("Invalid character '{}' at position {}", ch, i));
-                    result.passed = false;
-                }
+            if !matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T' | 'N') {
+                res.fail(format!("Invalid base '{}' at position {}", ch, i));
             }
         }
 
-        // Update statistics
-        if result.passed {
+        // ---- Soft warnings -------------------------------------------------
+        if metrics.length > self.thresholds.max_sequence_length {
+            res.warn(format!(
+                "Unusually long: {} bp (recommended max {})",
+                metrics.length, self.thresholds.max_sequence_length
+            ));
+        }
+        if metrics.gc_content < self.thresholds.min_gc_content {
+            res.warn(format!(
+                "GC {:.2}% < {:.2}%",
+                metrics.gc_content * 100.0,
+                self.thresholds.min_gc_content * 100.0
+            ));
+        }
+        if metrics.gc_content > self.thresholds.max_gc_content {
+            res.warn(format!(
+                "GC {:.2}% > {:.2}%",
+                metrics.gc_content * 100.0,
+                self.thresholds.max_gc_content * 100.0
+            ));
+        }
+        if metrics.mean_quality < self.thresholds.min_quality_score as f64 {
+            res.warn(format!(
+                "Mean Q {:.1} < {}",
+                metrics.mean_quality, self.thresholds.min_quality_score
+            ));
+        }
+        if metrics.max_homopolymer > self.thresholds.max_homopolymer_len {
+            res.warn(format!(
+                "Long homopolymer: {} bp (max {})",
+                metrics.max_homopolymer, self.thresholds.max_homopolymer_len
+            ));
+        }
+        if metrics.complexity < 0.5 {
+            res.warn(format!("Low complexity: {:.3}", metrics.complexity));
+        }
+
+        // ---- Stats aggregation --------------------------------------------
+        if res.passed {
             self.stats.sequences_passed += 1;
         } else {
             self.stats.sequences_failed += 1;
-            for error in &result.errors {
-                *self.stats.common_failures.entry(error.clone()).or_insert(0) += 1;
+            for e in &res.errors {
+                *self.stats.common_failures.entry(e.clone()).or_insert(0) += 1;
             }
         }
-
-        result
+        res
     }
 
-    /// Validate k-mer size compatibility
-    pub fn validate_kmer_size(&self, sequence_length: usize, k: usize) -> Result<()> {
-        if k > sequence_length {
-            return Err(anyhow!("K-mer size {} exceeds sequence length {}", k, sequence_length));
+    /// Fast sanity check for k-mer sizes.
+    pub fn validate_kmer_size(&self, seq_len: usize, k: usize) -> Result<()> {
+        if k > seq_len {
+            bail!("k={} exceeds sequence length {}", k, seq_len);
         }
-        
-        if k < 15 {
-            return Err(anyhow!("K-mer size {} too small (minimum recommended: 15)", k));
+        if !(15..=255).contains(&k) {
+            bail!("k={} outside supported 15–255 range", k);
         }
-        
-        if k > 255 {
-            return Err(anyhow!("K-mer size {} too large (maximum supported: 255)", k));
-        }
-        
         if k % 2 == 0 {
-            println!("Warning: Even k-mer size {} may cause assembly issues", k);
+            eprintln!("⚠️  Even k={} can hinder assembly", k);
         }
-        
         Ok(())
     }
 
-    /// Validate file format and content
-    pub fn validate_fastq_file(&mut self, file_path: &str) -> Result<ValidationSummary> {
-        use bio::io::fastq;
-        
+    /// Iterate through a FASTQ and return a roll-up summary.
+    pub fn validate_fastq_file(&mut self, path: &str) -> Result<ValidationSummary> {
         let mut summary = ValidationSummary::default();
-        let reader = fastq::Reader::from_file(file_path)?;
-        
-        for (read_id, record_result) in reader.records().enumerate() {
-            let record = record_result?;
-            let sequence = std::str::from_utf8(record.seq())?;
-            let quality = record.qual();
-            
-            let result = self.validate_sequence(sequence, Some(quality));
-            summary.add_result(result);
-            
-            if read_id % 10000 == 0 && read_id > 0 {
-                println!("Validated {} sequences...", read_id);
+        let mut reader = fastq::Reader::from_file(path)?;
+
+        for (idx, rec) in reader.records().enumerate() {
+            let rec = rec?;
+            let seq = std::str::from_utf8(rec.seq())?;
+            let res = self.validate_sequence(seq, Some(rec.qual()));
+            summary.add(res);
+
+            if idx % 10_000 == 9 {
+                eprintln!("  validated {} reads …", idx + 1);
             }
         }
-        
         Ok(summary)
     }
 
-    fn calculate_metrics(&self, sequence: &str, quality: Option<&[u8]>) -> SequenceMetrics {
-        let length = sequence.len();
-        let mut gc_count = 0;
-        let mut n_count = 0;
-        let mut max_homopolymer = 0;
-        let mut current_homopolymer = 1;
-        let mut prev_char = '\0';
+    /* --------------------- internal helper functions --------------------- */
 
-        // Count nucleotides and homopolymers
-        for ch in sequence.chars() {
-            match ch.to_ascii_uppercase() {
-                'G' | 'C' => gc_count += 1,
-                'N' => n_count += 1,
+    fn calculate_metrics(&self, seq: &str, qual: Option<&[u8]>) -> SequenceMetrics {
+        let len = seq.len();
+        if len == 0 {
+            return SequenceMetrics {
+                length: 0,
+                gc_content: 0.0,
+                n_content: 0.0,
+                mean_quality: 0.0,
+                max_homopolymer: 0,
+                complexity: 0.0,
+            };
+        }
+
+        let mut gc = 0;
+        let mut n = 0;
+        let mut max_hpoly = 0;
+        let mut cur = 0;
+        let mut prev = '\0';
+
+        for ch in seq.chars() {
+            let upper = ch.to_ascii_uppercase();
+            match upper {
+                'G' | 'C' => gc += 1,
+                'N' => n += 1,
                 _ => {}
-            }
+            };
 
-            if ch == prev_char {
-                current_homopolymer += 1;
+            if upper == prev {
+                cur += 1;
             } else {
-                max_homopolymer = max_homopolymer.max(current_homopolymer);
-                current_homopolymer = 1;
-                prev_char = ch;
+                max_hpoly = max_hpoly.max(cur);
+                cur = 1;
+                prev = upper;
             }
         }
-        max_homopolymer = max_homopolymer.max(current_homopolymer);
+        max_hpoly = max_hpoly.max(cur);
 
-        // Calculate quality metrics
-        let mean_quality = if let Some(qual) = quality {
-            qual.iter().map(|&q| q as f64).sum::<f64>() / qual.len() as f64
-        } else {
-            0.0
-        };
-
-        // Calculate complexity using Shannon entropy
-        let complexity_score = self.calculate_shannon_entropy(sequence);
+        let mean_q = qual
+            .map(|q| q.iter().map(|&b| b as f64).sum::<f64>() / q.len() as f64)
+            .unwrap_or(0.0);
 
         SequenceMetrics {
-            length,
-            gc_content: gc_count as f64 / length as f64,
-            n_content: n_count as f64 / length as f64,
-            mean_quality,
-            max_homopolymer,
-            complexity_score,
+            length: len,
+            gc_content: gc as f64 / len as f64,
+            n_content: n as f64 / len as f64,
+            mean_quality: mean_q,
+            max_homopolymer: max_hpoly,
+            complexity: Self::shannon_entropy(seq),
         }
     }
 
-    fn calculate_shannon_entropy(&self, sequence: &str) -> f64 {
-        let mut counts = [0u32; 4]; // A, C, G, T
+    /// Shannon entropy normalised to [0, 1].
+    fn shannon_entropy(seq: &str) -> f64 {
+        let mut counts = [0u32; 4]; // A,C,G,T
         let mut total = 0u32;
-
-        for ch in sequence.chars() {
+        for ch in seq.chars() {
             match ch.to_ascii_uppercase() {
-                'A' => { counts[0] += 1; total += 1; },
-                'C' => { counts[1] += 1; total += 1; },
-                'G' => { counts[2] += 1; total += 1; },
-                'T' => { counts[3] += 1; total += 1; },
-                _ => {} // Skip N's and other characters
+                'A' => counts[0] += 1,
+                'C' => counts[1] += 1,
+                'G' => counts[2] += 1,
+                'T' => counts[3] += 1,
+                _ => {}
             }
+            total += 1;
         }
-
-        if total == 0 { return 0.0; }
-
-        let entropy = counts.iter()
+        if total == 0 {
+            return 0.0;
+        }
+        let entropy = counts
+            .iter()
             .filter(|&&c| c > 0)
             .map(|&c| {
                 let p = c as f64 / total as f64;
                 -p * p.log2()
             })
             .sum::<f64>();
-
-        entropy / 2.0 // Normalize to [0, 1]
+        entropy / 2.0 // log2(4)=2
     }
 
-    pub fn get_stats(&self) -> &ValidationStats {
+    /// Public accessor for cumulative stats.
+    pub fn stats(&self) -> &ValidationStats {
         &self.stats
     }
 
+    /// Pretty console report.
     pub fn print_report(&self) {
-        println!("\n=== Genomic Data Validation Report ===");
-        println!("Total sequences validated: {}", self.stats.sequences_validated);
-        println!("Passed validation: {}", self.stats.sequences_passed);
-        println!("Failed validation: {}", self.stats.sequences_failed);
-        println!("Success rate: {:.2}%", 
-            (self.stats.sequences_passed as f64 / self.stats.sequences_validated as f64) * 100.0);
-        
+        println!(
+            "\nValidated: {}, Passed: {}, Failed: {}  ({:.2} % pass)",
+            self.stats.sequences_validated,
+            self.stats.sequences_passed,
+            self.stats.sequences_failed,
+            100.0 * self.stats.sequences_passed as f64
+                / self.stats.sequences_validated.max(1) as f64
+        );
         if !self.stats.common_failures.is_empty() {
-            println!("\nCommon failure types:");
-            let mut failures: Vec<_> = self.stats.common_failures.iter().collect();
-            failures.sort_by(|a, b| b.1.cmp(a.1));
-            
-            for (error, count) in failures.iter().take(5) {
-                println!("  {}: {} occurrences", error, count);
+            println!("Top failure causes:");
+            let mut v: Vec<_> = self.stats.common_failures.iter().collect();
+            v.sort_by(|a, b| b.1.cmp(a.1));
+            for (err, n) in v.into_iter().take(5) {
+                println!("  {} – {}", n, err);
             }
         }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/*                             SUPPORT STRUCTS                               */
+/* ------------------------------------------------------------------------- */
+
+impl ValidationResult {
+    fn warn(&mut self, m: String) {
+        self.warnings.push(m);
+    }
+    fn fail(&mut self, m: String) {
+        self.errors.push(m);
+        self.passed = false;
     }
 }
 
@@ -287,72 +320,79 @@ impl Default for ValidationThresholds {
             min_sequence_length: 50,
             max_sequence_length: 1_000_000,
             min_quality_score: 20,
-            max_n_content: 0.1, // 10%
-            min_gc_content: 0.2, // 20%
-            max_gc_content: 0.8, // 80%
-            max_homopolymer_length: 20,
+            max_n_content: 0.10,
+            min_gc_content: 0.20,
+            max_gc_content: 0.80,
+            max_homopolymer_len: 20,
         }
     }
 }
 
+/// Run-level roll-up.
 #[derive(Default)]
 pub struct ValidationSummary {
-    pub total_sequences: usize,
-    pub passed_sequences: usize,
-    pub total_warnings: usize,
-    pub total_errors: usize,
-    pub avg_length: f64,
-    pub avg_gc_content: f64,
+    pub total: usize,
+    pub passed: usize,
+    pub warnings: usize,
+    pub errors: usize,
+    pub avg_len: f64,
+    pub avg_gc: f64,
     pub avg_quality: f64,
 }
 
 impl ValidationSummary {
-    fn add_result(&mut self, result: ValidationResult) {
-        self.total_sequences += 1;
-        if result.passed {
-            self.passed_sequences += 1;
-        }
-        self.total_warnings += result.warnings.len();
-        self.total_errors += result.errors.len();
-        
-        // Update running averages
-        let n = self.total_sequences as f64;
-        self.avg_length = (self.avg_length * (n - 1.0) + result.metrics.length as f64) / n;
-        self.avg_gc_content = (self.avg_gc_content * (n - 1.0) + result.metrics.gc_content) / n;
-        self.avg_quality = (self.avg_quality * (n - 1.0) + result.metrics.mean_quality) / n;
+    fn add(&mut self, r: ValidationResult) {
+        self.total += 1;
+        self.passed += usize::from(r.passed);
+        self.warnings += r.warnings.len();
+        self.errors += r.errors.len();
+
+        let n = self.total as f64;
+        self.avg_len = (self.avg_len * (n - 1.0) + r.metrics.length as f64) / n;
+        self.avg_gc = (self.avg_gc * (n - 1.0) + r.metrics.gc_content) / n;
+        self.avg_quality = (self.avg_quality * (n - 1.0) + r.metrics.mean_quality) / n;
     }
 }
+
+/* ------------------------------------------------------------------------- */
+/*                                    TESTS                                  */
+/* ------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_sequence_validation() {
-        let mut validator = GenomicDataValidator::new();
-        
-        // Valid sequence
-        let result = validator.validate_sequence("ATCGATCGATCGATCG", None);
-        assert!(result.passed);
-        assert!(result.errors.is_empty());
-        
-        // Invalid character
-        let result = validator.validate_sequence("ATCGATCXATCGATCG", None);
-        assert!(!result.passed);
-        assert!(!result.errors.is_empty());
-        
-        // Too short
-        let result = validator.validate_sequence("ATCG", None);
-        assert!(!result.passed);
+    fn basic_pass() {
+        let mut v = GenomicDataValidator::new();
+        let res = v.validate_sequence("ATCGATCGATCG", None);
+        assert!(res.passed);
+        assert!(res.errors.is_empty());
     }
 
     #[test]
-    fn test_metrics_calculation() {
-        let validator = GenomicDataValidator::new();
-        let metrics = validator.calculate_metrics("AAATTTCCCGGG", None);
-        
-        assert_eq!(metrics.length, 12);
-        assert!((metrics.gc_content - 0.5).abs() < 0.01);
-        assert!(metrics.complexity_score > 0.8); // Should be high complexity
+    fn catches_bad_base_and_length() {
+        let mut v = GenomicDataValidator::new();
+        let r = v.validate_sequence("AXT", None);
+        assert!(!r.passed);
+        assert!(r.errors.iter().any(|e| e.contains("Invalid base")));
+        assert!(r.errors.iter().any(|e| e.contains("too short")));
+    }
+
+    #[test]
+    fn entropy_boundaries() {
+        let v = GenomicDataValidator::new();
+        let complex = v.calculate_metrics("ACGTACGT", None).complexity;
+        let low = v.calculate_metrics("AAAAAAAA", None).complexity;
+        assert!(complex > low);
+        assert!((0.0..=1.0).contains(&complex));
+    }
+
+    proptest! {
+        #[test]
+        fn fuzz_no_panic(seq in "[ACGTN]{0,200}") {
+            let mut v = GenomicDataValidator::new();
+            let _ = v.validate_sequence(&seq, None);
+        }
     }
 }

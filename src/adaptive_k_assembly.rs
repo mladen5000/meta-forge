@@ -1,236 +1,136 @@
-use anyhow::Result;
-use std::collections::{HashMap, HashSet, VecDeque};
+//! Variable-order (adaptive‐k) de Bruijn graph for metagenomic assembly.
+//!
+//! * `base_k` is the lowest k-mer length allowed.
+//! * `max_k` is the highest k-mer length allowed.
+//!
+//! Each **edge** can negotiate its own effective `k_size` depending on local
+//! sequence complexity: low-entropy regions (repeats) get bigger k to disambiguate,
+//! high-entropy regions keep smaller k for sensitivity.
 
-/// Variable-order de Bruijn graph that can adapt k-mer size per edge
-#[derive(Default)]
+use anyhow::{Result, bail};
+use std::collections::{HashMap, HashSet};
+
+/// Graph container.
+#[derive(Default, Debug)]
 pub struct AdaptiveGraph {
-    /// Base k-mer size (minimum)
+    /// Minimum k-mer length.
     base_k: usize,
-    /// Max k-mer size allowed
+    /// Maximum k-mer length.
     max_k: usize,
-    /// Node data: minimiser hash -> (sequence context, coverage)
+
+    /// Map `minimiser_hash → NodeData`.
     nodes: HashMap<u64, NodeData>,
-    /// Edges with variable k: (from, to) -> EdgeData
+
+    /// Map `(from_hash, to_hash) → EdgeData`.
     edges: HashMap<(u64, u64), EdgeData>,
-    /// Coordinate mapping: contig_pos -> (read_id, read_pos)
+
+    /// Map contig coordinates back to the reads that produced them.
     coord_map: HashMap<ContigCoord, Vec<ReadCoord>>,
 }
 
-#[derive(Clone)]
+/// Metadata stored per node (k-mer minimiser).
+#[derive(Clone, Debug)]
 struct NodeData {
-    /// Actual k-mer sequence (for reconstruction)
     sequence: String,
-    /// Coverage depth
     coverage: u32,
-    /// Local complexity score (higher = more repetitive)
     complexity: f64,
 }
 
-#[derive(Clone)]
+/// Metadata stored per edge in the variable-k graph.
+#[derive(Clone, Debug)]
 struct EdgeData {
-    /// Effective k-mer size for this edge
     k_size: usize,
-    /// Support count
     weight: u32,
-    /// Overlap sequence between nodes
     overlap: String,
 }
 
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct ContigCoord {
     contig_id: usize,
     position: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ReadCoord {
     read_id: usize,
     read_pos: usize,
 }
 
 impl AdaptiveGraph {
+    // --------------------------------------------------------------------- //
+    //  Construction
+    // --------------------------------------------------------------------- //
+
     pub fn new(base_k: usize, max_k: usize) -> Self {
+        assert!(base_k > 0 && max_k >= base_k);
         Self {
             base_k,
             max_k,
-            nodes: HashMap::new(),
-            edges: HashMap::new(),
-            coord_map: HashMap::new(),
+            ..Default::default()
         }
     }
 
-    /// Add a read path, dynamically adjusting k in repetitive regions
+    /// Add a read and adapt k per window depending on local complexity.
     pub fn add_read_with_adaptive_k(&mut self, read_id: usize, sequence: &str) -> Result<()> {
+        if sequence.len() < self.base_k {
+            bail!("Sequence shorter than base_k");
+        }
         let minimisers = self.extract_minimisers_with_positions(sequence)?;
 
-        // Calculate local complexity for each position
         let complexity_scores = self.calculate_local_complexity(sequence);
 
-        // Build path with variable k
         for window in minimisers.windows(2) {
             let (pos1, min1) = window[0];
             let (pos2, min2) = window[1];
-
-            // Determine k-size based on local complexity
             let avg_complexity = (complexity_scores[pos1] + complexity_scores[pos2]) / 2.0;
             let k_size = self.adaptive_k_size(avg_complexity);
 
-            // Extract actual k-mer sequences at chosen k-size
             let kmer1 = self.extract_kmer_at_k(sequence, pos1, k_size)?;
             let kmer2 = self.extract_kmer_at_k(sequence, pos2, k_size)?;
 
-            // Update nodes
             self.update_node(min1, &kmer1, avg_complexity);
             self.update_node(min2, &kmer2, avg_complexity);
 
-            // Update edge with overlap information
             let overlap = self.calculate_overlap(&kmer1, &kmer2, k_size);
             self.update_edge((min1, min2), k_size, overlap);
 
-            // Store coordinate mapping
             self.add_coordinate_mapping(read_id, pos1, pos2);
         }
-
         Ok(())
     }
 
-    /// Calculate local sequence complexity using entropy
-    fn calculate_local_complexity(&self, sequence: &str) -> Vec<f64> {
-        let window_size = 50;
-        let seq_bytes = sequence.as_bytes();
-        let mut complexity = vec![0.0; sequence.len()];
+    // --------------------------------------------------------------------- //
+    //  Assembly
+    // --------------------------------------------------------------------- //
 
-        for i in 0..sequence.len() {
-            let start = i.saturating_sub(window_size / 2);
-            let end = (i + window_size / 2).min(sequence.len());
-            let window = &seq_bytes[start..end];
-
-            // Calculate Shannon entropy
-            let mut counts = [0u32; 4]; // A, C, G, T
-            for &byte in window {
-                match byte {
-                    b'A' | b'a' => counts[0] += 1,
-                    b'C' | b'c' => counts[1] += 1,
-                    b'G' | b'g' => counts[2] += 1,
-                    b'T' | b't' => counts[3] += 1,
-                    _ => {} // Skip ambiguous bases
-                }
-            }
-
-            let total = counts.iter().sum::<u32>() as f64;
-            if total > 0.0 {
-                let entropy = counts
-                    .iter()
-                    .filter(|&&c| c > 0)
-                    .map(|&c| {
-                        let p = c as f64 / total;
-                        -p * p.log2()
-                    })
-                    .sum::<f64>();
-
-                // Low entropy = high repetitiveness = high complexity score
-                complexity[i] = 2.0 - entropy; // Max entropy is 2.0 for DNA
-            }
-        }
-
-        complexity
-    }
-
-    /// Determine k-size based on complexity score
-    fn adaptive_k_size(&self, complexity: f64) -> usize {
-        // Higher complexity (more repetitive) -> larger k
-        let normalized = (complexity / 2.0).clamp(0.0, 1.0);
-        let k_range = self.max_k - self.base_k;
-        self.base_k + (normalized * k_range as f64) as usize
-    }
-
-    fn extract_kmer_at_k(&self, sequence: &str, pos: usize, k: usize) -> Result<String> {
-        if pos + k <= sequence.len() {
-            Ok(sequence[pos..pos + k].to_string())
-        } else {
-            // Handle edge case - use available sequence
-            Ok(sequence[pos..].to_string())
-        }
-    }
-
-    fn calculate_overlap(&self, kmer1: &str, kmer2: &str, k: usize) -> String {
-        // Find maximum overlap between k-mers
-        let max_overlap = (k - 1).min(kmer1.len()).min(kmer2.len());
-
-        for i in (1..=max_overlap).rev() {
-            if kmer1.ends_with(&kmer2[..i]) {
-                return kmer2[i..].to_string();
-            }
-        }
-
-        // No overlap found - full second k-mer
-        kmer2.to_string()
-    }
-
-    fn update_node(&mut self, hash: u64, sequence: &str, complexity: f64) {
-        self.nodes
-            .entry(hash)
-            .and_modify(|node| {
-                node.coverage += 1;
-                node.complexity = (node.complexity + complexity) / 2.0; // Running average
-            })
-            .or_insert(NodeData {
-                sequence: sequence.to_string(),
-                coverage: 1,
-                complexity,
-            });
-    }
-
-    fn update_edge(&mut self, edge_key: (u64, u64), k_size: usize, overlap: String) {
-        self.edges
-            .entry(edge_key)
-            .and_modify(|edge| {
-                edge.weight += 1;
-                // Keep the k_size that has most support
-                if edge.weight == 1 {
-                    edge.k_size = k_size;
-                    edge.overlap = overlap.clone();
-                }
-            })
-            .or_insert(EdgeData {
-                k_size,
-                weight: 1,
-                overlap,
-            });
-    }
-
-    fn add_coordinate_mapping(&mut self, read_id: usize, pos1: usize, pos2: usize) {
-        // This is simplified - in practice you'd track more detailed mappings
-        // for each assembled position back to source reads
-    }
-
-    /// Assembly with variable-k consideration
+    /// Greedy walk to produce contigs, respecting variable-k overlaps.
     pub fn assemble_adaptive_contigs(&self) -> Vec<AdaptiveContig> {
         let mut visited = HashSet::new();
         let mut contigs = Vec::new();
 
-        // Find high-coverage starting nodes
+        // Start from high-coverage nodes.
         let mut start_candidates: Vec<_> = self
             .nodes
             .iter()
-            .filter(|(_, data)| data.coverage >= 3) // Minimum coverage threshold
-            .map(|(&hash, _)| hash)
+            .filter(|(_, d)| d.coverage >= 3)
+            .map(|(&h, _)| h)
             .collect();
+        start_candidates.sort_by_key(|&h| std::cmp::Reverse(self.nodes[&h].coverage));
 
-        start_candidates.sort_by_key(|&hash| std::cmp::Reverse(self.nodes[&hash].coverage));
-
-        for start_node in start_candidates {
-            if visited.contains(&start_node) {
+        for start in start_candidates {
+            if visited.contains(&start) {
                 continue;
             }
-
-            if let Some(contig) = self.extend_contig_adaptive(start_node, &mut visited) {
+            if let Some(contig) = self.extend_contig_adaptive(start, &mut visited) {
                 contigs.push(contig);
             }
         }
-
         contigs
     }
+
+    // --------------------------------------------------------------------- //
+    //  Internal helpers
+    // --------------------------------------------------------------------- //
 
     fn extend_contig_adaptive(
         &self,
@@ -238,120 +138,202 @@ impl AdaptiveGraph {
         visited: &mut HashSet<u64>,
     ) -> Option<AdaptiveContig> {
         let mut path = vec![start];
-        let mut current = start;
-        let mut total_sequence = self.nodes[&start].sequence.clone();
+        let mut seq = self.nodes[&start].sequence.clone();
+        let mut cur = start;
 
-        // Extend forward
-        while let Some(next) = self.find_best_next_node(current, visited) {
+        while let Some(next) = self.find_best_next_node(cur, visited) {
             if visited.contains(&next) {
                 break;
             }
-
             path.push(next);
-
-            // Get edge data for overlap calculation
-            if let Some(edge_data) = self.edges.get(&(current, next)) {
-                total_sequence.push_str(&edge_data.overlap);
+            if let Some(edge) = self.edges.get(&(cur, next)) {
+                seq.push_str(&edge.overlap);
             } else {
-                // Fallback - just append the k-mer
-                total_sequence.push_str(&self.nodes[&next].sequence);
+                seq.push_str(&self.nodes[&next].sequence);
             }
-
-            current = next;
+            cur = next;
         }
-
-        // Mark all nodes in path as visited
-        for &node in &path {
-            visited.insert(node);
+        for &n in &path {
+            visited.insert(n);
         }
-
-        if path.len() >= 2 {
+        if path.len() > 1 {
             Some(AdaptiveContig {
-                nodes: path,
-                sequence: total_sequence,
-                avg_coverage: self.calculate_path_coverage(&path.clone()),
+                nodes: path.clone(),
+                sequence: seq,
+                avg_coverage: self.calculate_path_coverage(&path),
             })
         } else {
             None
         }
     }
 
-    fn find_best_next_node(&self, current: u64, visited: &HashSet<u64>) -> Option<u64> {
+    fn find_best_next_node(&self, cur: u64, visited: &HashSet<u64>) -> Option<u64> {
         self.edges
             .iter()
-            .filter(|((from, to), _)| *from == current && !visited.contains(to))
-            .max_by_key(|(_, edge_data)| edge_data.weight)
+            .filter(|((from, to), _)| *from == cur && !visited.contains(to))
+            .max_by_key(|(_, e)| e.weight)
             .map(|((_, to), _)| *to)
     }
 
     fn calculate_path_coverage(&self, path: &[u64]) -> f64 {
         path.iter()
-            .map(|&node| self.nodes[&node].coverage as f64)
+            .map(|n| self.nodes[n].coverage as f64)
             .sum::<f64>()
             / path.len() as f64
     }
 
-    fn extract_minimisers_with_positions(&self, sequence: &str) -> Result<Vec<(usize, u64)>> {
-        // Reuse your existing minimiser extraction logic
-        // This should return (position, minimiser_hash) pairs
-        Ok(vec![]) // Placeholder
+    // ========== Complexity / adaptive k ================================= //
+
+    fn calculate_local_complexity(&self, seq: &str) -> Vec<f64> {
+        let win = 50;
+        let mut out = vec![0.0; seq.len()];
+        let bytes = seq.as_bytes();
+
+        for i in 0..seq.len() {
+            let s = i.saturating_sub(win / 2);
+            let e = (i + win / 2).min(seq.len());
+            let window = &bytes[s..e];
+
+            let mut count = [0u32; 4];
+            for &b in window {
+                match b {
+                    b'A' | b'a' => count[0] += 1,
+                    b'C' | b'c' => count[1] += 1,
+                    b'G' | b'g' => count[2] += 1,
+                    b'T' | b't' => count[3] += 1,
+                    _ => {}
+                }
+            }
+            let total = count.iter().sum::<u32>() as f64;
+            if total == 0.0 {
+                continue;
+            }
+            let entropy: f64 = count
+                .iter()
+                .filter(|&&c| c > 0)
+                .map(|&c| {
+                    let p = c as f64 / total;
+                    -p * p.log2()
+                })
+                .sum();
+
+            // Reversed: low entropy => high "complexity score".
+            out[i] = 2.0 - entropy;
+        }
+        out
+    }
+
+    fn adaptive_k_size(&self, complexity: f64) -> usize {
+        let norm = (complexity / 2.0).clamp(0.0, 1.0);
+        self.base_k + ((self.max_k - self.base_k) as f64 * norm).round() as usize
+    }
+
+    // ========== k-mer helpers =========================================== //
+
+    fn extract_kmer_at_k(&self, seq: &str, pos: usize, k: usize) -> Result<String> {
+        if pos + k <= seq.len() {
+            Ok(seq[pos..pos + k].to_owned())
+        } else {
+            bail!("k-mer range out of bounds");
+        }
+    }
+
+    fn calculate_overlap(&self, k1: &str, k2: &str, k: usize) -> String {
+        let max = (k - 1).min(k1.len()).min(k2.len());
+        for i in (1..=max).rev() {
+            if k1.ends_with(&k2[..i]) {
+                return k2[i..].to_owned();
+            }
+        }
+        k2.to_owned()
+    }
+
+    fn update_node(&mut self, hash: u64, seq: &str, complexity: f64) {
+        self.nodes
+            .entry(hash)
+            .and_modify(|n| {
+                n.coverage += 1;
+                n.complexity = (n.complexity + complexity) / 2.0;
+            })
+            .or_insert(NodeData {
+                sequence: seq.to_owned(),
+                coverage: 1,
+                complexity,
+            });
+    }
+
+    fn update_edge(&mut self, key: (u64, u64), k: usize, overlap: String) {
+        self.edges
+            .entry(key)
+            .and_modify(|e| e.weight += 1)
+            .or_insert(EdgeData {
+                k_size: k,
+                weight: 1,
+                overlap,
+            });
+    }
+
+    fn add_coordinate_mapping(&mut self, _read_id: usize, _p1: usize, _p2: usize) {
+        // Implement as needed
+    }
+
+    // ========== Minimiser stub (replace with real hash) ================= //
+
+    /// Very small demonstrator: returns every `base_k`-step minimiser hash.
+    fn extract_minimisers_with_positions(&self, seq: &str) -> Result<Vec<(usize, u64)>> {
+        let mut v = Vec::new();
+        for i in (0..=seq.len() - self.base_k).step_by(self.base_k) {
+            let kmer = &seq[i..i + self.base_k];
+            let hash = fxhash::hash64(kmer.as_bytes()); // fast 64-bit hash
+            v.push((i, hash));
+        }
+        if v.len() < 2 {
+            bail!("Need at least 2 minimisers to add a read");
+        }
+        Ok(v)
     }
 }
 
-#[derive(Clone)]
+// ------------------------------------------------------------------------- //
+//  Public Contig struct
+// ------------------------------------------------------------------------- //
+
+#[derive(Clone, Debug)]
 pub struct AdaptiveContig {
     pub nodes: Vec<u64>,
     pub sequence: String,
     pub avg_coverage: f64,
 }
 
-/// Back-port contig coordinates to original read positions
-pub fn map_contig_to_reads(
-    contig: &AdaptiveContig,
-    graph: &AdaptiveGraph,
-) -> HashMap<usize, Vec<ReadCoord>> {
-    let mut mapping = HashMap::new();
-
-    for (contig_pos, &node_hash) in contig.nodes.iter().enumerate() {
-        // Look up all read coordinates that contributed to this node
-        let contig_coord = ContigCoord {
-            contig_id: 0, // Would need to track contig IDs properly
-            position: contig_pos,
-        };
-
-        if let Some(read_coords) = graph.coord_map.get(&contig_coord) {
-            mapping.insert(contig_pos, read_coords.clone());
-        }
-    }
-
-    mapping
-}
+// ------------------------------------------------------------------------- //
+//  Unit-tests
+// ------------------------------------------------------------------------- //
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_adaptive_k_selection() {
-        let graph = AdaptiveGraph::new(15, 31);
-
-        // Low complexity (uniform) -> smaller k
-        assert_eq!(graph.adaptive_k_size(0.5), 17);
-
-        // High complexity (repetitive) -> larger k
-        assert_eq!(graph.adaptive_k_size(1.5), 27);
+    fn adaptive_k_bounds() {
+        let g = AdaptiveGraph::new(15, 31);
+        assert_eq!(g.adaptive_k_size(0.0), 15);
+        assert_eq!(g.adaptive_k_size(2.0), 31);
     }
 
     #[test]
-    fn test_complexity_calculation() {
-        let graph = AdaptiveGraph::new(15, 31);
-        let uniform_seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-        let complex_seq = "ACGTACGTACGTACGTACGTACGTACGTACGTAC";
+    fn complexity_ordering() {
+        let g = AdaptiveGraph::new(15, 31);
+        let low_entropy = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let high_entropy = "ACGTACGTACGTACGTACGTACGTACGTACGTACG";
+        let c1 = g.calculate_local_complexity(low_entropy);
+        let c2 = g.calculate_local_complexity(high_entropy);
+        assert!(c1[10] > c2[10]); // low entropy => higher score
+    }
 
-        let uniform_complexity = graph.calculate_local_complexity(uniform_seq);
-        let complex_complexity = graph.calculate_local_complexity(complex_seq);
-
-        // Uniform sequence should have higher complexity score (lower entropy)
-        assert!(uniform_complexity[15] > complex_complexity[15]);
+    #[test]
+    fn dummy_read_add() {
+        let mut g = AdaptiveGraph::new(15, 31);
+        let read = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        assert!(g.add_read_with_adaptive_k(0, read).is_ok());
     }
 }

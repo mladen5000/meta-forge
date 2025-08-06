@@ -86,7 +86,7 @@ struct RawRead {
 }
 
 #[derive(Clone)]
-struct CorrectedRead {
+pub struct CorrectedRead {
     id: usize,
     original: String,
     corrected: String,
@@ -94,7 +94,7 @@ struct CorrectedRead {
 }
 
 #[derive(Clone)]
-struct BaseCorrection {
+pub struct BaseCorrection {
     position: usize,
     from: char,
     to: char,
@@ -102,7 +102,7 @@ struct BaseCorrection {
 }
 
 #[derive(Clone)]
-struct AssemblyChunk {
+pub struct AssemblyChunk {
     reads: Vec<CorrectedRead>,
     k_size: usize,
     graph_fragment: GraphFragment,
