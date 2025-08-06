@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet, VecDeque};
 use anyhow::Result;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Variable-order de Bruijn graph that can adapt k-mer size per edge
 #[derive(Default)]
@@ -62,35 +62,35 @@ impl AdaptiveGraph {
     /// Add a read path, dynamically adjusting k in repetitive regions
     pub fn add_read_with_adaptive_k(&mut self, read_id: usize, sequence: &str) -> Result<()> {
         let minimisers = self.extract_minimisers_with_positions(sequence)?;
-        
+
         // Calculate local complexity for each position
         let complexity_scores = self.calculate_local_complexity(sequence);
-        
+
         // Build path with variable k
         for window in minimisers.windows(2) {
             let (pos1, min1) = window[0];
             let (pos2, min2) = window[1];
-            
+
             // Determine k-size based on local complexity
             let avg_complexity = (complexity_scores[pos1] + complexity_scores[pos2]) / 2.0;
             let k_size = self.adaptive_k_size(avg_complexity);
-            
+
             // Extract actual k-mer sequences at chosen k-size
             let kmer1 = self.extract_kmer_at_k(sequence, pos1, k_size)?;
             let kmer2 = self.extract_kmer_at_k(sequence, pos2, k_size)?;
-            
+
             // Update nodes
             self.update_node(min1, &kmer1, avg_complexity);
             self.update_node(min2, &kmer2, avg_complexity);
-            
+
             // Update edge with overlap information
             let overlap = self.calculate_overlap(&kmer1, &kmer2, k_size);
             self.update_edge((min1, min2), k_size, overlap);
-            
+
             // Store coordinate mapping
             self.add_coordinate_mapping(read_id, pos1, pos2);
         }
-        
+
         Ok(())
     }
 
@@ -99,12 +99,12 @@ impl AdaptiveGraph {
         let window_size = 50;
         let seq_bytes = sequence.as_bytes();
         let mut complexity = vec![0.0; sequence.len()];
-        
+
         for i in 0..sequence.len() {
             let start = i.saturating_sub(window_size / 2);
             let end = (i + window_size / 2).min(sequence.len());
             let window = &seq_bytes[start..end];
-            
+
             // Calculate Shannon entropy
             let mut counts = [0u32; 4]; // A, C, G, T
             for &byte in window {
@@ -116,7 +116,7 @@ impl AdaptiveGraph {
                     _ => {} // Skip ambiguous bases
                 }
             }
-            
+
             let total = counts.iter().sum::<u32>() as f64;
             if total > 0.0 {
                 let entropy = counts
@@ -127,12 +127,12 @@ impl AdaptiveGraph {
                         -p * p.log2()
                     })
                     .sum::<f64>();
-                
+
                 // Low entropy = high repetitiveness = high complexity score
                 complexity[i] = 2.0 - entropy; // Max entropy is 2.0 for DNA
             }
         }
-        
+
         complexity
     }
 
@@ -156,13 +156,13 @@ impl AdaptiveGraph {
     fn calculate_overlap(&self, kmer1: &str, kmer2: &str, k: usize) -> String {
         // Find maximum overlap between k-mers
         let max_overlap = (k - 1).min(kmer1.len()).min(kmer2.len());
-        
+
         for i in (1..=max_overlap).rev() {
             if kmer1.ends_with(&kmer2[..i]) {
                 return kmer2[i..].to_string();
             }
         }
-        
+
         // No overlap found - full second k-mer
         kmer2.to_string()
     }
@@ -208,42 +208,47 @@ impl AdaptiveGraph {
     pub fn assemble_adaptive_contigs(&self) -> Vec<AdaptiveContig> {
         let mut visited = HashSet::new();
         let mut contigs = Vec::new();
-        
+
         // Find high-coverage starting nodes
-        let mut start_candidates: Vec<_> = self.nodes
+        let mut start_candidates: Vec<_> = self
+            .nodes
             .iter()
             .filter(|(_, data)| data.coverage >= 3) // Minimum coverage threshold
             .map(|(&hash, _)| hash)
             .collect();
-        
+
         start_candidates.sort_by_key(|&hash| std::cmp::Reverse(self.nodes[&hash].coverage));
-        
+
         for start_node in start_candidates {
             if visited.contains(&start_node) {
                 continue;
             }
-            
+
             if let Some(contig) = self.extend_contig_adaptive(start_node, &mut visited) {
                 contigs.push(contig);
             }
         }
-        
+
         contigs
     }
 
-    fn extend_contig_adaptive(&self, start: u64, visited: &mut HashSet<u64>) -> Option<AdaptiveContig> {
+    fn extend_contig_adaptive(
+        &self,
+        start: u64,
+        visited: &mut HashSet<u64>,
+    ) -> Option<AdaptiveContig> {
         let mut path = vec![start];
         let mut current = start;
         let mut total_sequence = self.nodes[&start].sequence.clone();
-        
+
         // Extend forward
         while let Some(next) = self.find_best_next_node(current, visited) {
             if visited.contains(&next) {
                 break;
             }
-            
+
             path.push(next);
-            
+
             // Get edge data for overlap calculation
             if let Some(edge_data) = self.edges.get(&(current, next)) {
                 total_sequence.push_str(&edge_data.overlap);
@@ -251,20 +256,20 @@ impl AdaptiveGraph {
                 // Fallback - just append the k-mer
                 total_sequence.push_str(&self.nodes[&next].sequence);
             }
-            
+
             current = next;
         }
-        
+
         // Mark all nodes in path as visited
         for &node in &path {
             visited.insert(node);
         }
-        
+
         if path.len() >= 2 {
             Some(AdaptiveContig {
                 nodes: path,
                 sequence: total_sequence,
-                avg_coverage: self.calculate_path_coverage(&path),
+                avg_coverage: self.calculate_path_coverage(&path.clone()),
             })
         } else {
             None
@@ -282,7 +287,8 @@ impl AdaptiveGraph {
     fn calculate_path_coverage(&self, path: &[u64]) -> f64 {
         path.iter()
             .map(|&node| self.nodes[&node].coverage as f64)
-            .sum::<f64>() / path.len() as f64
+            .sum::<f64>()
+            / path.len() as f64
     }
 
     fn extract_minimisers_with_positions(&self, sequence: &str) -> Result<Vec<(usize, u64)>> {
@@ -305,46 +311,46 @@ pub fn map_contig_to_reads(
     graph: &AdaptiveGraph,
 ) -> HashMap<usize, Vec<ReadCoord>> {
     let mut mapping = HashMap::new();
-    
+
     for (contig_pos, &node_hash) in contig.nodes.iter().enumerate() {
         // Look up all read coordinates that contributed to this node
         let contig_coord = ContigCoord {
             contig_id: 0, // Would need to track contig IDs properly
             position: contig_pos,
         };
-        
+
         if let Some(read_coords) = graph.coord_map.get(&contig_coord) {
             mapping.insert(contig_pos, read_coords.clone());
         }
     }
-    
+
     mapping
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_adaptive_k_selection() {
         let graph = AdaptiveGraph::new(15, 31);
-        
+
         // Low complexity (uniform) -> smaller k
         assert_eq!(graph.adaptive_k_size(0.5), 17);
-        
-        // High complexity (repetitive) -> larger k  
+
+        // High complexity (repetitive) -> larger k
         assert_eq!(graph.adaptive_k_size(1.5), 27);
     }
-    
+
     #[test]
     fn test_complexity_calculation() {
         let graph = AdaptiveGraph::new(15, 31);
         let uniform_seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         let complex_seq = "ACGTACGTACGTACGTACGTACGTACGTACGTAC";
-        
+
         let uniform_complexity = graph.calculate_local_complexity(uniform_seq);
         let complex_complexity = graph.calculate_local_complexity(complex_seq);
-        
+
         // Uniform sequence should have higher complexity score (lower entropy)
         assert!(uniform_complexity[15] > complex_complexity[15]);
     }
