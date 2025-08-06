@@ -477,7 +477,7 @@ impl ConfigurationManager {
         
         match format.as_str() {
             "json" => {
-                let layer = fmt::layer().json();
+                let layer = fmt::layer().with_target(true).with_thread_ids(true);
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),

@@ -926,7 +926,7 @@ impl DatabaseMigrator {
     }
     
     /// Import sequence data from FASTA files
-    pub fn import_sequences_from_fasta<P: AsRef<Path>>(&self, fasta_file: P, source: &str) -> Result<()> {
+    pub fn import_sequences_from_fasta<P: AsRef<Path> + std::fmt::Debug>(&self, fasta_file: P, source: &str) -> Result<()> {
         use bio::io::fasta;
         
         println!("📥 Importing sequences from FASTA...");

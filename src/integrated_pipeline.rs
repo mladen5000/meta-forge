@@ -487,21 +487,23 @@ impl AdaptiveAssembler {
     }
     
     fn process_batch(&mut self, reads: &[CorrectedRead]) -> Result<AssemblyChunk> {
-        // Simplified assembly chunk creation
-        let mut chunk = crate::core_data_structures::AssemblyChunk::new(0, self.min_k); // Default k size
+        // Create the local AssemblyChunk type
+        let mut chunk = AssemblyChunk {
+            reads: Vec::new(),
+            k_size: self.min_k,
+            graph_fragment: GraphFragment {
+                nodes: AHashMap::new(),
+                edges: Vec::new(),
+                fragment_id: 0,
+                coverage_stats: crate::core_data_structures::CoverageStats::default(),
+            },
+        };
         
         for read in reads {
-            let corrected_read = crate::core_data_structures::CorrectedRead {
-                id: read.id,
-                original: read.original.clone(),
-                corrected: read.corrected.clone(),
-                corrections: Vec::new(),
-                quality_scores: vec![30; read.corrected.len()], // Mock quality scores
-            };
-            chunk.add_read(corrected_read)?;
+            chunk.reads.push(read.clone());
         }
         
-        chunk.finalize();
+        // Assembly chunk is ready
         Ok(chunk)
     }
 }
@@ -625,8 +627,10 @@ impl SmartTaxonomyFilter {
 
         if let Some(ref classifier) = self.classifier {
             // Use machine learning for classification
-            let prediction =
-                classifier.predict(&Array2::from_shape_vec((1, features.len()), features)?)?;
+            // Convert features to DenseMatrix for prediction
+            use smartcore::linalg::basic::matrix::DenseMatrix;
+            let features_matrix = DenseMatrix::from_2d_vec(&vec![features])?;
+            let prediction = classifier.predict(&features_matrix)?;
             let taxonomy_id = prediction[0];
 
             let taxonomy = self.taxonomy_db.get_taxonomy(taxonomy_id)?;
@@ -663,9 +667,18 @@ impl SmartTaxonomyFilter {
         use smartcore::ensemble::random_forest_classifier::RandomForestClassifierParameters;
         let params = RandomForestClassifierParameters::default()
             .with_n_trees(100)
-            .with_max_depth(Some(10));
+            .with_max_depth(10);
 
-        let classifier = RandomForestClassifier::fit(&features, &labels, params)?;
+        // Convert ndarray to smartcore compatible format
+        use smartcore::linalg::basic::matrix::DenseMatrix;
+        let nrows = features.nrows();
+        let ncols = features.ncols();
+        let features_data: Vec<f64> = features.into_raw_vec();
+        let features_2d: Vec<Vec<f64>> = features_data.chunks(ncols).map(|chunk| chunk.to_vec()).collect();
+        let features_matrix = DenseMatrix::from_2d_vec(&features_2d)?;
+        let labels_vec: Vec<u32> = labels.to_vec();
+        
+        let classifier = RandomForestClassifier::fit(&features_matrix, &labels_vec, params)?;
         Ok(classifier)
     }
 
@@ -685,7 +698,9 @@ impl AIRepeatResolver {
     fn new(use_gpu: bool) -> Result<Self> {
         // Load pre-trained ONNX model for repeat classification
         let session = if std::path::Path::new("repeat_model.onnx").exists() {
-            let builder = SessionBuilder::new()?;
+            use ort::Environment;
+            let environment = Arc::new(Environment::builder().build()?);
+            let builder = SessionBuilder::new(&environment)?;
             let sess = builder.with_model_from_file("repeat_model.onnx")?;
             Some(Arc::new(Mutex::new(sess)))
         } else {
@@ -701,7 +716,8 @@ impl AIRepeatResolver {
 
         if let Some(ref session) = self.session {
             // Use AI model for repeat resolution
-            self.ai_resolve(&mut resolved, session)?;
+            let session_guard = session.lock();
+            self.ai_resolve(&mut resolved, &*session_guard)?;
         } else {
             // Fallback to heuristic-based resolution
             self.heuristic_resolve(&mut resolved)?;
@@ -713,7 +729,7 @@ impl AIRepeatResolver {
     fn ai_resolve(&self, graph: &mut ResolvedGraph, session: &Session) -> Result<()> {
         // Simplified: convert graph to tensor and run inference
         let graph_tensor = graph.to_tensor()?;
-        let outputs = session.run(&[graph_tensor])?;
+        let outputs = session.run(vec![graph_tensor])?;
 
         // Apply AI predictions to resolve repeats
         graph.apply_ai_predictions(&outputs)?;
@@ -746,7 +762,7 @@ pub struct SmartAbundanceEstimator {
 impl SmartAbundanceEstimator {
     fn new(memory_limit_gb: usize) -> Result<Self> {
         Ok(Self {
-            hyperloglog: ExternalHLL::new(0.01)?, // 1% error rate
+            hyperloglog: ExternalHLL::new(0.01), // 1% error rate
             samples: HashMap::new(),
             memory_limit: memory_limit_gb * 1024 * 1024 * 1024,
         })
@@ -769,7 +785,7 @@ impl SmartAbundanceEstimator {
     }
 
     fn unique_count(&self) -> Result<u64> {
-        Ok(self.hyperloglog.count() as u64)
+        Ok(self.hyperloglog.len() as u64)
     }
 
     fn finalize_profile(&self) -> Result<AbundanceProfile> {

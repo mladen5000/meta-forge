@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use anyhow::{Result, anyhow};
 use serde::{Serialize, Deserialize};
-use crate::core_data_structures::GraphFragment;
+use crate::core_data_structures::{GraphFragment, GraphEdge};
 
 /// GNN-based system for resolving repeats in minimiser graphs
 pub struct RepeatResolverGNN {
@@ -131,31 +131,36 @@ impl RepeatResolverGNN {
             adjacency: HashMap::new(),
         };
 
-        // Extract node features
-        for (&node_id, neighbors) in &graph.edges {
+        // Extract node features from the graph nodes
+        for (&node_id, _node) in &graph.nodes {
             let features = self.feature_extractor.extract_node_features(
                 node_id, 
-                neighbors, 
+                &graph.edges, 
                 graph
             )?;
             gnn_graph.node_features.insert(node_id, features);
             
-            // Build adjacency list
-            let adj_list: Vec<u64> = neighbors.keys().copied().collect();
+            // Build adjacency list from edges
+            let mut adj_list = Vec::new();
+            for edge in &graph.edges {
+                if edge.from_hash == node_id {
+                    adj_list.push(edge.to_hash);
+                } else if edge.to_hash == node_id {
+                    adj_list.push(edge.from_hash);
+                }
+            }
             gnn_graph.adjacency.insert(node_id, adj_list);
         }
 
         // Extract edge features
-        for (&from_node, neighbors) in &graph.edges {
-            for (&to_node, &weight) in neighbors {
-                let edge_features = self.feature_extractor.extract_edge_features(
-                    from_node, 
-                    to_node, 
-                    weight, 
-                    graph
-                )?;
-                gnn_graph.edges.insert((from_node, to_node), edge_features);
-            }
+        for edge in &graph.edges {
+            let edge_features = self.feature_extractor.extract_edge_features(
+                edge.from_hash, 
+                edge.to_hash, 
+                edge.weight, 
+                graph
+            )?;
+            gnn_graph.edges.insert((edge.from_hash, edge.to_hash), edge_features);
         }
 
         Ok(gnn_graph)
@@ -282,7 +287,7 @@ impl RepeatResolverGNN {
     ) -> Result<ResolvedGraph> {
         let mut resolved = ResolvedGraph {
             original_edges: graph.edges.clone(),
-            resolved_edges: HashMap::new(),
+            resolved_edges: graph.edges.clone(),
             removed_edges: Vec::new(),
             repeat_regions: Vec::new(),
         };
@@ -305,10 +310,14 @@ impl RepeatResolverGNN {
         // Remove low-confidence edges
         for pred in &low_confidence_edges {
             if !pred.is_correct {
-                if let Some(neighbors) = graph.edges.get_mut(&pred.from_node) {
-                    neighbors.remove(&pred.to_node);
-                    resolved.removed_edges.push((pred.from_node, pred.to_node));
-                }
+                // Remove edges from both graph and resolved edges
+                graph.edges.retain(|edge| {
+                    !(edge.from_hash == pred.from_node && edge.to_hash == pred.to_node)
+                });
+                resolved.resolved_edges.retain(|edge| {
+                    !(edge.from_hash == pred.from_node && edge.to_hash == pred.to_node)
+                });
+                resolved.removed_edges.push((pred.from_node, pred.to_node));
             }
         }
 
@@ -318,8 +327,7 @@ impl RepeatResolverGNN {
             resolved.repeat_regions.push(repeat_region);
         }
 
-        // Copy remaining edges to resolved graph
-        resolved.resolved_edges = graph.edges.clone();
+        // Edges have been updated in-place during removal
 
         Ok(resolved)
     }
@@ -338,7 +346,7 @@ impl RepeatResolverGNN {
         })
     }
 
-    fn graph_to_tensors(&self, graph: &MinimiserGraphGNN) -> Result<(Vec<f32>, Vec<f32>, Vec<i64>)> {
+    fn graph_to_tensors(&self, graph: &MinimiserGraphGNN) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         // Convert graph to tensor format for ONNX
         let num_nodes = graph.node_features.len();
         let num_edges = graph.edges.len();
@@ -362,15 +370,15 @@ impl RepeatResolverGNN {
         }
 
         // Adjacency tensor as edge list [2, num_edges]
-        let mut adjacency_tensor = vec![0i64; 2 * num_edges];
+        let mut adjacency_tensor = vec![0f32; 2 * num_edges];
         let node_to_idx: HashMap<u64, usize> = graph.node_features.keys()
             .enumerate()
             .map(|(i, &k)| (k, i))
             .collect();
 
         for (i, &(from, to)) in graph.edges.keys().enumerate() {
-            adjacency_tensor[i] = *node_to_idx.get(&from).unwrap_or(&0) as i64;
-            adjacency_tensor[num_edges + i] = *node_to_idx.get(&to).unwrap_or(&0) as i64;
+            adjacency_tensor[i] = *node_to_idx.get(&from).unwrap_or(&0) as f32;
+            adjacency_tensor[num_edges + i] = *node_to_idx.get(&to).unwrap_or(&0) as f32;
         }
 
         Ok((node_tensor, edge_tensor, adjacency_tensor))
@@ -627,10 +635,20 @@ impl NodeFeatureExtractor {
     fn extract_node_features(
         &self,
         node_id: u64,
-        neighbors: &HashMap<u64, u32>,
+        edges: &[GraphEdge],
         graph: &GraphFragment,
     ) -> Result<Vec<f32>> {
         let mut features = vec![0.0; self.feature_dim];
+        
+        // Count neighbors and collect weights from edges
+        let mut neighbors = HashMap::new();
+        for edge in edges {
+            if edge.from_hash == node_id {
+                neighbors.insert(edge.to_hash, edge.weight);
+            } else if edge.to_hash == node_id {
+                neighbors.insert(edge.from_hash, edge.weight);
+            }
+        }
         
         // Feature 1-4: Basic graph properties
         features[0] = neighbors.len() as f32; // Degree
@@ -653,7 +671,7 @@ impl NodeFeatureExtractor {
         
         // Feature 11-15: Repeat indicators
         features[10] = if neighbors.len() > 10 { 1.0 } else { 0.0 }; // High degree = potential repeat
-        features[11] = self.count_palindromic_neighbors(neighbors) as f32;
+        features[11] = self.count_palindromic_neighbors(&neighbors) as f32;
         
         // Pad remaining features with normalized hash values
         for i in 12..self.feature_dim {
@@ -676,8 +694,12 @@ impl NodeFeatureExtractor {
         features[1] = (weight as f32).ln(); // Log weight
         
         // Degree features
-        let from_degree = graph.edges.get(&from_node).map(|n| n.len()).unwrap_or(0) as f32;
-        let to_degree = graph.edges.get(&to_node).map(|n| n.len()).unwrap_or(0) as f32;
+        let from_degree = graph.edges.iter()
+            .filter(|e| e.from_hash == from_node || e.to_hash == from_node)
+            .count() as f32;
+        let to_degree = graph.edges.iter()
+            .filter(|e| e.from_hash == to_node || e.to_hash == to_node)
+            .count() as f32;
         features[2] = from_degree;
         features[3] = to_degree;
         features[4] = (from_degree - to_degree).abs();
@@ -691,34 +713,45 @@ impl NodeFeatureExtractor {
     }
 
     fn compute_clustering_coefficient(&self, node_id: u64, graph: &GraphFragment) -> Result<f32> {
-        if let Some(neighbors) = graph.edges.get(&node_id) {
-            if neighbors.len() < 2 {
-                return Ok(0.0);
-            }
+        // Get neighbors from edges
+        let neighbor_ids: Vec<u64> = graph.edges.iter()
+            .filter_map(|e| {
+                if e.from_hash == node_id {
+                    Some(e.to_hash)
+                } else if e.to_hash == node_id {
+                    Some(e.from_hash)
+                } else {
+                    None
+                }
+            })
+            .collect();
             
-            let neighbor_ids: Vec<u64> = neighbors.keys().copied().collect();
-            let mut triangles = 0;
-            let possible_triangles = neighbor_ids.len() * (neighbor_ids.len() - 1) / 2;
+        if neighbor_ids.len() < 2 {
+            return Ok(0.0);
+        }
+        
+        let mut triangles = 0;
+        let possible_triangles = neighbor_ids.len() * (neighbor_ids.len() - 1) / 2;
             
-            // Count triangles
-            for i in 0..neighbor_ids.len() {
-                for j in i+1..neighbor_ids.len() {
-                    let node_a = neighbor_ids[i];
-                    let node_b = neighbor_ids[j];
-                    
-                    // Check if node_a and node_b are connected
-                    if let Some(a_neighbors) = graph.edges.get(&node_a) {
-                        if a_neighbors.contains_key(&node_b) {
-                            triangles += 1;
-                        }
-                    }
+        // Count triangles
+        for i in 0..neighbor_ids.len() {
+            for j in i+1..neighbor_ids.len() {
+                let node_a = neighbor_ids[i];
+                let node_b = neighbor_ids[j];
+                
+                // Check if node_a and node_b are connected
+                let are_connected = graph.edges.iter().any(|e| {
+                    (e.from_hash == node_a && e.to_hash == node_b) ||
+                    (e.from_hash == node_b && e.to_hash == node_a)
+                });
+                
+                if are_connected {
+                    triangles += 1;
                 }
             }
-            
-            Ok(triangles as f32 / possible_triangles as f32)
-        } else {
-            Ok(0.0)
         }
+        
+        Ok(triangles as f32 / possible_triangles as f32)
     }
 
     fn extract_composition_features(&self, node_id: u64) -> Result<Vec<f32>> {
@@ -744,14 +777,25 @@ impl NodeFeatureExtractor {
     }
 
     fn nodes_share_neighbors(&self, node_a: u64, node_b: u64, graph: &GraphFragment) -> Result<bool> {
-        if let (Some(neighbors_a), Some(neighbors_b)) = (graph.edges.get(&node_a), graph.edges.get(&node_b)) {
-            let common_neighbors: HashSet<_> = neighbors_a.keys()
-                .filter(|k| neighbors_b.contains_key(k))
-                .collect();
-            Ok(common_neighbors.len() > 0)
-        } else {
-            Ok(false)
-        }
+        // Get neighbors for both nodes
+        let neighbors_a: HashSet<u64> = graph.edges.iter()
+            .filter_map(|e| {
+                if e.from_hash == node_a { Some(e.to_hash) }
+                else if e.to_hash == node_a { Some(e.from_hash) }
+                else { None }
+            })
+            .collect();
+            
+        let neighbors_b: HashSet<u64> = graph.edges.iter()
+            .filter_map(|e| {
+                if e.from_hash == node_b { Some(e.to_hash) }
+                else if e.to_hash == node_b { Some(e.from_hash) }
+                else { None }
+            })
+            .collect();
+            
+        let common_neighbors: HashSet<_> = neighbors_a.intersection(&neighbors_b).collect();
+        Ok(common_neighbors.len() > 0)
     }
 }
 
@@ -789,8 +833,8 @@ impl OnnxSession {
 /// Results of repeat resolution
 #[derive(Clone)]
 pub struct ResolvedGraph {
-    pub original_edges: HashMap<u64, HashMap<u64, u32>>,
-    pub resolved_edges: HashMap<u64, HashMap<u64, u32>>,
+    pub original_edges: Vec<GraphEdge>,
+    pub resolved_edges: Vec<GraphEdge>,
     pub removed_edges: Vec<(u64, u64)>,
     pub repeat_regions: Vec<RepeatRegion>,
 }

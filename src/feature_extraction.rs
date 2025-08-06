@@ -288,14 +288,14 @@ impl AdvancedFeatureExtractor {
             for amino_acid in &["F", "L", "S", "Y", "C", "W", "P", "H", "Q", "R", "I", "M", "T", "N", "K", "V", "A", "D", "E", "G"] {
                 let aa_codons = self.codon_tables.get_codons_for_amino_acid(amino_acid);
                 let aa_total: u32 = aa_codons.iter()
-                    .map(|codon| codon_counts.get(*codon).copied().unwrap_or(0))
+                    .map(|codon| codon_counts.get(codon.as_str()).copied().unwrap_or(0))
                     .sum();
                 
                 if aa_total > 0 {
                     // Calculate relative synonymous codon usage (RSCU)
                     let expected_freq = 1.0 / aa_codons.len() as f64;
                     for codon in aa_codons {
-                        let observed_freq = codon_counts.get(codon).copied().unwrap_or(0) as f64 / aa_total as f64;
+                        let observed_freq = codon_counts.get(codon.as_str()).copied().unwrap_or(0) as f64 / aa_total as f64;
                         let rscu = if expected_freq > 0.0 { observed_freq / expected_freq } else { 0.0 };
                         features.push(rscu);
                     }
@@ -834,7 +834,7 @@ struct DegreeStats {
 /// Codon usage tables for different organisms
 pub struct CodonUsageTables {
     standard_table: AHashMap<String, String>, // Codon -> Amino acid
-    amino_acid_codons: AHashMap<String, Vec<&'static str>>, // Amino acid -> Codons
+    amino_acid_codons: AHashMap<String, Vec<String>>, // Amino acid -> Codons
 }
 
 impl CodonUsageTables {
@@ -855,7 +855,7 @@ impl CodonUsageTables {
             standard_table.insert(codon.to_string(), aa.to_string());
             amino_acid_codons.entry(aa.to_string())
                 .or_insert_with(Vec::new)
-                .push(codon);
+                .push(codon.to_string());
         }
         
         Ok(Self {
@@ -864,9 +864,9 @@ impl CodonUsageTables {
         })
     }
     
-    fn get_codons_for_amino_acid(&self, amino_acid: &str) -> Vec<&str> {
+    fn get_codons_for_amino_acid(&self, amino_acid: &str) -> Vec<String> {
         self.amino_acid_codons.get(amino_acid)
-            .map(|codons| codons.iter().copied().collect())
+            .cloned()
             .unwrap_or_default()
     }
 }
@@ -967,12 +967,18 @@ impl PatternRecognizers {
             // Odd-length palindromes
             let mut length = 0;
             while center >= length && center + length < sequence.len() {
-                if sequence.chars().nth(center - length) == 
-                   self.complement(sequence.chars().nth(center + length).unwrap_or('N')) {
-                    length += 1;
-                } else {
-                    break;
-                }
+                if let (Some(left_char), Some(right_char)) = (
+                    sequence.chars().nth(center - length),
+                    sequence.chars().nth(center + length)
+                ) {
+                        if left_char == self.complement(right_char) {
+                            length += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
             }
             max_palindrome = max_palindrome.max(length * 2 - 1);
             
@@ -980,9 +986,15 @@ impl PatternRecognizers {
             if center + 1 < sequence.len() {
                 let mut length = 0;
                 while center >= length && center + 1 + length < sequence.len() {
-                    if sequence.chars().nth(center - length) == 
-                       self.complement(sequence.chars().nth(center + 1 + length).unwrap_or('N')) {
-                        length += 1;
+                    if let (Some(left_char), Some(right_char)) = (
+                        sequence.chars().nth(center - length),
+                        sequence.chars().nth(center + 1 + length)
+                    ) {
+                        if left_char == self.complement(right_char) {
+                            length += 1;
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
