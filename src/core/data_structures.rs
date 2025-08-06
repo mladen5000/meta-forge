@@ -17,11 +17,17 @@ pub struct CanonicalKmer {
 
 impl CanonicalKmer {
     pub fn new(kmer: &str) -> Result<Self> {
+        // Check for valid DNA characters, allowing N for ambiguous bases
         if !kmer
             .chars()
-            .all(|c| matches!(c, 'A' | 'C' | 'G' | 'T' | 'a' | 'c' | 'g' | 't'))
+            .all(|c| matches!(c, 'A' | 'C' | 'G' | 'T' | 'N' | 'a' | 'c' | 'g' | 't' | 'n'))
         {
             return Err(anyhow!("Invalid DNA sequence: {}", kmer));
+        }
+        
+        // Skip k-mers containing ambiguous bases (N) for assembly
+        if kmer.chars().any(|c| matches!(c, 'N' | 'n')) {
+            return Err(anyhow!("K-mer contains ambiguous bases (N): {}", kmer));
         }
 
         let kmer_upper = kmer.to_uppercase();
@@ -43,10 +49,19 @@ impl CanonicalKmer {
     }
 
     fn reverse_complement(seq: &str) -> Result<String> {
-        let bytes = seq.as_bytes();
-        let rc_bytes = dna::revcomp(bytes);
-        String::from_utf8(rc_bytes)
-            .map_err(|e| anyhow!("Invalid UTF-8 in reverse complement: {}", e))
+        // Manual reverse complement to handle all DNA characters including N
+        Ok(seq
+            .chars()
+            .rev()
+            .map(|c| match c {
+                'A' => 'T',
+                'T' => 'A', 
+                'G' => 'C',
+                'C' => 'G',
+                'N' => 'N',
+                _ => c, // Should not happen with validated input
+            })
+            .collect())
     }
 
     fn hash_sequence(seq: &str) -> u64 {

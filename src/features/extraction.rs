@@ -592,6 +592,7 @@ impl AdvancedFeatureExtractor {
             .as_bytes()
             .windows(k)
             .filter_map(|window| std::str::from_utf8(window).ok())
+            .filter(|s| !s.chars().any(|c| matches!(c, 'N' | 'n'))) // Skip k-mers with ambiguous bases
             .map(|s| s.to_string())
             .collect()
     }

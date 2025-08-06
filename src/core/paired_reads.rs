@@ -240,6 +240,10 @@ impl ReadPair {
         // Extract k-mers from forward read
         for (i, window) in self.forward.corrected.as_bytes().windows(k).enumerate() {
             let kmer_str = std::str::from_utf8(window)?;
+            // Skip k-mers containing ambiguous bases
+            if kmer_str.chars().any(|c| matches!(c, 'N' | 'n')) {
+                continue;
+            }
             kmers.push(PairedKmer {
                 sequence: kmer_str.to_string(),
                 pair_id: self.forward.pair_id.clone(),
@@ -252,6 +256,10 @@ impl ReadPair {
         // Extract k-mers from reverse read
         for (i, window) in self.reverse.corrected.as_bytes().windows(k).enumerate() {
             let kmer_str = std::str::from_utf8(window)?;
+            // Skip k-mers containing ambiguous bases
+            if kmer_str.chars().any(|c| matches!(c, 'N' | 'n')) {
+                continue;
+            }
             kmers.push(PairedKmer {
                 sequence: kmer_str.to_string(),
                 pair_id: self.reverse.pair_id.clone(),
