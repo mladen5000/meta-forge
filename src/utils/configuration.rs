@@ -497,6 +497,12 @@ impl ConfigurationManager {
         use tracing_subscriber::{EnvFilter, fmt, prelude::*};
         use tracing_appender::rolling;
         
+        // Check if global subscriber is already set
+        if tracing::dispatcher::has_been_set() {
+            info!("⏭️  Logging already initialized, skipping setup");
+            return Ok(());
+        }
+        
         let level = &self.config.logging.level;
         let format = &self.config.logging.format;
         
@@ -514,9 +520,9 @@ impl ConfigurationManager {
                         file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    subscriber.with(layer.with_writer(non_blocking)).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
                 } else {
-                    subscriber.with(layer).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
             },
             "compact" => {
@@ -527,9 +533,9 @@ impl ConfigurationManager {
                         file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    subscriber.with(layer.with_writer(non_blocking)).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
                 } else {
-                    subscriber.with(layer).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
             },
             _ => { // "pretty" or default
@@ -540,9 +546,9 @@ impl ConfigurationManager {
                         file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    subscriber.with(layer.with_writer(non_blocking)).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
                 } else {
-                    subscriber.with(layer).init();
+                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
             }
         }

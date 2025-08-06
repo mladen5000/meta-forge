@@ -8,7 +8,6 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use crate::core::data_structures::*;
 use crate::assembly::graph_construction::{AssemblyStats, Contig};
 
 /// Calculate GC content for a DNA sequence

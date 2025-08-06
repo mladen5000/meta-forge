@@ -72,7 +72,7 @@ use_gpu = false
 max_sequence_length = 10000
 
 [performance]
-num_threads = 0  # 0 = auto-detect
+num_threads = 8                 # 0 = auto-detect
 memory_limit_gb = 8
 enable_memory_monitoring = true
 streaming_buffer_size = 1000
@@ -89,6 +89,7 @@ alert_cpu_threshold_percent = 85.0
 level = "info"
 format = "pretty"
 enable_performance_logging = true
+enable_metrics = true
 
 [io]
 supported_input_formats = ["fasta", "fastq", "fasta.gz", "fastq.gz"]

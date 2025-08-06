@@ -853,11 +853,13 @@ enum FileFormat {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging
-    let log_level = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
-        .init();
+    // Initialize logging only if not already set
+    if !tracing::dispatcher::has_been_set() {
+        let log_level = if cli.verbose { "debug" } else { "info" };
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
+            .init();
+    }
 
     match cli.command {
         Commands::Analyze {
