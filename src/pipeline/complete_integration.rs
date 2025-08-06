@@ -136,7 +136,7 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
-enum DatabaseOps {
+pub enum DatabaseOps {
     /// Initialize new database
     Init {
         /// Database path
@@ -1038,7 +1038,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_database_operation(operation: DatabaseOps) -> Result<()> {
+pub async fn handle_database_operation(operation: DatabaseOps) -> Result<()> {
     match operation {
         DatabaseOps::Init { path } => {
             let config = DatabaseConfig::default();

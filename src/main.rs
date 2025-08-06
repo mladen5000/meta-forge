@@ -48,6 +48,10 @@ async fn main() -> Result<()> {
                 results.processing_time.as_secs_f64()
             );
         }
+        Commands::Database { operation } => {
+            use meta_forge::pipeline::complete_integration::handle_database_operation;
+            handle_database_operation(operation).await?;
+        }
         _ => {
             println!("Command not yet implemented in simplified main.rs");
         }

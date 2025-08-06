@@ -11,6 +11,20 @@ use std::sync::Arc;
 use crate::core::data_structures::*;
 use crate::assembly::graph_construction::{AssemblyStats, Contig};
 
+/// Calculate GC content for a DNA sequence
+fn calculate_gc_content(sequence: &str) -> f64 {
+    if sequence.is_empty() {
+        return 0.0;
+    }
+    
+    let gc_count = sequence
+        .chars()
+        .filter(|&c| c == 'G' || c == 'C')
+        .count();
+    
+    gc_count as f64 / sequence.len() as f64
+}
+
 /// Comprehensive database management for metagenomics pipeline
 pub struct MetagenomicsDatabase {
     /// Primary database connection
@@ -181,21 +195,21 @@ impl MetagenomicsDatabase {
     fn configure_database_settings(&self, conn: &Connection) -> Result<()> {
         // Enable WAL mode for better concurrent access
         if self.config.enable_wal_mode {
-            conn.execute("PRAGMA journal_mode = WAL;", [])?;
+            conn.pragma_update(None, "journal_mode", "WAL")?;
         }
         
         // Set cache size
-        conn.execute(&format!("PRAGMA cache_size = {};", self.config.cache_size), [])?;
+        conn.pragma_update(None, "cache_size", self.config.cache_size)?;
         
         // Enable foreign keys
         if self.config.enable_foreign_keys {
-            conn.execute("PRAGMA foreign_keys = ON;", [])?;
+            conn.pragma_update(None, "foreign_keys", "ON")?;
         }
         
         // Other performance settings
-        conn.execute("PRAGMA synchronous = NORMAL;", [])?;
-        conn.execute("PRAGMA temp_store = MEMORY;", [])?;
-        conn.execute("PRAGMA mmap_size = 268435456;", [])?; // 256MB mmap
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
+        conn.pragma_update(None, "mmap_size", 268435456i64)?; // 256MB mmap
         
         Ok(())
     }
