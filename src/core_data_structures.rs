@@ -578,7 +578,8 @@ impl AssemblyChunk {
         for node in self.graph_fragment.nodes.values_mut() {
             node.update_node_type();
             // Calculate complexity based on coverage and read distribution
-            node.calculate_complexity(&node.kmer.sequence);
+            let kmer_seq = node.kmer.sequence.clone();
+            node.calculate_complexity(&kmer_seq);
         }
         
         // Update fragment statistics

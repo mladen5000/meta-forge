@@ -25,22 +25,32 @@ tempfile = "3.20.0"
 criterion = { version = "0.7.0", optional = true }
 lz4_flex = "0.11.5"
 rayon = "1.10.0"
+tokio = { version = "1.41.1", features = ["full"] }
+crossbeam-channel = "0.5.15"
+memmap2 = "0.9.5"
+mimalloc = "0.1.47"
 
 # --- ML/AI & Scientific Computing ---
 candle-core = "0.9.1"
+candle-nn = "0.9.1"
 ndarray = "0.16.1"
 ort = "1.16.3"
 petgraph = "0.8.2"
 smartcore = "0.4.2"
 fastrand = "2"
+pathfinding = "4.12.0"
 
 # --- Error Handling, Logging, Observability ---
 anyhow = "1.0.98"
 thiserror = "2.0.12"
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-appender = "0.2.3"
 
 # --- Bioinformatics ---
 bio = "2.3.0"
+seq_io = "0.3.4"
+rust-htslib = "0.48.0"
 
 # --- Database & Serialization ---
 rusqlite = "0.37.0"
@@ -48,6 +58,12 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.107"
 proptest = "1.7.0"
 bincode = "2.0.1"
+chrono = { version = "0.4.38", features = ["serde"] }
+
+# --- Probabilistic Data Structures ---
+probabilistic-collections = "0.7.0"
+hyperloglog = "1.0.1"
+# sketchy = "0.3.0"  # Package not available, removing for now
 
 [features]
 # Optional/benchmarking features

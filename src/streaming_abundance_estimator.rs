@@ -477,7 +477,7 @@ impl L0Sampler {
     fn get_samples_with_weights(&self) -> HashMap<u64, f64> {
         // Convert priorities to abundance estimates
         self.samples.iter()
-            .map(|(&item, &priority)| {
+            .map(|(&item, &_priority)| {
                 // Abundance is inversely related to priority threshold
                 let abundance = if self.threshold > 0.0 {
                     1.0 / self.threshold
@@ -490,7 +490,7 @@ impl L0Sampler {
     }
 
     fn get_sample_weight(&self, item: u64) -> Option<f64> {
-        self.samples.get(&item).map(|&priority| {
+        self.samples.get(&item).map(|&_priority| {
             if self.threshold > 0.0 {
                 1.0 / self.threshold
             } else {
@@ -597,7 +597,7 @@ impl crate::L0Sampler {
 
 /// Enhanced sketch output with abundance information
 pub fn write_enhanced_sketch(
-    sketch: &HybridAbundanceEstimator,
+    sketch: &mut HybridAbundanceEstimator,
     output_path: &str,
 ) -> Result<()> {
     use std::io::Write;

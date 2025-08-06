@@ -1,0 +1,52 @@
+# Default Configuration for Metagenomics Pipeline
+
+[general]
+working_directory = "./data"
+output_directory = "./results"
+temp_directory = "/tmp"
+debug_mode = false
+max_threads = 0  # 0 = auto-detect
+
+[assembly]
+k_min = 21
+k_max = 31
+k_step = 2
+min_coverage = 3
+min_length = 200
+graph_simplification = true
+bubble_detection = true
+tip_removal = true
+
+[features]
+composition_features = true
+complexity_features = true
+topology_features = true
+feature_dimensions = 100
+
+[database]
+connection_string = "sqlite:./data/metagenomics.db"
+batch_size = 1000
+index_k_size = 21
+
+[ml]
+model_path = "./models"
+batch_size = 32
+learning_rate = 0.001
+epochs = 100
+
+[performance]
+max_memory_mb = 8192
+thread_pool_size = 0  # 0 = auto-detect
+enable_monitoring = true
+
+[logging]
+level = "info"
+format = "json"
+file_rotation = true
+max_file_size_mb = 100
+
+[io]
+input_format = "auto"
+output_format = "json"
+compression = "gzip"
+buffer_size = 8192

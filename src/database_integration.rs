@@ -370,23 +370,25 @@ impl MetagenomicsDatabase {
         let conn = self.connection.write();
         let tx = conn.unchecked_transaction()?;
         
-        let mut stmt = tx.prepare(
-            "INSERT OR IGNORE INTO taxonomy (id, name, lineage, rank, parent_id) 
-             VALUES (?1, ?2, ?3, ?4, ?5)"
-        )?;
-        
-        for entry in entries {
-            stmt.execute(params![
-                entry.id,
-                entry.name,
-                entry.lineage,
-                entry.rank,
-                entry.parent_id,
-            ])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO taxonomy (id, name, lineage, rank, parent_id) 
+                 VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
             
-            // Update cache
-            self.caches.taxonomy_cache.insert(entry.id, entry.name.clone());
-        }
+            for entry in entries {
+                stmt.execute(params![
+                    entry.id,
+                    entry.name,
+                    entry.lineage,
+                    entry.rank,
+                    entry.parent_id,
+                ])?;
+                
+                // Update cache
+                self.caches.taxonomy_cache.insert(entry.id, entry.name.clone());
+            }
+        } // stmt is dropped here
         
         tx.commit()?;
         println!("✅ Inserted {} taxonomy entries", entries.len());
@@ -398,25 +400,27 @@ impl MetagenomicsDatabase {
         let conn = self.connection.write();
         let tx = conn.unchecked_transaction()?;
         
-        let mut stmt = tx.prepare(
-            "INSERT INTO sequences (sequence_hash, sequence_data, length, gc_content, taxonomy_id, source) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-        )?;
-        
         let mut sequence_ids = Vec::new();
         
-        for seq in sequences {
-            stmt.execute(params![
-                seq.sequence_hash,
-                seq.sequence_data,
-                seq.length,
-                seq.gc_content,
-                seq.taxonomy_id,
-                seq.source,
-            ])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO sequences (sequence_hash, sequence_data, length, gc_content, taxonomy_id, source) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            )?;
             
-            sequence_ids.push(tx.last_insert_rowid());
-        }
+            for seq in sequences {
+                stmt.execute(params![
+                    seq.sequence_hash,
+                    seq.sequence_data,
+                    seq.length,
+                    seq.gc_content,
+                    seq.taxonomy_id,
+                    seq.source,
+                ])?;
+                
+                sequence_ids.push(tx.last_insert_rowid());
+            }
+        } // stmt is dropped here
         
         tx.commit()?;
         println!("✅ Inserted {} sequences", sequences.len());
@@ -729,44 +733,47 @@ impl MetagenomicsDatabase {
         // Clear existing k-mer index for this k-size
         tx.execute("DELETE FROM kmer_index WHERE k_size = ?1", [k_size])?;
         
-        // Get all sequences
-        let mut seq_stmt = tx.prepare("SELECT id, sequence_data FROM sequences WHERE length >= ?1")?;
-        let sequences = seq_stmt.query_map([k_size], |row| {
-            let id: i64 = row.get(0)?;
-            let sequence: String = row.get(1)?;
-            Ok((id, sequence))
-        })?;
+        // Collect sequences first
+        let sequences = {
+            let mut seq_stmt = tx.prepare("SELECT id, sequence_data FROM sequences WHERE length >= ?1")?;
+            let sequences = seq_stmt.query_map([k_size], |row| {
+                let id: i64 = row.get(0)?;
+                let sequence: String = row.get(1)?;
+                Ok((id, sequence))
+            })?;
+            sequences.collect::<Result<Vec<_>, _>>()?
+        };
         
         // Insert k-mers
-        let mut kmer_stmt = tx.prepare(
-            "INSERT INTO kmer_index (kmer_hash, kmer_sequence, k_size, sequence_id, position) 
-             VALUES (?1, ?2, ?3, ?4, ?5)"
-        )?;
-        
-        let mut kmer_count = 0;
-        for seq_result in sequences {
-            let (sequence_id, sequence) = seq_result?;
+        {
+            let mut kmer_stmt = tx.prepare(
+                "INSERT INTO kmer_index (kmer_hash, kmer_sequence, k_size, sequence_id, position) 
+                 VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
             
-            for (pos, window) in sequence.as_bytes().windows(k_size).enumerate() {
-                if let Ok(kmer) = std::str::from_utf8(window) {
-                    let kmer_hash = ahash::RandomState::new().hash_one(kmer);
-                    
-                    kmer_stmt.execute(params![
-                        format!("{:x}", kmer_hash),
-                        kmer,
-                        k_size,
-                        sequence_id,
-                        pos,
-                    ])?;
-                    
-                    kmer_count += 1;
-                    
-                    if kmer_count % 10000 == 0 {
-                        println!("  Processed {} k-mers", kmer_count);
+            let mut kmer_count = 0;
+            for (sequence_id, sequence) in sequences {
+                for (pos, window) in sequence.as_bytes().windows(k_size).enumerate() {
+                    if let Ok(kmer) = std::str::from_utf8(window) {
+                        let kmer_hash = ahash::RandomState::new().hash_one(kmer);
+                        
+                        kmer_stmt.execute(params![
+                            format!("{:x}", kmer_hash),
+                            kmer,
+                            k_size,
+                            sequence_id,
+                            pos,
+                        ])?;
+                        
+                        kmer_count += 1;
+                        
+                        if kmer_count % 10000 == 0 {
+                            println!("  Processed {} k-mers", kmer_count);
+                        }
                     }
                 }
             }
-        }
+        } // kmer_stmt is dropped here
         
         tx.commit()?;
         println!("✅ Built k-mer index with {} k-mers", kmer_count);

@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 use tempfile::{tempdir, TempDir, NamedTempFile};
 use anyhow::Result;
+#[cfg(feature = "bench")]
 use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 
 use crate::core_data_structures::*;
@@ -877,6 +878,7 @@ macro_rules! assert_feature_bounds {
 }
 
 // Re-export criterion for benchmarks
+#[cfg(feature = "bench")]
 pub use criterion::{criterion_group, criterion_main};
 
 #[cfg(test)]

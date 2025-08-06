@@ -15,13 +15,14 @@ use hyperloglog::HyperLogLog as ExternalHLL;
 use ndarray::{Array1, Array2, ArrayView1};
 use ort::{Session, SessionBuilder}; // ONNX Runtime
 use probabilistic_collections::bloom::BloomFilter;
-use sketchy::{BottomK, MinHash};
+// use sketchy::{BottomK, MinHash}; // Package not available
 use smartcore::ensemble::random_forest_classifier::RandomForestClassifier; // For sketching algorithms
 
 // Graph processing
 use pathfinding::prelude::*;
 use petgraph::algo::{connected_components, tarjan_scc};
-use petgraph::{Directed, EdgeIndex, Graph, NodeIndex}; // Graph algorithms
+use petgraph::{Directed, Graph};
+use petgraph::graph::{EdgeIndex, NodeIndex}; // Graph algorithms
 
 // Performance & Utilities
 use ahash::{AHashMap, AHashSet, RandomState}; // Faster hashing
@@ -913,6 +914,9 @@ pub fn run_enhanced_pipeline(fastq_files: Vec<PathBuf>) -> Result<()> {
         use_gpu: false,
         quality_threshold: 0.8,
         taxonomy_db_path: "taxonomy_db.sqlite".to_string(),
+        num_threads: 4,
+        enable_compression: true,
+        streaming_buffer_size: 8192,
     };
 
     let mut pipeline = EnhancedMetaPipeline::new(config)?;
@@ -950,6 +954,9 @@ mod tests {
             use_gpu: false,
             quality_threshold: 0.5,
             taxonomy_db_path: "test_db".to_string(),
+            num_threads: 2,
+            enable_compression: false,
+            streaming_buffer_size: 4096,
         };
 
         let pipeline = EnhancedMetaPipeline::new(config);
