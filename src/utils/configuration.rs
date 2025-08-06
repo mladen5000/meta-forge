@@ -292,6 +292,22 @@ impl ConfigurationManager {
         Self::load_from_default_locations()
     }
     
+    /// Create configuration manager with pure defaults (no file dependencies)
+    pub fn new_with_defaults() -> Result<Self, PipelineError> {
+        let config = PipelineConfiguration::default();
+        
+        let manager = Self {
+            config,
+            config_path: None,
+            environment_prefix: "META".to_string(),
+        };
+        
+        manager.validate_configuration()?;
+        manager.setup_logging()?;
+        
+        Ok(manager)
+    }
+    
     /// Load configuration from specific file
     pub fn from_file<P: AsRef<Path>>(config_path: P) -> Result<Self, PipelineError> {
         let config_path = config_path.as_ref().to_path_buf();
@@ -313,13 +329,17 @@ impl ConfigurationManager {
     fn load_from_default_locations() -> Result<Self, PipelineError> {
         let mut config_builder = Config::builder();
         
-        // Start with default configuration
-        config_builder = config_builder.add_source(
-            config::File::from_str(
-                include_str!("../../config/default.toml"),
-                FileFormat::Toml
-            )
-        );
+        // Start with default configuration from Rust defaults
+        let default_config = PipelineConfiguration::default();
+        
+        // Try to load from embedded config file if available, but continue without it  
+        if let Ok(embedded_config) = std::fs::read_to_string("./config/default.toml") {
+            config_builder = config_builder.add_source(
+                config::File::from_str(&embedded_config, FileFormat::Toml)
+            );
+        } else {
+            info!("No config/default.toml found, using built-in defaults");
+        }
         
         // Add system-wide config
         if let Ok(system_config) = env::var("META_SYSTEM_CONFIG") {
@@ -346,7 +366,22 @@ impl ConfigurationManager {
             Environment::with_prefix("META").separator("__")
         );
         
-        let config: PipelineConfiguration = config_builder.build()?.try_deserialize()?;
+        // Try to build configuration, fallback to default if it fails
+        let config: PipelineConfiguration = match config_builder.build() {
+            Ok(built_config) => {
+                match built_config.try_deserialize() {
+                    Ok(config) => config,
+                    Err(e) => {
+                        warn!("Failed to deserialize configuration: {}, using built-in defaults", e);
+                        default_config
+                    }
+                }
+            },
+            Err(e) => {
+                warn!("Failed to build configuration: {}, using built-in defaults", e);
+                default_config
+            }
+        };
         
         let manager = Self {
             config,
@@ -897,6 +932,236 @@ pub enum RecoveryAction {
     Recover(String),
     Continue(String),
     Abort(String),
+}
+
+// Default implementations for all configuration structures
+impl Default for PipelineConfiguration {
+    fn default() -> Self {
+        Self {
+            general: GeneralConfig::default(),
+            assembly: AssemblyConfig::default(),
+            features: FeatureExtractionConfig::default(),
+            database: DatabaseIntegrationConfig::default(),
+            ml: MachineLearningConfig::default(),
+            performance: PerformanceConfig::default(),
+            logging: LoggingConfig::default(),
+            io: IOConfig::default(),
+        }
+    }
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            name: "metagenomics-pipeline".to_string(),
+            version: "1.0.0".to_string(),
+            work_dir: PathBuf::from("./work"),
+            temp_dir: PathBuf::from("./tmp"),
+            output_dir: PathBuf::from("./output"),
+            debug_mode: false,
+            random_seed: None,
+        }
+    }
+}
+
+impl Default for AssemblyConfig {
+    fn default() -> Self {
+        Self {
+            k_min: 15,
+            k_max: 31,
+            min_coverage: 2,
+            complexity_threshold: 0.7,
+            enable_simplification: true,
+            bubble_popping: BubblePoppingConfig::default(),
+            tip_removal: TipRemovalConfig::default(),
+        }
+    }
+}
+
+impl Default for BubblePoppingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_bubble_length: 1000,
+            min_coverage_ratio: 0.1,
+        }
+    }
+}
+
+impl Default for TipRemovalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_tip_length: 100,
+            min_coverage_ratio: 0.1,
+        }
+    }
+}
+
+impl Default for FeatureExtractionConfig {
+    fn default() -> Self {
+        Self {
+            sequence_feature_dim: 100,
+            graph_feature_dim: 50,
+            kmer_feature_dim: 64,
+            include_composition: true,
+            include_codon_usage: true,
+            include_patterns: true,
+            include_complexity: true,
+            include_topology: true,
+            include_centrality: false, // Expensive to compute
+            include_clustering: true,
+            kmer_sizes: vec![3, 4, 5, 6],
+            max_kmers: 10000,
+        }
+    }
+}
+
+impl Default for DatabaseIntegrationConfig {
+    fn default() -> Self {
+        Self {
+            db_path: PathBuf::from("./data/metagenomics.db"),
+            enable_wal_mode: true,
+            cache_size: 10000,
+            enable_foreign_keys: true,
+            batch_size: 1000,
+            enable_compression: true,
+            cache_memory_limit_mb: 256,
+            auto_vacuum: AutoVacuumConfig::default(),
+        }
+    }
+}
+
+impl Default for AutoVacuumConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_mb: 1000,
+            schedule: "0 2 * * *".to_string(), // Daily at 2 AM
+        }
+    }
+}
+
+impl Default for MachineLearningConfig {
+    fn default() -> Self {
+        Self {
+            taxonomy_model_path: None,
+            repeat_model_path: None,
+            error_correction_model_path: None,
+            training: TrainingConfig::default(),
+            inference: InferenceConfig::default(),
+        }
+    }
+}
+
+impl Default for TrainingConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 64,
+            learning_rate: 0.001,
+            epochs: 100,
+            validation_split: 0.2,
+            early_stopping_patience: 10,
+        }
+    }
+}
+
+impl Default for InferenceConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 32,
+            confidence_threshold: 0.5,
+            use_gpu: false,
+            max_sequence_length: 10000,
+        }
+    }
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            num_threads: num_cpus::get(),
+            memory_limit_gb: 8,
+            enable_memory_monitoring: true,
+            streaming_buffer_size: 1000,
+            chunk_size: 100,
+            enable_compression: false,
+            monitoring: MonitoringConfig::default(),
+        }
+    }
+}
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sample_interval_ms: 1000,
+            alert_memory_threshold_percent: 90.0,
+            alert_cpu_threshold_percent: 85.0,
+        }
+    }
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".to_string(),
+            format: "pretty".to_string(),
+            file_path: None,
+            enable_performance_logging: true,
+            enable_metrics: true,
+            metrics_path: None,
+        }
+    }
+}
+
+impl Default for IOConfig {
+    fn default() -> Self {
+        Self {
+            supported_input_formats: vec![
+                "fasta".to_string(),
+                "fastq".to_string(),
+                "fasta.gz".to_string(),
+                "fastq.gz".to_string(),
+            ],
+            output_formats: OutputFormatsConfig::default(),
+            file_handling: FileHandlingConfig::default(),
+        }
+    }
+}
+
+impl Default for OutputFormatsConfig {
+    fn default() -> Self {
+        Self {
+            fasta: true,
+            fastq: false,
+            gfa: true,
+            json: true,
+            tsv: true,
+            html_report: true,
+        }
+    }
+}
+
+impl Default for FileHandlingConfig {
+    fn default() -> Self {
+        Self {
+            enable_memory_mapping: true,
+            buffer_size: 8192,
+            max_file_size_gb: 10,
+            compression_level: 6,
+        }
+    }
+}
+
+impl Default for ConfigurationManager {
+    fn default() -> Self {
+        Self {
+            config: PipelineConfiguration::default(),
+            config_path: None,
+            environment_prefix: "META".to_string(),
+        }
+    }
 }
 
 /// Utility functions for configuration management
