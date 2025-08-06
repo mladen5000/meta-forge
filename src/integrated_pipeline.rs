@@ -3,40 +3,35 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 // Bioinformatics crates
-use bio::alphabets::dna::revcomp;
 use bio::io::fastq;
-use rust_htslib::bam;
 use seq_io::fastq::{Reader as SeqReader, Record};
 
 // Machine Learning & Statistics
-use candle_core::{DType, Device, Tensor};
-use candle_nn::{Module, VarBuilder, linear};
 use hyperloglog::HyperLogLog as ExternalHLL;
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::{Array1, Array2};
 use ort::{Session, SessionBuilder}; // ONNX Runtime
-use probabilistic_collections::bloom::BloomFilter;
 // use sketchy::{BottomK, MinHash}; // Package not available
 use smartcore::ensemble::random_forest_classifier::RandomForestClassifier; // For sketching algorithms
 
 // Graph processing
 use pathfinding::prelude::*;
-use petgraph::algo::{connected_components, tarjan_scc};
+use petgraph::algo::connected_components;
 use petgraph::{Directed, Graph};
-use petgraph::graph::{EdgeIndex, NodeIndex}; // Graph algorithms
+use petgraph::graph::NodeIndex; // Graph algorithms
 
 // Core data structures
 use crate::core_data_structures::{GraphFragment, GraphNode, GraphEdge};
 
 // Performance & Utilities
-use ahash::{AHashMap, AHashSet, RandomState}; // Faster hashing
-use bincode; // Fast serialization
+use ahash::AHashMap; // Faster hashing
+ // Fast serialization
 use crossbeam_channel::{Receiver, Sender, bounded};
-use dashmap::DashMap; // Concurrent HashMap
-use lz4_flex::{compress, decompress}; // Compression
+ // Concurrent HashMap
+ // Compression
 use memmap2::MmapOptions; // Memory-mapped files
 use mimalloc::MiMalloc;
 use std::sync::Arc;
-use parking_lot::{Mutex, RwLock}; // Better locks than std
+use parking_lot::Mutex; // Better locks than std
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize}; // Better allocator
 
@@ -543,12 +538,10 @@ impl StreamingCorrector {
                     // Only add the last character to avoid overlaps
                     corrected.push(corrected_kmer.chars().last().unwrap());
                 }
+            } else if i == 0 {
+                corrected.push_str(kmer);
             } else {
-                if i == 0 {
-                    corrected.push_str(kmer);
-                } else {
-                    corrected.push(kmer.chars().last().unwrap());
-                }
+                corrected.push(kmer.chars().last().unwrap());
             }
         }
 
@@ -717,7 +710,7 @@ impl AIRepeatResolver {
         if let Some(ref session) = self.session {
             // Use AI model for repeat resolution
             let session_guard = session.lock();
-            self.ai_resolve(&mut resolved, &*session_guard)?;
+            self.ai_resolve(&mut resolved, &session_guard)?;
         } else {
             // Fallback to heuristic-based resolution
             self.heuristic_resolve(&mut resolved)?;

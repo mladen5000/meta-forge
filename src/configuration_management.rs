@@ -1,16 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use std::env;
-use anyhow::{Result, anyhow, Context, bail};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use config::{Config, ConfigError, File, Environment, FileFormat};
-use tracing::{info, warn, error, debug, instrument};
+use tracing::{info, warn, error};
 use thiserror::Error;
 
-use crate::core_data_structures::*;
-use crate::assembly_graph_construction::*;
-use crate::feature_extraction::*;
-use crate::database_integration::*;
 
 /// Comprehensive configuration management for the metagenomics pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,7 +297,7 @@ impl ConfigurationManager {
         let config_path = config_path.as_ref().to_path_buf();
         let config = Self::load_config_from_file(&config_path)?;
         
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path: Some(config_path),
             environment_prefix: "META".to_string(),
@@ -353,7 +348,7 @@ impl ConfigurationManager {
         
         let config: PipelineConfiguration = config_builder.build()?.try_deserialize()?;
         
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path: None,
             environment_prefix: "META".to_string(),
@@ -535,12 +530,12 @@ impl ConfigurationManager {
     pub fn save_config<P: AsRef<Path>>(&self, path: P) -> Result<(), PipelineError> {
         let toml_string = toml::to_string_pretty(&self.config)
             .map_err(|e| PipelineError::ConfigurationError {
-                message: format!("Failed to serialize configuration: {}", e),
+                message: format!("Failed to serialize configuration: {e}"),
             })?;
         
         std::fs::write(path.as_ref(), toml_string)
             .map_err(|e| PipelineError::IOError {
-                message: format!("Failed to write configuration file: {}", e),
+                message: format!("Failed to write configuration file: {e}"),
             })?;
         
         info!("💾 Configuration saved to {}", path.as_ref().display());
@@ -791,7 +786,7 @@ impl ResourceMonitor {
         if memory_percent > self.config.alert_memory_threshold_percent {
             let alert = ResourceAlert {
                 alert_type: AlertType::MemoryHigh,
-                message: format!("Memory usage high: {:.1}%", memory_percent),
+                message: format!("Memory usage high: {memory_percent:.1}%"),
                 value: memory_percent,
                 threshold: self.config.alert_memory_threshold_percent,
                 timestamp: chrono::Utc::now(),
@@ -804,7 +799,7 @@ impl ResourceMonitor {
         if cpu_usage > self.config.alert_cpu_threshold_percent {
             let alert = ResourceAlert {
                 alert_type: AlertType::CpuHigh,
-                message: format!("CPU usage high: {:.1}%", cpu_usage),
+                message: format!("CPU usage high: {cpu_usage:.1}%"),
                 value: cpu_usage,
                 threshold: self.config.alert_cpu_threshold_percent,
                 timestamp: chrono::Utc::now(),
@@ -936,12 +931,12 @@ pub mod config_utils {
         
         let toml_string = toml::to_string_pretty(&template_config)
             .map_err(|e| PipelineError::ConfigurationError {
-                message: format!("Failed to serialize template: {}", e),
+                message: format!("Failed to serialize template: {e}"),
             })?;
         
         std::fs::write(path.as_ref(), toml_string)
             .map_err(|e| PipelineError::IOError {
-                message: format!("Failed to write template: {}", e),
+                message: format!("Failed to write template: {e}"),
             })?;
         
         Ok(())

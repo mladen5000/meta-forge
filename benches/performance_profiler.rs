@@ -52,6 +52,12 @@ pub struct MemoryProfile {
     pub gc_pressure_estimate: f64,
 }
 
+impl Default for GenomicsProfiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GenomicsProfiler {
     pub fn new() -> Self {
         Self {
@@ -74,7 +80,7 @@ impl GenomicsProfiler {
         self.current_stage = Some(stage_name.to_string());
         self.memory_tracker.sample_memory();
 
-        println!("⏱️  Starting stage: {}", stage_name);
+        println!("⏱️  Starting stage: {stage_name}");
         StageTimer::new(stage_name.to_string(), Instant::now())
     }
 
@@ -303,7 +309,7 @@ impl GenomicsProfiler {
         if !report.bottlenecks.is_empty() {
             println!("\n🚨 Bottlenecks Identified:");
             for bottleneck in &report.bottlenecks {
-                println!("  - {}", bottleneck);
+                println!("  - {bottleneck}");
             }
         }
 
@@ -327,7 +333,7 @@ impl GenomicsProfiler {
     pub fn export_metrics(&self, report: &PerformanceReport, path: &str) -> Result<()> {
         let json = serde_json::to_string_pretty(report)?;
         std::fs::write(path, json)?;
-        println!("📄 Performance metrics exported to {}", path);
+        println!("📄 Performance metrics exported to {path}");
         Ok(())
     }
 }

@@ -5,9 +5,8 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use bio::io::fastq;
-use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /* ------------------------------------------------------------------------- */
@@ -67,6 +66,12 @@ pub struct SequenceMetrics {
 /*                               IMPLEMENTATION                              */
 /* ------------------------------------------------------------------------- */
 
+impl Default for GenomicDataValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GenomicDataValidator {
     /// Create a new validator with default thresholds.
     pub fn new() -> Self {
@@ -108,7 +113,7 @@ impl GenomicDataValidator {
         }
         for (i, ch) in sequence.chars().enumerate() {
             if !matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T' | 'N') {
-                res.fail(format!("Invalid base '{}' at position {}", ch, i));
+                res.fail(format!("Invalid base '{ch}' at position {i}"));
             }
         }
 
@@ -170,7 +175,7 @@ impl GenomicDataValidator {
             bail!("k={} outside supported 15–255 range", k);
         }
         if k % 2 == 0 {
-            eprintln!("⚠️  Even k={} can hinder assembly", k);
+            eprintln!("⚠️  Even k={k} can hinder assembly");
         }
         Ok(())
     }
@@ -178,7 +183,7 @@ impl GenomicDataValidator {
     /// Iterate through a FASTQ and return a roll-up summary.
     pub fn validate_fastq_file(&mut self, path: &str) -> Result<ValidationSummary> {
         let mut summary = ValidationSummary::default();
-        let mut reader = fastq::Reader::from_file(path)?;
+        let reader = fastq::Reader::from_file(path)?;
 
         for (idx, rec) in reader.records().enumerate() {
             let rec = rec?;
@@ -294,7 +299,7 @@ impl GenomicDataValidator {
             let mut v: Vec<_> = self.stats.common_failures.iter().collect();
             v.sort_by(|a, b| b.1.cmp(a.1));
             for (err, n) in v.into_iter().take(5) {
-                println!("  {} – {}", n, err);
+                println!("  {n} – {err}");
             }
         }
     }

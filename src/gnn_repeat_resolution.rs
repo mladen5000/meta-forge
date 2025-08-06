@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use crate::core_data_structures::{GraphEdge, GraphFragment};
 use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use crate::core_data_structures::{GraphFragment, GraphEdge};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// GNN-based system for resolving repeats in minimiser graphs
 pub struct RepeatResolverGNN {
@@ -133,13 +133,11 @@ impl RepeatResolverGNN {
 
         // Extract node features from the graph nodes
         for (&node_id, _node) in &graph.nodes {
-            let features = self.feature_extractor.extract_node_features(
-                node_id, 
-                &graph.edges, 
-                graph
-            )?;
+            let features =
+                self.feature_extractor
+                    .extract_node_features(node_id, &graph.edges, graph)?;
             gnn_graph.node_features.insert(node_id, features);
-            
+
             // Build adjacency list from edges
             let mut adj_list = Vec::new();
             for edge in &graph.edges {
@@ -155,19 +153,24 @@ impl RepeatResolverGNN {
         // Extract edge features
         for edge in &graph.edges {
             let edge_features = self.feature_extractor.extract_edge_features(
-                edge.from_hash, 
-                edge.to_hash, 
-                edge.weight, 
-                graph
+                edge.from_hash,
+                edge.to_hash,
+                edge.weight,
+                graph,
             )?;
-            gnn_graph.edges.insert((edge.from_hash, edge.to_hash), edge_features);
+            gnn_graph
+                .edges
+                .insert((edge.from_hash, edge.to_hash), edge_features);
         }
 
         Ok(gnn_graph)
     }
 
     /// Predict edge correctness using GNN
-    pub fn predict_edge_correctness(&mut self, graph: &MinimiserGraphGNN) -> Result<Vec<EdgePrediction>> {
+    pub fn predict_edge_correctness(
+        &mut self,
+        graph: &MinimiserGraphGNN,
+    ) -> Result<Vec<EdgePrediction>> {
         if let Some(ref onnx_session) = self.onnx_session {
             // Use ONNX runtime for inference
             self.predict_with_onnx(graph, onnx_session)
@@ -179,23 +182,25 @@ impl RepeatResolverGNN {
 
     fn predict_with_builtin(&self, graph: &MinimiserGraphGNN) -> Result<Vec<EdgePrediction>> {
         let mut predictions = Vec::new();
-        
+
         // Forward pass through GNN
         let node_embeddings = self.model.forward_pass(graph)?;
-        
+
         // Predict edge correctness
-        for (&(from_node, to_node), _) in &graph.edges {
-            let from_embedding = node_embeddings.get(&from_node)
+        for &(from_node, to_node) in graph.edges.keys() {
+            let from_embedding = node_embeddings
+                .get(&from_node)
                 .ok_or_else(|| anyhow!("Missing embedding for node {}", from_node))?;
-            let to_embedding = node_embeddings.get(&to_node)
+            let to_embedding = node_embeddings
+                .get(&to_node)
                 .ok_or_else(|| anyhow!("Missing embedding for node {}", to_node))?;
-            
+
             let edge_score = self.model.predict_edge(from_embedding, to_embedding)?;
             let is_correct = edge_score > self.confidence_threshold;
-            
+
             // Classify repeat type based on graph structure
             let repeat_type = self.classify_repeat_type(from_node, to_node, graph)?;
-            
+
             predictions.push(EdgePrediction {
                 from_node,
                 to_node,
@@ -208,30 +213,44 @@ impl RepeatResolverGNN {
         Ok(predictions)
     }
 
-    fn predict_with_onnx(&self, graph: &MinimiserGraphGNN, session: &OnnxSession) -> Result<Vec<EdgePrediction>> {
+    fn predict_with_onnx(
+        &self,
+        graph: &MinimiserGraphGNN,
+        session: &OnnxSession,
+    ) -> Result<Vec<EdgePrediction>> {
         // Convert graph to ONNX input tensors
         let (node_tensor, edge_tensor, adjacency_tensor) = self.graph_to_tensors(graph)?;
-        
+
         // Run ONNX inference
         let outputs = session.run(&[
             ("node_features", node_tensor),
             ("edge_features", edge_tensor),
             ("adjacency", adjacency_tensor),
         ])?;
-        
+
         // Parse output tensors back to predictions
-        let edge_scores = outputs.get("edge_scores")
+        let edge_scores = outputs
+            .get("edge_scores")
             .ok_or_else(|| anyhow!("Missing edge_scores output"))?;
-        
+
         self.tensors_to_predictions(graph, edge_scores)
     }
 
-    fn classify_repeat_type(&self, from_node: u64, to_node: u64, graph: &MinimiserGraphGNN) -> Result<RepeatType> {
+    fn classify_repeat_type(
+        &self,
+        from_node: u64,
+        to_node: u64,
+        graph: &MinimiserGraphGNN,
+    ) -> Result<RepeatType> {
         // Analyze local graph structure to classify repeat type
-        
-        let from_neighbors = graph.adjacency.get(&from_node).map(|v| v.len()).unwrap_or(0);
+
+        let from_neighbors = graph
+            .adjacency
+            .get(&from_node)
+            .map(|v| v.len())
+            .unwrap_or(0);
         let to_neighbors = graph.adjacency.get(&to_node).map(|v| v.len()).unwrap_or(0);
-        
+
         // Simple heuristics - in practice, use learned features
         if from_neighbors > 5 && to_neighbors > 5 {
             // High-degree nodes suggest repeats
@@ -247,16 +266,22 @@ impl RepeatResolverGNN {
         }
     }
 
-    fn check_tandem_pattern(&self, from_node: u64, to_node: u64, graph: &MinimiserGraphGNN) -> Result<bool> {
+    fn check_tandem_pattern(
+        &self,
+        from_node: u64,
+        to_node: u64,
+        graph: &MinimiserGraphGNN,
+    ) -> Result<bool> {
         // Check if nodes form part of tandem repeat pattern
         // Look for short cycles indicating tandem repeats
         if let Some(from_neighbors) = graph.adjacency.get(&from_node) {
             if let Some(to_neighbors) = graph.adjacency.get(&to_node) {
                 // Check for common neighbors (triangle pattern)
-                let common_neighbors: HashSet<_> = from_neighbors.iter()
+                let common_neighbors: HashSet<_> = from_neighbors
+                    .iter()
                     .filter(|&&n| to_neighbors.contains(&n))
                     .collect();
-                
+
                 // Tandem repeats often create triangular patterns
                 Ok(common_neighbors.len() > 2)
             } else {
@@ -267,23 +292,33 @@ impl RepeatResolverGNN {
         }
     }
 
-    fn check_inverted_pattern(&self, from_node: u64, to_node: u64, graph: &MinimiserGraphGNN) -> Result<bool> {
+    fn check_inverted_pattern(
+        &self,
+        from_node: u64,
+        to_node: u64,
+        graph: &MinimiserGraphGNN,
+    ) -> Result<bool> {
         // Check for inverted repeat patterns
         // Look for palindromic-like structures in the graph
-        
+
         // Simple heuristic: check if reverse complement nodes exist
         // (This would require actual k-mer sequence analysis in practice)
-        let from_neighbors = graph.adjacency.get(&from_node).map(|v| v.len()).unwrap_or(0);
+        let from_neighbors = graph
+            .adjacency
+            .get(&from_node)
+            .map(|v| v.len())
+            .unwrap_or(0);
         let to_neighbors = graph.adjacency.get(&to_node).map(|v| v.len()).unwrap_or(0);
-        
+
         // Inverted repeats often have symmetric degree patterns
         Ok((from_neighbors == to_neighbors) && from_neighbors > 3)
     }
 
     /// Apply GNN predictions to resolve repeats in assembly
-    pub fn resolve_repeats(&self, 
-        graph: &mut GraphFragment, 
-        predictions: &[EdgePrediction]
+    pub fn resolve_repeats(
+        &self,
+        graph: &mut GraphFragment,
+        predictions: &[EdgePrediction],
     ) -> Result<ResolvedGraph> {
         let mut resolved = ResolvedGraph {
             original_edges: graph.edges.clone(),
@@ -332,21 +367,28 @@ impl RepeatResolverGNN {
         Ok(resolved)
     }
 
-    fn analyze_repeat_region(&self, pred: &EdgePrediction, graph: &GraphFragment) -> Result<RepeatRegion> {
+    fn analyze_repeat_region(
+        &self,
+        pred: &EdgePrediction,
+        graph: &GraphFragment,
+    ) -> Result<RepeatRegion> {
         Ok(RepeatRegion {
             repeat_type: pred.repeat_type.clone(),
             nodes: vec![pred.from_node, pred.to_node],
             confidence: pred.confidence_score,
             resolution_strategy: match pred.repeat_type {
                 RepeatType::TandemRepeat => ResolutionStrategy::UnrollTandem,
-                RepeatType::InterspersedRepeat => ResolutionStrategy::SkipRepeat, 
+                RepeatType::InterspersedRepeat => ResolutionStrategy::SkipRepeat,
                 RepeatType::InvertedRepeat => ResolutionStrategy::ResolveByPairing,
                 RepeatType::NotRepeat => ResolutionStrategy::KeepOriginal,
             },
         })
     }
 
-    fn graph_to_tensors(&self, graph: &MinimiserGraphGNN) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    fn graph_to_tensors(
+        &self,
+        graph: &MinimiserGraphGNN,
+    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
         // Convert graph to tensor format for ONNX
         let num_nodes = graph.node_features.len();
         let num_edges = graph.edges.len();
@@ -371,7 +413,9 @@ impl RepeatResolverGNN {
 
         // Adjacency tensor as edge list [2, num_edges]
         let mut adjacency_tensor = vec![0f32; 2 * num_edges];
-        let node_to_idx: HashMap<u64, usize> = graph.node_features.keys()
+        let node_to_idx: HashMap<u64, usize> = graph
+            .node_features
+            .keys()
             .enumerate()
             .map(|(i, &k)| (k, i))
             .collect();
@@ -384,15 +428,19 @@ impl RepeatResolverGNN {
         Ok((node_tensor, edge_tensor, adjacency_tensor))
     }
 
-    fn tensors_to_predictions(&self, graph: &MinimiserGraphGNN, edge_scores: &[f32]) -> Result<Vec<EdgePrediction>> {
+    fn tensors_to_predictions(
+        &self,
+        graph: &MinimiserGraphGNN,
+        edge_scores: &[f32],
+    ) -> Result<Vec<EdgePrediction>> {
         let mut predictions = Vec::new();
-        
+
         for (i, &(from_node, to_node)) in graph.edges.keys().enumerate() {
             if i < edge_scores.len() {
                 let score = edge_scores[i];
                 let is_correct = score > self.confidence_threshold;
                 let repeat_type = self.classify_repeat_type(from_node, to_node, graph)?;
-                
+
                 predictions.push(EdgePrediction {
                     from_node,
                     to_node,
@@ -402,7 +450,7 @@ impl RepeatResolverGNN {
                 });
             }
         }
-        
+
         Ok(predictions)
     }
 }
@@ -410,14 +458,14 @@ impl RepeatResolverGNN {
 impl GraphNeuralNetwork {
     fn new(config: GNNConfig) -> Self {
         let mut message_layers = Vec::new();
-        
+
         for layer_idx in 0..config.num_layers {
-            let input_dim = if layer_idx == 0 { 
-                config.node_feature_dim 
-            } else { 
-                config.hidden_dim 
+            let input_dim = if layer_idx == 0 {
+                config.node_feature_dim
+            } else {
+                config.hidden_dim
             };
-            
+
             message_layers.push(MessagePassingLayer::new(input_dim, config.hidden_dim));
         }
 
@@ -432,7 +480,7 @@ impl GraphNeuralNetwork {
 
     fn forward_pass(&self, graph: &MinimiserGraphGNN) -> Result<HashMap<u64, Vec<f32>>> {
         let mut node_embeddings: HashMap<u64, Vec<f32>> = graph.node_features.clone();
-        
+
         // Message passing layers
         for layer in &self.message_layers {
             node_embeddings = layer.forward(&node_embeddings, &graph.adjacency)?;
@@ -446,7 +494,7 @@ impl GraphNeuralNetwork {
         let mut edge_features = Vec::with_capacity(from_embedding.len() + to_embedding.len());
         edge_features.extend_from_slice(from_embedding);
         edge_features.extend_from_slice(to_embedding);
-        
+
         self.edge_classifier.predict(&edge_features)
     }
 }
@@ -454,7 +502,7 @@ impl GraphNeuralNetwork {
 impl MessagePassingLayer {
     fn new(input_dim: usize, hidden_dim: usize) -> Self {
         let mut rng = fastrand::Rng::new();
-        
+
         // Initialize weights with Xavier/Glorot initialization
         let node_weights = (0..hidden_dim)
             .map(|_| {
@@ -497,20 +545,20 @@ impl MessagePassingLayer {
         for (&node_id, current_embedding) in node_embeddings {
             // Aggregate messages from neighbors
             let mut aggregated_message = vec![0.0; self.message_weights.len()];
-            
+
             if let Some(neighbors) = adjacency.get(&node_id) {
                 for &neighbor_id in neighbors {
                     if let Some(neighbor_embedding) = node_embeddings.get(&neighbor_id) {
                         // Compute message from neighbor
                         let message = self.compute_message(neighbor_embedding)?;
-                        
+
                         // Add to aggregated message
                         for (i, &msg_val) in message.iter().enumerate() {
                             aggregated_message[i] += msg_val;
                         }
                     }
                 }
-                
+
                 // Average the messages
                 let neighbor_count = neighbors.len() as f32;
                 if neighbor_count > 0.0 {
@@ -530,28 +578,30 @@ impl MessagePassingLayer {
 
     fn compute_message(&self, embedding: &[f32]) -> Result<Vec<f32>> {
         let mut message = vec![0.0; self.message_weights.len()];
-        
+
         for (i, neuron_weights) in self.message_weights.iter().enumerate() {
-            let weighted_sum: f32 = embedding.iter()
+            let weighted_sum: f32 = embedding
+                .iter()
                 .zip(neuron_weights.iter())
                 .map(|(x, w)| x * w)
                 .sum();
             message[i] = Self::relu(weighted_sum);
         }
-        
+
         Ok(message)
     }
 
     fn update_node(&self, current_embedding: &[f32], message: &[f32]) -> Result<Vec<f32>> {
         let mut updated = vec![0.0; self.node_weights.len()];
-        
+
         // Transform current embedding
         for (i, neuron_weights) in self.node_weights.iter().enumerate() {
-            let weighted_sum: f32 = current_embedding.iter()
+            let weighted_sum: f32 = current_embedding
+                .iter()
                 .zip(neuron_weights.iter())
                 .map(|(x, w)| x * w)
                 .sum();
-            
+
             // Add message and bias
             let combined = weighted_sum + message.get(i).unwrap_or(&0.0) + self.bias[i];
             updated[i] = Self::relu(combined);
@@ -559,28 +609,25 @@ impl MessagePassingLayer {
 
         // Apply layer normalization
         let updated = self.layer_normalize(&updated)?;
-        
+
         Ok(updated)
     }
 
     fn layer_normalize(&self, input: &[f32]) -> Result<Vec<f32>> {
         // Compute mean and variance
         let mean = input.iter().sum::<f32>() / input.len() as f32;
-        let variance = input.iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f32>() / input.len() as f32;
-        
+        let variance = input.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / input.len() as f32;
+
         let std_dev = (variance + 1e-5).sqrt(); // Add epsilon for numerical stability
-        
+
         // Normalize and scale
-        let normalized: Vec<f32> = input.iter()
+        let normalized: Vec<f32> = input
+            .iter()
             .zip(self.layer_norm_scale.iter())
             .zip(self.layer_norm_bias.iter())
-            .map(|((x, scale), bias)| {
-                ((x - mean) / std_dev) * scale + bias
-            })
+            .map(|((x, scale), bias)| ((x - mean) / std_dev) * scale + bias)
             .collect();
-        
+
         Ok(normalized)
     }
 
@@ -592,14 +639,10 @@ impl MessagePassingLayer {
 impl EdgeClassifier {
     fn new(input_dim: usize) -> Self {
         let mut rng = fastrand::Rng::new();
-        
+
         // Single layer classifier for edge prediction
-        let weights = vec![
-            (0..input_dim)
-                .map(|_| rng.f32() * 2.0 - 1.0)
-                .collect()
-        ];
-        
+        let weights = vec![(0..input_dim).map(|_| rng.f32() * 2.0 - 1.0).collect()];
+
         Self {
             weights,
             bias: vec![0.0],
@@ -611,13 +654,14 @@ impl EdgeClassifier {
             return Err(anyhow!("Input dimension mismatch"));
         }
 
-        let weighted_sum: f32 = edge_features.iter()
+        let weighted_sum: f32 = edge_features
+            .iter()
             .zip(self.weights[0].iter())
             .map(|(x, w)| x * w)
             .sum();
-        
+
         let output = weighted_sum + self.bias[0];
-        
+
         // Apply sigmoid activation for binary classification
         Ok(Self::sigmoid(output))
     }
@@ -639,7 +683,7 @@ impl NodeFeatureExtractor {
         graph: &GraphFragment,
     ) -> Result<Vec<f32>> {
         let mut features = vec![0.0; self.feature_dim];
-        
+
         // Count neighbors and collect weights from edges
         let mut neighbors = HashMap::new();
         for edge in edges {
@@ -649,18 +693,18 @@ impl NodeFeatureExtractor {
                 neighbors.insert(edge.from_hash, edge.weight);
             }
         }
-        
+
         // Feature 1-4: Basic graph properties
         features[0] = neighbors.len() as f32; // Degree
         features[1] = neighbors.values().sum::<u32>() as f32; // Total weight
         features[2] = neighbors.values().map(|&w| w as f32).sum::<f32>() / neighbors.len() as f32; // Avg weight
         features[3] = (node_id % 1000) as f32 / 1000.0; // Hash-based feature
-        
+
         // Feature 5-8: Local clustering coefficient
         let clustering = self.compute_clustering_coefficient(node_id, graph)?;
         features[4] = clustering;
         features[5] = if clustering > 0.5 { 1.0 } else { 0.0 }; // High clustering indicator
-        
+
         // Feature 6-10: K-mer composition features (simplified)
         let composition = self.extract_composition_features(node_id)?;
         for (i, &comp) in composition.iter().take(5).enumerate() {
@@ -668,16 +712,16 @@ impl NodeFeatureExtractor {
                 features[6 + i] = comp;
             }
         }
-        
+
         // Feature 11-15: Repeat indicators
         features[10] = if neighbors.len() > 10 { 1.0 } else { 0.0 }; // High degree = potential repeat
         features[11] = self.count_palindromic_neighbors(&neighbors) as f32;
-        
+
         // Pad remaining features with normalized hash values
         for i in 12..self.feature_dim {
             features[i] = ((node_id.wrapping_mul(i as u64 + 1)) % 1000) as f32 / 1000.0;
         }
-        
+
         Ok(features)
     }
 
@@ -689,32 +733,42 @@ impl NodeFeatureExtractor {
         graph: &GraphFragment,
     ) -> Result<Vec<f32>> {
         let mut features = vec![0.0; 8]; // Simplified edge features
-        
+
         features[0] = weight as f32;
         features[1] = (weight as f32).ln(); // Log weight
-        
+
         // Degree features
-        let from_degree = graph.edges.iter()
+        let from_degree = graph
+            .edges
+            .iter()
             .filter(|e| e.from_hash == from_node || e.to_hash == from_node)
             .count() as f32;
-        let to_degree = graph.edges.iter()
+        let to_degree = graph
+            .edges
+            .iter()
             .filter(|e| e.from_hash == to_node || e.to_hash == to_node)
             .count() as f32;
         features[2] = from_degree;
         features[3] = to_degree;
         features[4] = (from_degree - to_degree).abs();
-        
+
         // Structural features
-        features[5] = if self.nodes_share_neighbors(from_node, to_node, graph)? { 1.0 } else { 0.0 };
+        features[5] = if self.nodes_share_neighbors(from_node, to_node, graph)? {
+            1.0
+        } else {
+            0.0
+        };
         features[6] = ((from_node ^ to_node) % 1000) as f32 / 1000.0; // Interaction hash
         features[7] = if weight > 5 { 1.0 } else { 0.0 }; // High weight indicator
-        
+
         Ok(features)
     }
 
     fn compute_clustering_coefficient(&self, node_id: u64, graph: &GraphFragment) -> Result<f32> {
         // Get neighbors from edges
-        let neighbor_ids: Vec<u64> = graph.edges.iter()
+        let neighbor_ids: Vec<u64> = graph
+            .edges
+            .iter()
             .filter_map(|e| {
                 if e.from_hash == node_id {
                     Some(e.to_hash)
@@ -725,50 +779,51 @@ impl NodeFeatureExtractor {
                 }
             })
             .collect();
-            
+
         if neighbor_ids.len() < 2 {
             return Ok(0.0);
         }
-        
+
         let mut triangles = 0;
         let possible_triangles = neighbor_ids.len() * (neighbor_ids.len() - 1) / 2;
-            
+
         // Count triangles
         for i in 0..neighbor_ids.len() {
-            for j in i+1..neighbor_ids.len() {
+            for j in i + 1..neighbor_ids.len() {
                 let node_a = neighbor_ids[i];
                 let node_b = neighbor_ids[j];
-                
+
                 // Check if node_a and node_b are connected
                 let are_connected = graph.edges.iter().any(|e| {
-                    (e.from_hash == node_a && e.to_hash == node_b) ||
-                    (e.from_hash == node_b && e.to_hash == node_a)
+                    (e.from_hash == node_a && e.to_hash == node_b)
+                        || (e.from_hash == node_b && e.to_hash == node_a)
                 });
-                
+
                 if are_connected {
                     triangles += 1;
                 }
             }
         }
-        
+
         Ok(triangles as f32 / possible_triangles as f32)
     }
 
     fn extract_composition_features(&self, node_id: u64) -> Result<Vec<f32>> {
         // Simplified composition based on hash (in practice, use actual k-mer)
         let mut composition = vec![0.0; 4];
-        
+
         for i in 0..4 {
             let shift = i * 16;
             composition[i] = ((node_id >> shift) & 0xFFFF) as f32 / 65535.0;
         }
-        
+
         Ok(composition)
     }
 
     fn count_palindromic_neighbors(&self, neighbors: &HashMap<u64, u32>) -> usize {
         // Simplified palindrome detection (would use actual sequences in practice)
-        neighbors.keys()
+        neighbors
+            .keys()
             .filter(|&&neighbor| {
                 // Simple heuristic: even hash values as "palindromic"
                 neighbor % 2 == 0
@@ -776,26 +831,43 @@ impl NodeFeatureExtractor {
             .count()
     }
 
-    fn nodes_share_neighbors(&self, node_a: u64, node_b: u64, graph: &GraphFragment) -> Result<bool> {
+    fn nodes_share_neighbors(
+        &self,
+        node_a: u64,
+        node_b: u64,
+        graph: &GraphFragment,
+    ) -> Result<bool> {
         // Get neighbors for both nodes
-        let neighbors_a: HashSet<u64> = graph.edges.iter()
+        let neighbors_a: HashSet<u64> = graph
+            .edges
+            .iter()
             .filter_map(|e| {
-                if e.from_hash == node_a { Some(e.to_hash) }
-                else if e.to_hash == node_a { Some(e.from_hash) }
-                else { None }
+                if e.from_hash == node_a {
+                    Some(e.to_hash)
+                } else if e.to_hash == node_a {
+                    Some(e.from_hash)
+                } else {
+                    None
+                }
             })
             .collect();
-            
-        let neighbors_b: HashSet<u64> = graph.edges.iter()
+
+        let neighbors_b: HashSet<u64> = graph
+            .edges
+            .iter()
             .filter_map(|e| {
-                if e.from_hash == node_b { Some(e.to_hash) }
-                else if e.to_hash == node_b { Some(e.from_hash) }
-                else { None }
+                if e.from_hash == node_b {
+                    Some(e.to_hash)
+                } else if e.to_hash == node_b {
+                    Some(e.from_hash)
+                } else {
+                    None
+                }
             })
             .collect();
-            
+
         let common_neighbors: HashSet<_> = neighbors_a.intersection(&neighbors_b).collect();
-        Ok(common_neighbors.len() > 0)
+        Ok(!common_neighbors.is_empty())
     }
 }
 
@@ -805,7 +877,11 @@ impl OnnxSession {
         // For now, return a placeholder
         Ok(Self {
             model_path: model_path.to_string(),
-            input_names: vec!["node_features".to_string(), "edge_features".to_string(), "adjacency".to_string()],
+            input_names: vec![
+                "node_features".to_string(),
+                "edge_features".to_string(),
+                "adjacency".to_string(),
+            ],
             output_names: vec!["edge_scores".to_string()],
         })
     }
@@ -814,17 +890,18 @@ impl OnnxSession {
         // Placeholder ONNX inference
         // In practice, use ort crate or similar for ONNX runtime
         let mut outputs = HashMap::new();
-        
+
         // Mock output - in reality this comes from the trained model
-        let num_edges = inputs.iter()
+        let num_edges = inputs
+            .iter()
             .find(|(name, _)| *name == "edge_features")
             .map(|(_, tensor)| tensor.len() / 8) // 8 edge features per edge
             .unwrap_or(0);
-        
+
         let mock_scores: Vec<f32> = (0..num_edges)
             .map(|i| fastrand::f32() * 0.5 + 0.25) // Random scores between 0.25-0.75
             .collect();
-        
+
         outputs.insert("edge_scores".to_string(), mock_scores);
         Ok(outputs)
     }
@@ -861,13 +938,13 @@ pub fn resolve_repeats_in_pipeline(
     model_path: Option<&str>,
 ) -> Result<ResolvedGraph> {
     let mut resolver = RepeatResolverGNN::new(model_path)?;
-    
+
     // Convert graph to GNN format
     let gnn_graph = resolver.prepare_graph_input(graph)?;
-    
+
     // Get edge predictions
     let predictions = resolver.predict_edge_correctness(&gnn_graph)?;
-    
+
     // Apply resolutions
     resolver.resolve_repeats(graph, &predictions)
 }
@@ -882,11 +959,14 @@ mod tests {
         let mut neighbors = HashMap::new();
         neighbors.insert(123, 5);
         neighbors.insert(456, 3);
-        
+
+        let blah: GraphEdge = neighbors.into();
         let mut graph = GraphFragment::default();
         graph.edges.insert(789, neighbors.clone());
-        
-        let features = extractor.extract_node_features(789, &neighbors, &graph).unwrap();
+
+        let features = extractor
+            .extract_node_features(789, &neighbors, &graph)
+            .unwrap();
         assert_eq!(features.len(), 32);
         assert_eq!(features[0], 2.0); // Degree = 2
         assert_eq!(features[1], 8.0); // Total weight = 5 + 3
@@ -900,11 +980,11 @@ mod tests {
             edges: HashMap::new(),
             adjacency: HashMap::new(),
         };
-        
+
         // Create high-degree nodes (typical of repeats)
         graph.adjacency.insert(1, vec![2, 3, 4, 5, 6, 7]);
         graph.adjacency.insert(2, vec![1, 3, 4, 5, 6, 7]);
-        
+
         let repeat_type = resolver.classify_repeat_type(1, 2, &graph).unwrap();
         assert_ne!(repeat_type, RepeatType::NotRepeat);
     }

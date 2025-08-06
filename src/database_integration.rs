@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use ahash::{AHashMap, AHashSet};
-use anyhow::{Result, anyhow, Context};
-use rusqlite::{Connection, Transaction, params, OptionalExtension};
+use anyhow::{Result, Context};
+use rusqlite::{Connection, params, OptionalExtension};
 use serde::{Serialize, Deserialize};
 use lz4_flex::{compress, decompress};
 use dashmap::DashMap;
@@ -10,9 +9,7 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 
 use crate::core_data_structures::*;
-use crate::feature_extraction::*;
 use crate::assembly_graph_construction::{AssemblyStats, Contig};
-use crate::integrated_pipeline::AssemblyStats as IntegratedAssemblyStats;
 
 /// Comprehensive database management for metagenomics pipeline
 pub struct MetagenomicsDatabase {
@@ -503,7 +500,7 @@ impl MetagenomicsDatabase {
         
         self.caches.assembly_cache.insert(sample_name.to_string(), record);
         
-        println!("✅ Stored assembly results for sample: {}", sample_name);
+        println!("✅ Stored assembly results for sample: {sample_name}");
         Ok(assembly_id)
     }
     
@@ -552,7 +549,7 @@ impl MetagenomicsDatabase {
         let mut stmt = conn.prepare("SELECT name FROM taxonomy WHERE id = ?1")?;
         
         let name: Option<String> = stmt.query_row([taxonomy_id], |row| {
-            Ok(row.get(0)?)
+            row.get(0)
         }).optional()?;
         
         // Cache result
@@ -573,8 +570,7 @@ impl MetagenomicsDatabase {
                  FROM sequence_features sf 
                  WHERE sf.feature_version = ?1 
                  ORDER BY RANDOM() 
-                 LIMIT {}", 
-                limit_val
+                 LIMIT {limit_val}"
             )
         } else {
             "SELECT sf.id, sf.features, sf.feature_dim, sf.taxonomy_id, sf.sequence_id 
@@ -622,7 +618,7 @@ impl MetagenomicsDatabase {
     /// Find similar sequences using k-mer matching
     pub fn find_similar_sequences(&self, query_sequence: &str, k: usize, max_results: usize) -> Result<Vec<SequenceMatch>> {
         // Generate cache key
-        let cache_key = format!("{}_{}", query_sequence, k);
+        let cache_key = format!("{query_sequence}_{k}");
         
         // Check cache
         if let Some(cached_results) = self.caches.kmer_cache.get(&cache_key) {
@@ -731,7 +727,7 @@ impl MetagenomicsDatabase {
     
     /// Build k-mer index for fast sequence lookups
     pub fn build_kmer_index(&self, k_size: usize) -> Result<()> {
-        println!("🔨 Building k-mer index with k={}", k_size);
+        println!("🔨 Building k-mer index with k={k_size}");
         
         let conn = self.connection.write();
         let tx = conn.unchecked_transaction()?;
@@ -774,7 +770,7 @@ impl MetagenomicsDatabase {
                         count += 1;
                         
                         if count % 10000 == 0 {
-                            println!("  Processed {} k-mers", count);
+                            println!("  Processed {count} k-mers");
                         }
                     }
                 }
@@ -783,7 +779,7 @@ impl MetagenomicsDatabase {
         }; // kmer_stmt is dropped here, return count
         
         tx.commit()?;
-        println!("✅ Built k-mer index with {} k-mers", kmer_count);
+        println!("✅ Built k-mer index with {kmer_count} k-mers");
         Ok(())
     }
     

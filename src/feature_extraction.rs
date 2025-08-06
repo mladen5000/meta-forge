@@ -1,9 +1,8 @@
 use ahash::{AHashMap, AHashSet};
-use anyhow::{Result, anyhow};
-use ndarray::{Array1, Array2};
+use anyhow::Result;
+use ndarray::Array1;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 
 use crate::assembly_graph_construction::*;
 use crate::core_data_structures::*;
@@ -11,13 +10,13 @@ use crate::core_data_structures::*;
 /// Comprehensive feature extraction for sequences and assembly graphs
 pub struct AdvancedFeatureExtractor {
     /// Configuration for feature extraction
-    config: FeatureConfig,
+    pub config: FeatureConfig,
     /// Codon usage tables for different organisms
-    codon_tables: CodonUsageTables,
+    pub codon_tables: CodonUsageTables,
     /// Pre-computed k-mer signatures
-    kmer_signatures: KmerSignatures,
+    pub kmer_signatures: KmerSignatures,
     /// Sequence pattern recognizers
-    pattern_recognizers: PatternRecognizers,
+    pub pattern_recognizers: PatternRecognizers,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,7 +220,7 @@ impl AdvancedFeatureExtractor {
     }
 
     /// Basic nucleotide composition features
-    fn extract_composition_features(&self, sequence: &str) -> Result<Vec<f64>> {
+    pub fn extract_composition_features(&self, sequence: &str) -> Result<Vec<f64>> {
         let mut features = Vec::new();
         let total_len = sequence.len() as f64;
 
@@ -364,7 +363,7 @@ impl AdvancedFeatureExtractor {
     }
 
     /// Sequence complexity features
-    fn extract_complexity_features(&self, sequence: &str) -> Result<Vec<f64>> {
+    pub fn extract_complexity_features(&self, sequence: &str) -> Result<Vec<f64>> {
         let mut features = Vec::new();
 
         // Shannon entropy
@@ -388,7 +387,7 @@ impl AdvancedFeatureExtractor {
     }
 
     /// k-mer based features using various signatures
-    fn extract_kmer_features(&self, sequence: &str) -> Result<Vec<f64>> {
+    pub fn extract_kmer_features(&self, sequence: &str) -> Result<Vec<f64>> {
         let mut features = Vec::new();
 
         for &k in &self.config.kmer_sizes {
@@ -548,7 +547,7 @@ impl AdvancedFeatureExtractor {
             compressed_length += if count > 1 { 2 } else { 1 }; // Character + count or just character
         }
 
-        if sequence.len() > 0 {
+        if !sequence.is_empty() {
             compressed_length as f64 / sequence.len() as f64
         } else {
             1.0
@@ -579,7 +578,7 @@ impl AdvancedFeatureExtractor {
         let max_box_size = sequence.len().min(100);
 
         for box_size in (1..=max_box_size).step_by(5) {
-            let boxes_needed = (sequence.len() + box_size - 1) / box_size;
+            let boxes_needed = sequence.len().div_ceil(box_size);
             if boxes_needed > 1 {
                 dimension = (boxes_needed as f64).log2() / (1.0 / box_size as f64).log2();
             }
@@ -732,13 +731,13 @@ impl AdvancedFeatureExtractor {
 
         // Single nucleotides
         for nuc in &["A", "C", "G", "T"] {
-            names.push(format!("freq_{}", nuc));
+            names.push(format!("freq_{nuc}"));
         }
 
         // Dinucleotides
         for nuc1 in &["A", "C", "G", "T"] {
             for nuc2 in &["A", "C", "G", "T"] {
-                names.push(format!("dinuc_{}_{}", nuc1, nuc2));
+                names.push(format!("dinuc_{nuc1}_{nuc2}"));
             }
         }
 
@@ -747,7 +746,7 @@ impl AdvancedFeatureExtractor {
 
     fn get_codon_feature_names(&self) -> Vec<String> {
         // Simplified - would include all codon names
-        (0..61).map(|i| format!("codon_{}", i)).collect()
+        (0..61).map(|i| format!("codon_{i}")).collect()
     }
 
     fn get_pattern_feature_names(&self) -> Vec<String> {
@@ -775,7 +774,7 @@ impl AdvancedFeatureExtractor {
         ];
 
         for k in &[3, 4, 5, 6] {
-            names.push(format!("kmer_diversity_{}", k));
+            names.push(format!("kmer_diversity_{k}"));
         }
 
         names.push("fractal_dimension".to_string());
@@ -787,10 +786,10 @@ impl AdvancedFeatureExtractor {
 
         for &k in &self.config.kmer_sizes {
             for i in 0..10 {
-                names.push(format!("kmer_{}_freq_{}", k, i));
+                names.push(format!("kmer_{k}_freq_{i}"));
             }
             for i in 0..16 {
-                names.push(format!("kmer_{}_sig_{}", k, i));
+                names.push(format!("kmer_{k}_sig_{i}"));
             }
         }
 
@@ -984,7 +983,7 @@ impl RandomHashFunction {
 pub struct PatternRecognizers;
 
 impl PatternRecognizers {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
@@ -1067,7 +1066,7 @@ impl PatternRecognizers {
         0.1 // Simplified
     }
 
-    fn detect_cpg_islands(&self, sequence: &str) -> f64 {
+    pub fn detect_cpg_islands(&self, sequence: &str) -> f64 {
         // Simplified CpG island detection
         let mut cpg_count = 0;
         let mut total_dinucs = 0;

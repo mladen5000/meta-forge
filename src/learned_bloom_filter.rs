@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Learned Bloom filter combining neural predictor with backup Bloom filter
 pub struct LearnedBloomFilter {
@@ -544,7 +544,7 @@ pub fn integrate_learned_bloom(
         ));
     }
 
-    println!("Learned Bloom filter ready, size: {} MB", model_size_mb);
+    println!("Learned Bloom filter ready, size: {model_size_mb} MB");
     Ok(learned_bloom)
 }
 
