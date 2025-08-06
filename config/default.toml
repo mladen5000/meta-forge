@@ -1,52 +1,108 @@
 # Default Configuration for Metagenomics Pipeline
 
 [general]
-working_directory = "./data"
-output_directory = "./results"
-temp_directory = "/tmp"
+name = "metagenomics-pipeline"
+version = "1.0.0"
+work_dir = "./work"
+temp_dir = "./tmp"
+output_dir = "./output"
 debug_mode = false
-max_threads = 0  # 0 = auto-detect
 
 [assembly]
-k_min = 21
+k_min = 15
 k_max = 31
-k_step = 2
-min_coverage = 3
-min_length = 200
-graph_simplification = true
-bubble_detection = true
-tip_removal = true
+min_coverage = 2
+complexity_threshold = 0.7
+enable_simplification = true
+
+[assembly.bubble_popping]
+enabled = true
+max_bubble_length = 1000
+min_coverage_ratio = 0.1
+
+[assembly.tip_removal]
+enabled = true
+max_tip_length = 100
+min_coverage_ratio = 0.1
 
 [features]
-composition_features = true
-complexity_features = true
-topology_features = true
-feature_dimensions = 100
+sequence_feature_dim = 100
+graph_feature_dim = 50
+kmer_feature_dim = 64
+include_composition = true
+include_codon_usage = true
+include_patterns = true
+include_complexity = true
+include_topology = true
+include_centrality = false
+include_clustering = true
+kmer_sizes = [3, 4, 5, 6]
+max_kmers = 10000
 
 [database]
-connection_string = "sqlite:./data/metagenomics.db"
+db_path = "./data/metagenomics.db"
+enable_wal_mode = true
+cache_size = 10000
+enable_foreign_keys = true
 batch_size = 1000
-index_k_size = 21
+enable_compression = true
+cache_memory_limit_mb = 256
+
+[database.auto_vacuum]
+enabled = true
+threshold_mb = 100
+schedule = "0 2 * * *"
 
 [ml]
-model_path = "./models"
+taxonomy_model_path = "./models/taxonomy.onnx"
+repeat_model_path = "./models/repeat_resolution.onnx"
+error_correction_model_path = "./models/error_correction.onnx"
+
+[ml.training]
 batch_size = 32
 learning_rate = 0.001
 epochs = 100
+validation_split = 0.2
+early_stopping_patience = 10
+
+[ml.inference]
+batch_size = 16
+confidence_threshold = 0.8
+use_gpu = false
+max_sequence_length = 10000
 
 [performance]
-max_memory_mb = 8192
-thread_pool_size = 0  # 0 = auto-detect
-enable_monitoring = true
+num_threads = 0  # 0 = auto-detect
+memory_limit_gb = 8
+enable_memory_monitoring = true
+streaming_buffer_size = 1000
+chunk_size = 100
+enable_compression = false
+
+[performance.monitoring]
+enabled = true
+sample_interval_ms = 1000
+alert_memory_threshold_percent = 90.0
+alert_cpu_threshold_percent = 85.0
 
 [logging]
 level = "info"
-format = "json"
-file_rotation = true
-max_file_size_mb = 100
+format = "pretty"
+enable_performance_logging = true
 
 [io]
-input_format = "auto"
-output_format = "json"
-compression = "gzip"
+supported_input_formats = ["fasta", "fastq", "fasta.gz", "fastq.gz"]
+
+[io.output_formats]
+fasta = true
+fastq = false
+gfa = true
+json = true
+tsv = true
+html_report = true
+
+[io.file_handling]
+enable_memory_mapping = true
 buffer_size = 8192
+max_file_size_gb = 10
+compression_level = 6
