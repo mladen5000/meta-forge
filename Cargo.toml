@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ahash = "0.8.12"
+bio = "2.3.0"
+candle-core = "0.9.1"
+ort = "1.16.3"
+petgraph = "0.8.2"
+rayon = "1.10.0"
+smartcore = "0.4.2"
