@@ -1,7 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    symbols,
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
     Frame,
@@ -210,12 +209,10 @@ impl<'a> MultiProgressWidget<'a> {
                 
                 let progress_bar = create_progress_bar(percentage, 20);
                 
-                let line = if let Some(total) = progress.total {
-                    format!("{} {} [{}] {:.1}% ({}/{})",
-                        status_symbol, name, progress_bar, percentage, progress.current, total)
+                let progress_text = if let Some(total) = progress.total {
+                    format!("{:.1}% ({}/{})", percentage, progress.current, total)
                 } else {
-                    format!("{} {} [{}] {}",
-                        status_symbol, name, progress_bar, progress.current)
+                    format!("{}", progress.current)
                 };
                 
                 let style = if Some(i) == self.selected {
@@ -228,9 +225,10 @@ impl<'a> MultiProgressWidget<'a> {
                     Span::styled(status_symbol, Style::default().fg(status_color)),
                     Span::raw(" "),
                     Span::styled(name, style),
-                    Span::raw(" "),
+                    Span::raw(" ["),
                     Span::styled(progress_bar, Style::default().fg(status_color)),
-                    Span::raw(&format!(" {:.1}%", percentage)),
+                    Span::raw("] "),
+                    Span::raw(progress_text),
                 ]))
             })
             .collect();
@@ -288,8 +286,8 @@ fn create_progress_bar(percentage: f64, width: usize) -> String {
     let empty = width.saturating_sub(filled);
     
     format!("{}{}", 
-        symbols::block::FULL.repeat(filled),
-        symbols::block::EMPTY.repeat(empty)
+        "█".repeat(filled),
+        "░".repeat(empty)
     )
 }
 

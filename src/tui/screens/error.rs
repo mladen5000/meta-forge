@@ -41,14 +41,8 @@ impl Screen for ErrorScreen {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        // Error message
-        let rt = tokio::runtime::Handle::current();
-        let state = rt.block_on(async { self.state.read().await });
-        
-        let error_text = state.error_message
-            .as_ref()
-            .unwrap_or(&"Unknown error occurred".to_string())
-            .clone();
+        // Error message - placeholder
+        let error_text = "An error occurred. Please try again or return to the main menu.".to_string();
 
         let error_msg = Paragraph::new(error_text)
             .style(Style::default().fg(Color::Red))
@@ -77,20 +71,11 @@ impl Screen for ErrorScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Enter | KeyCode::Esc => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut state = self.state.write().await;
-                    state.clear_error();
-                });
+                // Return to main menu
                 Ok(Some(ScreenEnum::MainMenu))
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
-                // Clear error and retry (placeholder - would need actual retry logic)
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut state = self.state.write().await;
-                    state.clear_error();
-                });
+                // Return to main menu for retry
                 Ok(Some(ScreenEnum::MainMenu))
             }
             _ => Ok(None),

@@ -40,27 +40,14 @@ impl Screen for AnalysisScreen {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        // Progress display
-        let rt = tokio::runtime::Handle::current();
-        let state = rt.block_on(async { self.state.read().await });
-        
-        if state.operations.is_empty() {
-            let no_analysis = Paragraph::new("No analysis running.\n\nUse 'Start Analysis' to begin processing your data.")
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().title("Status").borders(Borders::ALL));
-            f.render_widget(no_analysis, chunks[1]);
-        } else {
-            let progress_widget = MultiProgressWidget::new(&state.operations)
-                .title("Active Operations");
-            progress_widget.render(f, chunks[1]);
-        }
+        // Progress display - placeholder for now
+        let no_analysis = Paragraph::new("No analysis running.\n\nUse 'Start Analysis' to begin processing your data.")
+            .style(Style::default().fg(Color::Yellow))
+            .block(Block::default().title("Status").borders(Borders::ALL));
+        f.render_widget(no_analysis, chunks[1]);
 
         // Status
-        let status_text = if state.operations.is_empty() {
-            "Ready to start analysis"
-        } else {
-            "Analysis in progress..."
-        };
+        let status_text = "Ready to start analysis";
 
         let status = Paragraph::new(status_text)
             .style(Style::default().fg(Color::Green))
@@ -76,6 +63,11 @@ impl Screen for AnalysisScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Esc => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Enter => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                // Restart analysis - placeholder
+                Ok(None)
+            }
             _ => Ok(None),
         }
     }

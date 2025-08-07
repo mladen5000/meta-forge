@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 use crate::tui::{
     events::{AppEvent, EventHandler},
-    screens::{Screen as ScreenTrait, ScreenManager},
+    screens::ScreenManager,
     state::{AppState, Screen},
 };
 
@@ -120,10 +120,33 @@ impl TuiApp {
     async fn handle_event(&mut self, event: AppEvent) -> Result<()> {
         match event {
             AppEvent::Input(key) => {
-                // Handle key input
-                let mut state = self.state.write().await;
-                let screen = state.current_screen.clone();
-                drop(state);
+                // Handle global key bindings first
+                match key.code {
+                    crossterm::event::KeyCode::Char('q') => {
+                        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                            let mut state = self.state.write().await;
+                            state.should_quit = true;
+                            return Ok(());
+                        }
+                    }
+                    crossterm::event::KeyCode::Esc => {
+                        let state = self.state.read().await;
+                        if matches!(state.current_screen, crate::tui::state::Screen::MainMenu) {
+                            drop(state);
+                            let mut state = self.state.write().await;
+                            state.should_quit = true;
+                            return Ok(());
+                        }
+                        drop(state);
+                    }
+                    _ => {}
+                }
+                
+                // Get current screen for handling
+                let screen = {
+                    let state = self.state.read().await;
+                    state.current_screen.clone()
+                };
                 
                 self.screen_manager.handle_key_input(key, &screen).await?;
             }
@@ -222,18 +245,16 @@ pub async fn run_tui() -> Result<()> {
     let mut app = initialize().await?;
     
     // Setup panic hook to restore terminal
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic| {
+    std::panic::set_hook(Box::new(|panic| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        original_hook(panic);
+        eprintln!("Application panicked: {}", panic);
     }));
     
     let result = app.run().await;
     
-    // Restore original panic hook
+    // Restore default panic hook
     let _ = std::panic::take_hook();
-    std::panic::set_hook(original_hook);
     
     result
 }

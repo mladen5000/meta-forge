@@ -75,7 +75,7 @@ impl ScreenManager {
     }
     
     pub fn render(&mut self, f: &mut Frame, current_screen: &ScreenEnum) -> Result<()> {
-        let area = f.size();
+        let area = f.area();
         
         match current_screen {
             ScreenEnum::MainMenu => self.main_menu.render(f, area),

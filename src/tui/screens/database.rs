@@ -38,19 +38,7 @@ impl Screen for DatabaseScreen {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        let rt = tokio::runtime::Handle::current();
-        let state = rt.block_on(async { self.state.read().await });
-        
-        let db_info = if state.database_info.initialized {
-            format!(
-                "Database Status: Initialized\nPath: {:?}\nSize: {:?}\nTables: {:?}",
-                state.database_info.path,
-                state.database_info.size,
-                state.database_info.tables.len()
-            )
-        } else {
-            "Database Status: Not initialized\n\nPress '1' to initialize the database".to_string()
-        };
+        let db_info = "Database Status: Not initialized\n\nPress '1' to initialize the database".to_string();
 
         let db_panel = Paragraph::new(db_info)
             .block(Block::default().title("Database Information").borders(Borders::ALL));
@@ -65,6 +53,19 @@ impl Screen for DatabaseScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Esc => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Char('1') => {
+                // Initialize database - just show a message for now
+                Ok(None)
+            }
+            KeyCode::Char('2') => {
+                // Backup database - just show a message for now
+                Ok(None)
+            }
+            KeyCode::Char('3') => {
+                // Restore database - just show a message for now
+                Ok(None)
+            }
+            KeyCode::Enter => Ok(Some(ScreenEnum::MainMenu)),
             _ => Ok(None),
         }
     }

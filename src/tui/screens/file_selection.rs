@@ -3,7 +3,6 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
@@ -73,6 +72,20 @@ impl Screen for FileSelectionScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Esc => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Up => {
+                if self.selected_index > 0 {
+                    self.selected_index -= 1;
+                }
+                Ok(None)
+            }
+            KeyCode::Down => {
+                // Max 3 files in placeholder
+                if self.selected_index < 2 {
+                    self.selected_index += 1;
+                }
+                Ok(None)
+            }
+            KeyCode::Enter => Ok(Some(ScreenEnum::MainMenu)),
             _ => Ok(None),
         }
     }

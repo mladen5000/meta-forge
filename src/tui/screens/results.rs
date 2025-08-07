@@ -38,21 +38,7 @@ impl Screen for ResultsScreen {
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        let rt = tokio::runtime::Handle::current();
-        let state = rt.block_on(async { self.state.read().await });
-        
-        let results_text = if state.results.sample_name.is_empty() {
-            "No results available.\n\nRun an analysis to view results here.".to_string()
-        } else {
-            format!(
-                "Sample: {}\nContigs: {}\nTotal Length: {} bp\nN50: {} bp\nProcessing Time: {:.2}s",
-                state.results.sample_name,
-                state.results.contigs_count,
-                state.results.total_length,
-                state.results.n50,
-                state.results.processing_time.as_secs_f64()
-            )
-        };
+        let results_text = "No results available.\n\nRun an analysis to view results here.".to_string();
 
         let results = Paragraph::new(results_text)
             .block(Block::default().title("Results Summary").borders(Borders::ALL));
@@ -67,6 +53,19 @@ impl Screen for ResultsScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Esc => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Enter => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                // Export results - placeholder
+                Ok(None)
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                // Save report - placeholder
+                Ok(None)
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                // Visualize data - placeholder
+                Ok(None)
+            }
             _ => Ok(None),
         }
     }

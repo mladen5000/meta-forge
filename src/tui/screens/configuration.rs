@@ -52,6 +52,7 @@ impl Screen for ConfigurationScreen {
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>> {
         match key.code {
             KeyCode::Esc => Ok(Some(ScreenEnum::MainMenu)),
+            KeyCode::Enter => Ok(Some(ScreenEnum::MainMenu)),
             _ => Ok(None),
         }
     }

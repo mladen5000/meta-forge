@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Clear},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
 };
 use std::sync::Arc;
@@ -161,16 +161,8 @@ impl Screen for MainMenuScreen {
 
         f.render_widget(description, menu_layout[1]);
 
-        // Status bar
-        let rt = tokio::runtime::Handle::current();
-        let state = rt.block_on(async { self.state.read().await });
-        
-        let status_text = if !state.operations.is_empty() {
-            let active_count = state.operations.len();
-            format!("Active operations: {}", active_count)
-        } else {
-            "Ready".to_string()
-        };
+        // Status bar - simplified to avoid async in render
+        let status_text = "Ready - Use arrow keys to navigate, Enter to select".to_string();
 
         let status = Paragraph::new(status_text)
             .style(Style::default().fg(Color::Green))
@@ -229,11 +221,7 @@ impl Screen for MainMenuScreen {
                 
                 match c {
                     'q' | 'Q' => {
-                        let rt = tokio::runtime::Handle::current();
-                        rt.block_on(async {
-                            let mut state = self.state.write().await;
-                            state.should_quit = true;
-                        });
+                        // Will be handled by global quit handler
                     }
                     'h' | 'H' => return Ok(Some(ScreenEnum::Help)),
                     _ => {}
@@ -242,11 +230,7 @@ impl Screen for MainMenuScreen {
             
             KeyCode::F(1) => return Ok(Some(ScreenEnum::Help)),
             KeyCode::Esc => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut state = self.state.write().await;
-                    state.should_quit = true;
-                });
+                // Will be handled by global quit handler
             }
             
             _ => {}
