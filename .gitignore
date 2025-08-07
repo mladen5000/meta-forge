@@ -9,6 +9,7 @@ Cargo.lock
 .claude-flow/*
 .hive-mind/*
 .mcp.json
+reads/*
 memory/*
 !memory/sessions/README.md
 !memory/agents/README.md
