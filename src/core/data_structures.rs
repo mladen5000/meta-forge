@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 use bio::alphabets::dna;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 
 /// Core data structures for the enhanced metagenomics pipeline
 /// Implements proper k-mer handling, minimizer extraction, and graph structures
@@ -17,6 +18,10 @@ pub struct CanonicalKmer {
 
 impl CanonicalKmer {
     pub fn new(kmer: &str) -> Result<Self> {
+        Self::new_with_config(kmer, &AmbiguousBaseConfig::default())
+    }
+
+    pub fn new_with_config(kmer: &str, config: &AmbiguousBaseConfig) -> Result<Self> {
         // Check for valid DNA characters, allowing N for ambiguous bases
         if !kmer
             .chars()
@@ -25,12 +30,10 @@ impl CanonicalKmer {
             return Err(anyhow!("Invalid DNA sequence: {}", kmer));
         }
         
-        // Skip k-mers containing ambiguous bases (N) for assembly
-        if kmer.chars().any(|c| matches!(c, 'N' | 'n')) {
-            return Err(anyhow!("K-mer contains ambiguous bases (N): {}", kmer));
-        }
+        // Handle ambiguous bases based on configuration
+        let processed_kmer = Self::handle_ambiguous_bases(kmer, config)?;
 
-        let kmer_upper = kmer.to_uppercase();
+        let kmer_upper = processed_kmer.to_uppercase();
         let rc = Self::reverse_complement(&kmer_upper)?;
 
         let (canonical, is_canonical) = if kmer_upper <= rc {
@@ -46,6 +49,88 @@ impl CanonicalKmer {
             hash,
             is_canonical,
         })
+    }
+
+    fn handle_ambiguous_bases(kmer: &str, config: &AmbiguousBaseConfig) -> Result<String> {
+        let n_count = kmer.chars().filter(|&c| matches!(c, 'N' | 'n')).count();
+        
+        match config.strategy {
+            AmbiguousBaseStrategy::Skip => {
+                if n_count > 0 {
+                    return Err(anyhow!("K-mer contains ambiguous bases (N): {}", kmer));
+                }
+                Ok(kmer.to_string())
+            }
+            
+            AmbiguousBaseStrategy::Allow => {
+                if n_count > config.max_n_count {
+                    return Err(anyhow!(
+                        "K-mer contains too many ambiguous bases ({} > {}): {}", 
+                        n_count, config.max_n_count, kmer
+                    ));
+                }
+                Ok(kmer.to_string())
+            }
+            
+            AmbiguousBaseStrategy::Replace => {
+                Ok(kmer
+                    .chars()
+                    .map(|c| if matches!(c, 'N' | 'n') { config.replacement_base } else { c })
+                    .collect())
+            }
+            
+            AmbiguousBaseStrategy::RandomReplace => {
+                let mut result = String::new();
+                let probs = config.random_probabilities.unwrap_or([0.25, 0.25, 0.25, 0.25]);
+                
+                for c in kmer.chars() {
+                    if matches!(c, 'N' | 'n') {
+                        // Simple random selection based on probabilities
+                        let rand_val: f64 = fastrand::f64();
+                        let replacement = if rand_val < probs[0] {
+                            'A'
+                        } else if rand_val < probs[0] + probs[1] {
+                            'C'
+                        } else if rand_val < probs[0] + probs[1] + probs[2] {
+                            'G'
+                        } else {
+                            'T'
+                        };
+                        result.push(replacement);
+                    } else {
+                        result.push(c);
+                    }
+                }
+                Ok(result)
+            }
+            
+            AmbiguousBaseStrategy::ContextReplace => {
+                // Simple context replacement: use most common base in k-mer
+                let mut counts = [0; 4]; // A, C, G, T
+                for c in kmer.chars() {
+                    match c.to_ascii_uppercase() {
+                        'A' => counts[0] += 1,
+                        'C' => counts[1] += 1,
+                        'G' => counts[2] += 1,
+                        'T' => counts[3] += 1,
+                        _ => {}
+                    }
+                }
+                
+                let max_idx = counts.iter()
+                    .enumerate()
+                    .max_by_key(|(_, &count)| count)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                
+                let replacement = ['A', 'C', 'G', 'T'][max_idx];
+                
+                Ok(kmer
+                    .chars()
+                    .map(|c| if matches!(c, 'N' | 'n') { replacement } else { c })
+                    .collect())
+            }
+        }
     }
 
     fn reverse_complement(seq: &str) -> Result<String> {
@@ -92,14 +177,20 @@ pub struct MinimizerExtractor {
     k: usize,
     w: usize,
     hasher: RandomState,
+    ambiguous_config: AmbiguousBaseConfig,
 }
 
 impl MinimizerExtractor {
     pub fn new(k: usize, w: usize) -> Self {
+        Self::new_with_config(k, w, AmbiguousBaseConfig::default())
+    }
+
+    pub fn new_with_config(k: usize, w: usize, ambiguous_config: AmbiguousBaseConfig) -> Self {
         Self {
             k,
             w,
             hasher: RandomState::new(),
+            ambiguous_config,
         }
     }
 
@@ -115,8 +206,13 @@ impl MinimizerExtractor {
         let mut kmer_hashes = Vec::new();
         for (i, window) in seq_bytes.windows(self.k).enumerate() {
             let kmer_str = std::str::from_utf8(window)?;
-            let canonical_kmer = CanonicalKmer::new(kmer_str)?;
-            kmer_hashes.push((i, canonical_kmer));
+            match CanonicalKmer::new_with_config(kmer_str, &self.ambiguous_config) {
+                Ok(canonical_kmer) => kmer_hashes.push((i, canonical_kmer)),
+                Err(_) => {
+                    // Skip k-mers that couldn't be processed (e.g., too many N's)
+                    continue;
+                }
+            }
         }
 
         // Find minimizers using sliding window

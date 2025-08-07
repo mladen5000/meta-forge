@@ -90,6 +90,18 @@ impl ScreenManager {
     }
     
     pub async fn handle_key_input(&mut self, key: KeyEvent, current_screen: &ScreenEnum) -> Result<()> {
+        // Check for quit signals from main menu
+        if matches!(current_screen, ScreenEnum::MainMenu) {
+            match key.code {
+                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q') => {
+                    let mut state = self.state.write().await;
+                    state.should_quit = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        
         let new_screen = match current_screen {
             ScreenEnum::MainMenu => self.main_menu.handle_key(key)?,
             ScreenEnum::FileSelection => self.file_selection.handle_key(key)?,

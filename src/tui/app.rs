@@ -129,16 +129,6 @@ impl TuiApp {
                             return Ok(());
                         }
                     }
-                    crossterm::event::KeyCode::Esc => {
-                        let state = self.state.read().await;
-                        if matches!(state.current_screen, crate::tui::state::Screen::MainMenu) {
-                            drop(state);
-                            let mut state = self.state.write().await;
-                            state.should_quit = true;
-                            return Ok(());
-                        }
-                        drop(state);
-                    }
                     _ => {}
                 }
                 
@@ -148,6 +138,7 @@ impl TuiApp {
                     state.current_screen.clone()
                 };
                 
+                // Let screen manager handle all keys including Esc
                 self.screen_manager.handle_key_input(key, &screen).await?;
             }
             

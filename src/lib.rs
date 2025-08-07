@@ -16,6 +16,7 @@ pub mod utils;
 // Re-export commonly used types at crate level
 pub use crate::core::data_structures::*;
 pub use crate::pipeline::complete_integration::MetagenomicsPipeline;
+pub use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 
 /// Result type used throughout the crate
 pub type Result<T> = anyhow::Result<T>;

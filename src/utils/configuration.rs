@@ -60,6 +60,8 @@ pub struct AssemblyConfig {
     pub bubble_popping: BubblePoppingConfig,
     /// Tip removal settings
     pub tip_removal: TipRemovalConfig,
+    /// Ambiguous base handling
+    pub ambiguous_base_handling: AmbiguousBaseConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +76,32 @@ pub struct TipRemovalConfig {
     pub enabled: bool,
     pub max_tip_length: usize,
     pub min_coverage_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbiguousBaseConfig {
+    /// Strategy for handling ambiguous bases (N)
+    pub strategy: AmbiguousBaseStrategy,
+    /// Maximum number of N's allowed in a k-mer (for Skip and Allow strategies)
+    pub max_n_count: usize,
+    /// Replacement base for N's (for Replace strategy)
+    pub replacement_base: char,
+    /// Probability distribution for random replacement (for RandomReplace)
+    pub random_probabilities: Option<[f64; 4]>, // A, C, G, T
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AmbiguousBaseStrategy {
+    /// Skip k-mers containing any ambiguous bases (current behavior)
+    Skip,
+    /// Allow k-mers with limited number of ambiguous bases  
+    Allow,
+    /// Replace N with a specific base
+    Replace,
+    /// Replace N with random base based on probabilities
+    RandomReplace,
+    /// Replace N with most common base in surrounding context
+    ContextReplace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -619,6 +647,7 @@ impl ConfigurationManager {
                     max_tip_length: 100,
                     min_coverage_ratio: 0.1,
                 },
+                ambiguous_base_handling: AmbiguousBaseConfig::default(),
             },
             features: FeatureExtractionConfig {
                 sequence_feature_dim: 100,
@@ -980,6 +1009,7 @@ impl Default for AssemblyConfig {
             enable_simplification: true,
             bubble_popping: BubblePoppingConfig::default(),
             tip_removal: TipRemovalConfig::default(),
+            ambiguous_base_handling: AmbiguousBaseConfig::default(),
         }
     }
 }
@@ -1001,6 +1031,23 @@ impl Default for TipRemovalConfig {
             max_tip_length: 100,
             min_coverage_ratio: 0.1,
         }
+    }
+}
+
+impl Default for AmbiguousBaseConfig {
+    fn default() -> Self {
+        Self {
+            strategy: AmbiguousBaseStrategy::Allow,
+            max_n_count: 2,
+            replacement_base: 'A',
+            random_probabilities: Some([0.25, 0.25, 0.25, 0.25]), // Equal probabilities
+        }
+    }
+}
+
+impl Default for AmbiguousBaseStrategy {
+    fn default() -> Self {
+        AmbiguousBaseStrategy::Allow
     }
 }
 

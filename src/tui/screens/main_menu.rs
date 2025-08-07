@@ -221,7 +221,7 @@ impl Screen for MainMenuScreen {
                 
                 match c {
                     'q' | 'Q' => {
-                        // Will be handled by global quit handler
+                        // Quit from main menu
                     }
                     'h' | 'H' => return Ok(Some(ScreenEnum::Help)),
                     _ => {}
@@ -230,7 +230,7 @@ impl Screen for MainMenuScreen {
             
             KeyCode::F(1) => return Ok(Some(ScreenEnum::Help)),
             KeyCode::Esc => {
-                // Will be handled by global quit handler
+                // Quit from main menu
             }
             
             _ => {}
