@@ -51,3 +51,4 @@ taxdump.tar.gz
 
 # Kraken2 stuff
 kraken2_benchmark.sh
+SRR390728_*.fastq
