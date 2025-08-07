@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-use crate::assembly::graph_construction::{AssemblyStats, Contig};
+use crate::core::data_structures::{AssemblyStats, Contig};
 
 /// Calculate GC content for a DNA sequence
 fn calculate_gc_content(sequence: &str) -> f64 {
@@ -486,14 +486,14 @@ impl MetagenomicsDatabase {
         
         stmt.execute(params![
             sample_name,
-            assembly.total_contigs,
+            assembly.num_contigs,
             assembly.total_length,
-            assembly.longest_contig,
+            assembly.largest_contig,
             assembly.n50,
             assembly.n90,
-            assembly.mean_coverage,
+            assembly.coverage_mean,
             assembly.gc_content,
-            assembly.gaps,
+            0, // gaps field not available in AssemblyStats
             metadata,
         ])?;
         
@@ -503,10 +503,10 @@ impl MetagenomicsDatabase {
         let record = AssemblyRecord {
             id: assembly_id,
             sample_name: sample_name.to_string(),
-            total_contigs: assembly.total_contigs,
+            total_contigs: assembly.num_contigs,
             total_length: assembly.total_length,
             n50: assembly.n50,
-            mean_coverage: assembly.mean_coverage,
+            mean_coverage: assembly.coverage_mean,
             created_at: chrono::Utc::now(),
             metadata: metadata.to_string(),
         };

@@ -1,6 +1,7 @@
 use ahash::{AHashMap, RandomState};
 use anyhow::{Result, anyhow};
 use bio::alphabets::dna;
+use petgraph::{Graph, Directed};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
@@ -443,6 +444,46 @@ impl GraphFragment {
         Ok(())
     }
 
+    /// Reconstruct DNA sequence from a path of node hashes
+    pub fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
+        if path.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut sequence = String::new();
+        for (i, &hash) in path.iter().enumerate() {
+            if let Some(node) = self.nodes.get(&hash) {
+                if i == 0 {
+                    // First k-mer: add full sequence
+                    sequence.push_str(&node.kmer.sequence);
+                } else {
+                    // Subsequent k-mers: add only the last character (k-1 overlap)
+                    if let Some(last_char) = node.kmer.sequence.chars().last() {
+                        sequence.push(last_char);
+                    }
+                }
+            } else {
+                return Err(anyhow!("Node hash {} not found in graph", hash));
+            }
+        }
+        Ok(sequence)
+    }
+
+    /// Calculate average coverage from a path of node hashes
+    pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
+        if path.is_empty() {
+            return 0.0;
+        }
+
+        let total_coverage: u32 = path
+            .iter()
+            .filter_map(|&hash| self.nodes.get(&hash))
+            .map(|node| node.coverage)
+            .sum();
+
+        total_coverage as f64 / path.len() as f64
+    }
+
     fn update_coverage_stats(&mut self) {
         let coverages: Vec<u32> = self.nodes.values().map(|n| n.coverage).collect();
 
@@ -600,6 +641,69 @@ pub enum BubbleType {
     Nested,
 }
 
+/// Types for assembly graph integration
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContigType {
+    Linear,
+    Circular,
+    Scaffold,
+    Unitig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EulerianPathType {
+    Circuit,
+    Path,
+    Multiple,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeWeight {
+    pub weight: u32,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contig {
+    pub id: usize,
+    pub sequence: String,
+    pub coverage: f64,
+    pub length: usize,
+    pub node_path: Vec<u64>,
+    pub contig_type: ContigType,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AssemblyStats {
+    pub total_length: usize,
+    pub num_contigs: usize,
+    pub n50: usize,
+    pub n90: usize,
+    pub largest_contig: usize,
+    pub gc_content: f64,
+    pub coverage_mean: f64,
+    pub coverage_std: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrectionMetadata {
+    pub algorithm: String,
+    pub confidence_threshold: f64,
+    pub context_window: usize,
+    pub correction_time_ms: u64,
+}
+
+/// Complete assembly graph with petgraph integration
+#[derive(Debug, Clone)]
+pub struct AssemblyGraph {
+    pub graph_fragment: GraphFragment,
+    pub petgraph: Graph<u64, EdgeWeight, Directed>,
+    pub contigs: Vec<Contig>,
+    pub assembly_stats: AssemblyStats,
+}
+
+
 /// Assembly chunk representing a batch of reads and their graph contribution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssemblyChunk {
@@ -617,7 +721,9 @@ pub struct CorrectedRead {
     pub corrected: String,
     pub corrections: Vec<BaseCorrection>,
     pub quality_scores: Vec<u8>,
+    pub correction_metadata: CorrectionMetadata,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaseCorrection {
@@ -939,6 +1045,7 @@ mod tests {
             corrected: "ATCGATCG".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 8],
+            correction_metadata: None,
         };
 
         chunk.add_read(read).unwrap();
@@ -991,5 +1098,123 @@ mod tests {
         assert_eq!(fragment1.nodes.len(), 1);
         let merged_node = fragment1.nodes.get(&kmer.hash).unwrap();
         assert_eq!(merged_node.coverage, 2); // Combined coverage
+    }
+}
+
+
+impl AssemblyGraph {
+    pub fn new() -> Self {
+        Self {
+            graph_fragment: GraphFragment::new(0),
+            petgraph: petgraph::Graph::new(),
+            contigs: Vec::new(),
+            assembly_stats: AssemblyStats::default(),
+        }
+    }
+
+    pub fn from_fragment(fragment: GraphFragment) -> Self {
+        Self {
+            graph_fragment: fragment,
+            petgraph: petgraph::Graph::new(),
+            contigs: Vec::new(),
+            assembly_stats: AssemblyStats::default(),
+        }
+    }
+
+    pub fn calculate_assembly_stats(&mut self) {
+        if self.contigs.is_empty() {
+            return;
+        }
+
+        // Sort contigs by length
+        let mut lengths: Vec<usize> = self.contigs.iter().map(|c| c.length).collect();
+        lengths.sort_by(|a, b| b.cmp(a));
+
+        self.assembly_stats.total_length = lengths.iter().sum();
+        self.assembly_stats.num_contigs = lengths.len();
+        self.assembly_stats.largest_contig = lengths[0];
+
+        // Calculate N50 and N90
+        let half_length = self.assembly_stats.total_length / 2;
+        let ninety_percent = (self.assembly_stats.total_length as f64 * 0.1) as usize;
+        
+        let mut cumulative = 0;
+        for &length in &lengths {
+            cumulative += length;
+            if self.assembly_stats.n50 == 0 && cumulative >= half_length {
+                self.assembly_stats.n50 = length;
+            }
+            if self.assembly_stats.n90 == 0 && cumulative >= ninety_percent {
+                self.assembly_stats.n90 = length;
+            }
+        }
+
+        // Calculate average coverage
+        let total_coverage: f64 = self.contigs.iter().map(|c| c.coverage * c.length as f64).sum();
+        self.assembly_stats.coverage_mean = total_coverage / self.assembly_stats.total_length as f64;
+
+        // Calculate GC content
+        let gc_count: usize = self.contigs
+            .iter()
+            .map(|c| c.sequence.chars().filter(|&ch| ch == 'G' || ch == 'C').count())
+            .sum();
+        self.assembly_stats.gc_content = gc_count as f64 / self.assembly_stats.total_length as f64;
+    }
+
+    pub fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
+        if path.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut sequence = String::new();
+        for (i, &hash) in path.iter().enumerate() {
+            if let Some(node) = self.graph_fragment.nodes.get(&hash) {
+                if i == 0 {
+                    // First k-mer contributes full sequence
+                    sequence.push_str(&node.kmer.sequence);
+                } else {
+                    // Subsequent k-mers contribute only the last nucleotide
+                    if let Some(last_char) = node.kmer.sequence.chars().last() {
+                        sequence.push(last_char);
+                    }
+                }
+            } else {
+                return Err(anyhow!("Node with hash {} not found in graph", hash));
+            }
+        }
+
+        Ok(sequence)
+    }
+
+    pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
+        if path.is_empty() {
+            return 0.0;
+        }
+
+        let total_coverage: u32 = path
+            .iter()
+            .filter_map(|&hash| self.graph_fragment.nodes.get(&hash))
+            .map(|node| node.coverage)
+            .sum();
+
+        total_coverage as f64 / path.len() as f64
+    }
+
+    /// Write contigs to FASTA format
+    pub fn write_contigs_fasta<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(path.as_ref())?;
+        
+        for (i, contig) in self.contigs.iter().enumerate() {
+            writeln!(file, ">contig_{} length={} coverage={:.2}", 
+                i + 1, contig.length, contig.coverage)?;
+            
+            // Write sequence in lines of 80 characters
+            for line in contig.sequence.as_bytes().chunks(80) {
+                writeln!(file, "{}", std::str::from_utf8(line)?)?;
+            }
+        }
+        
+        Ok(())
     }
 }

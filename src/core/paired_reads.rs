@@ -5,7 +5,7 @@ use std::path::Path;
 use rayon::prelude::*;
 use ahash::AHashMap;
 
-use crate::core::data_structures::{CorrectedRead, BaseCorrection, ReadPosition, Strand};
+use crate::core::data_structures::{CorrectedRead, BaseCorrection, ReadPosition, Strand, CorrectionMetadata};
 
 /// Enhanced paired-end read support for metagenomic assembly
 /// 
@@ -327,6 +327,12 @@ impl PairedRead {
             corrected: self.corrected.clone(),
             corrections: self.corrections.clone(),
             quality_scores: self.quality_scores.clone(),
+            correction_metadata: CorrectionMetadata {
+                algorithm: "paired_read_correction".to_string(),
+                confidence_threshold: 0.95,
+                context_window: 10,
+                correction_time_ms: 0,
+            },
         }
     }
 }

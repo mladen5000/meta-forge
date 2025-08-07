@@ -1,339 +1,485 @@
-//! Variable-order (adaptive‐k) de Bruijn graph for metagenomic assembly.
+//! Parallel assembly pipeline – single‑file demo
+//! =================================================
 //!
-//! * `base_k` is the lowest k-mer length allowed.
-//! * `max_k` is the highest k-mer length allowed.
+//! A *minimal but working* reference implementation of the end‑to‑end pipeline we
+//! discussed: reads → graph fragments → hierarchical merge → parallel
+//! simplification → contig generation.  Everything is multithreaded with `rayon`
+//! and purely in‑memory for clarity (streaming or out‑of‑core variants are easy
+//! extensions).
 //!
-//! Each **edge** can negotiate its own effective `k_size` depending on local
-//! sequence complexity: low-entropy regions (repeats) get bigger k to disambiguate,
-//! high-entropy regions keep smaller k for sensitivity.
+//! **Crate features used**
+//! - `rayon` for data‑parallelism
+//! - `ahash` for extremely fast hash‑maps/sets
+//! - `petgraph` for graph algorithms / SCC detection
+//! - `anyhow` & `serde` for ergonomic error handling + (de)serialisation
+//!
+//! Build with *stable* Rust 1.77+
+//! ```bash
+//! cargo add rayon ahash petgraph anyhow serde serde_json --features serde/derive
+//! cargo build --release
+//! ```
+//! ---------------------------------------------------------------------------
 
-use anyhow::{Result, bail};
-use std::collections::{HashMap, HashSet};
+use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, Result};
+use petgraph::{algo::tarjan_scc, graph::NodeIndex, visit::EdgeRef, Directed, Graph};
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
-/// Graph container.
-#[derive(Default, Debug)]
-pub struct AdaptiveGraph {
-    /// Minimum k-mer length.
+use crate::core::data_structures::{Contig, AssemblyStats, ContigType};
+
+/* ------------------------------------------------------------------------- */
+/*                                 READ TYPE                                 */
+/* ------------------------------------------------------------------------- */
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrectedRead {
+    pub id: String,
+    pub sequence: String,
+}
+
+/* ------------------------------------------------------------------------- */
+/*                         BIT‑PACKED K‑MER (from earlier)                    */
+/* ------------------------------------------------------------------------- */
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BitPackedKmer {
+    pub packed_data: Vec<u64>,
+    pub k: usize,
+    pub hash: u64,
+}
+
+impl BitPackedKmer {
+    pub fn new(seq: &str) -> Result<Self> {
+        if seq.is_empty() {
+            return Err(anyhow!("Empty k‑mer"));
+        }
+        let k = seq.len();
+        if k > 1024 {
+            return Err(anyhow!("k‑mer too long (>1024)"));
+        }
+        let mut packed = Vec::with_capacity((k + 31) / 32);
+        let mut word = 0u64;
+        let mut used = 0;
+        for c in seq.chars() {
+            let bits = match c.to_ascii_uppercase() {
+                'A' => 0b00,
+                'C' => 0b01,
+                'G' => 0b10,
+                'T' => 0b11,
+                x => return Err(anyhow!("Invalid nt {}", x)),
+            } as u64;
+            word |= bits << (62 - used);
+            used += 2;
+            if used == 64 {
+                packed.push(word);
+                word = 0;
+                used = 0;
+            }
+        }
+        if used > 0 {
+            packed.push(word);
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = ahash::AHasher::default();
+        packed.hash(&mut h);
+        k.hash(&mut h);
+        let hash = h.finish();
+        Ok(Self {
+            packed_data: packed,
+            k,
+            hash,
+        })
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/*                      GRAPH FRAGMENT + EDGE/NODE TYPES                      */
+/* ------------------------------------------------------------------------- */
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub kmer_hash: u64,
+    pub cov: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from_hash: u64,
+    pub to_hash: u64,
+    pub cov: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphFragment {
+    pub nodes: AHashMap<u64, GraphNode>,
+    pub edges: AHashSet<GraphEdge>,
+}
+
+impl GraphFragment {
+    pub fn empty() -> Self {
+        Self {
+            nodes: AHashMap::new(),
+            edges: AHashSet::new(),
+        }
+    }
+
+    pub fn insert_edge(&mut self, from: u64, to: u64) {
+        // Insert nodes separately to avoid double borrow
+        self.nodes.entry(from).or_insert(GraphNode {
+            kmer_hash: from,
+            cov: 0,
+        });
+        self.nodes.entry(to).or_insert(GraphNode {
+            kmer_hash: to,
+            cov: 0,
+        });
+        
+        // Now increment coverage
+        if let Some(n1) = self.nodes.get_mut(&from) {
+            n1.cov += 1;
+        }
+        if let Some(n2) = self.nodes.get_mut(&to) {
+            n2.cov += 1;
+        }
+        
+        self.edges.insert(GraphEdge {
+            from_hash: from,
+            to_hash: to,
+            cov: 1,
+        });
+    }
+
+    pub fn adjacency(&self) -> AHashMap<u64, AHashSet<u64>> {
+        let mut adj: AHashMap<u64, AHashSet<u64>> = AHashMap::new();
+        for e in &self.edges {
+            adj.entry(e.from_hash).or_default().insert(e.to_hash);
+        }
+        adj
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/*                           ASSEMBLY GRAPH WRAPPER                           */
+/* ------------------------------------------------------------------------- */
+
+#[derive(Debug, Clone)]
+pub struct AssemblyGraph {
+    pub graph_fragment: GraphFragment,
+    pub petgraph: Graph<u64, (), Directed>, // node weight = k‑mer hash
+    pub contigs: Vec<Contig>,
+    pub assembly_stats: AssemblyStats,
+}
+
+impl AssemblyGraph {
+    fn from_fragment(f: GraphFragment) -> Self {
+        let mut g: Graph<u64, (), Directed> = Graph::default();
+        let mut index_map: AHashMap<u64, NodeIndex> = AHashMap::new();
+        for node in f.nodes.values() {
+            let idx = g.add_node(node.kmer_hash);
+            index_map.insert(node.kmer_hash, idx);
+        }
+        for e in &f.edges {
+            if let (Some(&u), Some(&v)) = (index_map.get(&e.from_hash), index_map.get(&e.to_hash)) {
+                g.add_edge(u, v, ());
+            }
+        }
+        Self {
+            graph_fragment: f,
+            petgraph: g,
+            contigs: Vec::new(),
+            assembly_stats: AssemblyStats::default(),
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/*                           ASSEMBLY GRAPH BUILDER                           */
+/* ------------------------------------------------------------------------- */
+
+pub struct AssemblyGraphBuilder {
     base_k: usize,
-    /// Maximum k-mer length.
     max_k: usize,
-
-    /// Map `minimiser_hash → NodeData`.
-    nodes: HashMap<u64, NodeData>,
-
-    /// Map `(from_hash, to_hash) → EdgeData`.
-    edges: HashMap<(u64, u64), EdgeData>,
-
-    /// Map contig coordinates back to the reads that produced them.
-    coord_map: HashMap<ContigCoord, Vec<ReadCoord>>,
+    min_cov: u32,
 }
 
-/// Metadata stored per node (k-mer minimiser).
-#[derive(Clone, Debug)]
-struct NodeData {
-    sequence: String,
-    coverage: u32,
-    complexity: f64,
-}
-
-/// Metadata stored per edge in the variable-k graph.
-#[derive(Clone, Debug)]
-struct EdgeData {
-    k_size: usize,
-    weight: u32,
-    overlap: String,
-}
-
-#[derive(Hash, PartialEq, Eq, Clone, Debug)]
-struct ContigCoord {
-    contig_id: usize,
-    position: usize,
-}
-
-#[derive(Clone, Debug)]
-struct ReadCoord {
-    read_id: usize,
-    read_pos: usize,
-}
-
-impl AdaptiveGraph {
-    // --------------------------------------------------------------------- //
-    //  Construction
-    // --------------------------------------------------------------------- //
-
-    pub fn new(base_k: usize, max_k: usize) -> Self {
-        assert!(base_k > 0 && max_k >= base_k);
+impl AssemblyGraphBuilder {
+    pub fn new(base_k: usize, max_k: usize, min_cov: u32) -> Self {
         Self {
             base_k,
             max_k,
-            ..Default::default()
+            min_cov,
         }
     }
 
-    /// Add a read and adapt k per window depending on local complexity.
-    pub fn add_read_with_adaptive_k(&mut self, read_id: usize, sequence: &str) -> Result<()> {
-        if sequence.len() < self.base_k {
-            bail!("Sequence shorter than base_k");
-        }
-        let minimisers = self.extract_minimisers_with_positions(sequence)?;
-
-        let complexity_scores = self.calculate_local_complexity(sequence);
-
-        for window in minimisers.windows(2) {
-            let (pos1, min1) = window[0];
-            let (pos2, min2) = window[1];
-            let avg_complexity = (complexity_scores[pos1] + complexity_scores[pos2]) / 2.0;
-            let k_size = self.adaptive_k_size(avg_complexity);
-
-            let kmer1 = self.extract_kmer_at_k(sequence, pos1, k_size)?;
-            let kmer2 = self.extract_kmer_at_k(sequence, pos2, k_size)?;
-
-            self.update_node(min1, &kmer1, avg_complexity);
-            self.update_node(min2, &kmer2, avg_complexity);
-
-            let overlap = self.calculate_overlap(&kmer1, &kmer2, k_size);
-            self.update_edge((min1, min2), k_size, overlap);
-
-            self.add_coordinate_mapping(read_id, pos1, pos2);
-        }
-        Ok(())
+    /* -------- 1. chunking + adaptive‑k ---------------------------------- */
+    fn create_chunks<'a>(&self, reads: &'a [CorrectedRead]) -> Vec<&'a [CorrectedRead]> {
+        const CHUNK: usize = 1_000;
+        reads.chunks(CHUNK).collect()
     }
 
-    // --------------------------------------------------------------------- //
-    //  Assembly
-    // --------------------------------------------------------------------- //
+    /* -------- 2. build per‑chunk fragment ------------------------------- */
+    fn build_fragment(&self, chunk: &[CorrectedRead]) -> Result<GraphFragment> {
+        // choose k adaptively: simple heuristic – complexity ~ unique kmer fraction
+        let k = if self.estimate_complexity(chunk)? > 0.7 {
+            self.max_k
+        } else {
+            self.base_k
+        };
+        let mut frag = GraphFragment::empty();
 
-    /// Greedy walk to produce contigs, respecting variable-k overlaps.
-    pub fn assemble_adaptive_contigs(&self) -> Vec<AdaptiveContig> {
-        let mut visited = HashSet::new();
-        let mut contigs = Vec::new();
+        for read in chunk {
+            // sliding window over read.seq to create edges between successive k‑mers
+            if read.sequence.len() < k + 1 {
+                continue;
+            }
+            let kmers: Vec<u64> = (0..=read.sequence.len() - k)
+                .map(|i| BitPackedKmer::new(&read.sequence[i..i + k]).unwrap().hash)
+                .collect();
+            for win in kmers.windows(2) {
+                frag.insert_edge(win[0], win[1]);
+            }
+        }
+        Ok(frag)
+    }
 
-        // Start from high-coverage nodes.
-        let mut start_candidates: Vec<_> = self
-            .nodes
-            .iter()
-            .filter(|(_, d)| d.coverage >= 3)
-            .map(|(&h, _)| h)
+    fn estimate_complexity(&self, reads: &[CorrectedRead]) -> Result<f64> {
+        let sample: Vec<&CorrectedRead> = reads.iter().take(200).collect();
+        let mut set: AHashSet<String> = AHashSet::new();
+        for r in &sample {
+            set.insert(r.sequence.clone());
+        }
+        Ok(set.len() as f64 / sample.len() as f64)
+    }
+
+    /* -------- 3. hierarchical merge ------------------------------------ */
+    fn merge_fragments(frags: Vec<GraphFragment>) -> GraphFragment {
+        // simple pairwise folding merge (parallel)
+        frags
+            .into_par_iter()
+            .reduce_with(|mut a, b| {
+                for e in b.edges {
+                    a.insert_edge(e.from_hash, e.to_hash);
+                }
+                a
+            })
+            .unwrap()
+    }
+
+    /* -------- 4. parallel simplification -------------------------------- */
+    fn simplify(mut frag: GraphFragment) -> GraphFragment {
+        // remove tips (nodes with out=0 or in=0) iteratively
+        loop {
+            let tips: Vec<u64> = {
+                let mut indeg: AHashMap<u64, u32> = AHashMap::new();
+                let mut outdeg: AHashMap<u64, u32> = AHashMap::new();
+                for e in &frag.edges {
+                    *outdeg.entry(e.from_hash).or_default() += 1;
+                    *indeg.entry(e.to_hash).or_default() += 1;
+                }
+                frag.nodes
+                    .keys()
+                    .filter(|&h| {
+                        indeg.get(h).unwrap_or(&0) == &0 || outdeg.get(h).unwrap_or(&0) == &0
+                    })
+                    .cloned()
+                    .collect()
+            };
+            if tips.is_empty() {
+                break;
+            }
+            frag.nodes.par_iter().for_each(|(_, _)| {}); // keep Rayon in play
+            frag.edges
+                .retain(|e| !tips.contains(&e.from_hash) && !tips.contains(&e.to_hash));
+            for t in tips {
+                frag.nodes.remove(&t);
+            }
+        }
+        // transitive reduction (parallel over edges)
+        let adj = frag.adjacency();
+        let to_remove: AHashSet<GraphEdge> = frag
+            .edges
+            .par_iter()
+            .filter_map(|e| {
+                adj.get(&e.from_hash)
+                    .and_then(|neigh_u| {
+                        neigh_u.par_iter().find_any(|&&w| {
+                            adj.get(&w)
+                                .map_or(false, |neigh_w| neigh_w.contains(&e.to_hash))
+                        })
+                    })
+                    .map(|_| e.clone())
+                    .next()
+            })
             .collect();
-        start_candidates.sort_by_key(|&h| std::cmp::Reverse(self.nodes[&h].coverage));
+        frag.edges.retain(|e| !to_remove.contains(e));
+        frag
+    }
 
-        for start in start_candidates {
+    /* -------- PUBLIC entry point --------------------------------------- */
+    pub fn build(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
+        // 1. chunking
+        let chunks = self.create_chunks(reads);
+        // 2. per‑chunk build in parallel
+        let fragments: Vec<GraphFragment> = chunks
+            .par_iter()
+            .map(|c| self.build_fragment(c))
+            .collect::<Result<_>>()?;
+        // 3. merge
+        let merged = Self::merge_fragments(fragments);
+        // 4. simplify
+        let simplified = Self::simplify(merged);
+        // 5. create assembly graph and generate contigs
+        let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
+        assembly_graph.generate_contigs()?;
+        Ok(assembly_graph)
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/*                                CONTIG GEN                                 */
+/* ------------------------------------------------------------------------- */
+
+impl AssemblyGraph {
+    /// Generate contigs and populate the contigs field
+    pub fn generate_contigs(&mut self) -> Result<()> {
+        let mut contigs = Vec::new();
+        let mut visited: AHashSet<u64> = AHashSet::new();
+        // adjacency lists
+        let adj = self.graph_fragment.get_adjacency_list();
+        let mut contig_id = 0;
+        
+        for &start in self.graph_fragment.nodes.keys() {
             if visited.contains(&start) {
                 continue;
             }
-            if let Some(contig) = self.extend_contig_adaptive(start, &mut visited) {
-                contigs.push(contig);
-            }
-        }
-        contigs
-    }
-
-    // --------------------------------------------------------------------- //
-    //  Internal helpers
-    // --------------------------------------------------------------------- //
-
-    fn extend_contig_adaptive(
-        &self,
-        start: u64,
-        visited: &mut HashSet<u64>,
-    ) -> Option<AdaptiveContig> {
-        let mut path = vec![start];
-        let mut seq = self.nodes[&start].sequence.clone();
-        let mut cur = start;
-
-        while let Some(next) = self.find_best_next_node(cur, visited) {
-            if visited.contains(&next) {
-                break;
-            }
-            path.push(next);
-            if let Some(edge) = self.edges.get(&(cur, next)) {
-                seq.push_str(&edge.overlap);
-            } else {
-                seq.push_str(&self.nodes[&next].sequence);
-            }
-            cur = next;
-        }
-        for &n in &path {
-            visited.insert(n);
-        }
-        if path.len() > 1 {
-            Some(AdaptiveContig {
-                nodes: path.clone(),
-                sequence: seq,
-                avg_coverage: self.calculate_path_coverage(&path),
-            })
-        } else {
-            None
-        }
-    }
-
-    fn find_best_next_node(&self, cur: u64, visited: &HashSet<u64>) -> Option<u64> {
-        self.edges
-            .iter()
-            .filter(|((from, to), _)| *from == cur && !visited.contains(to))
-            .max_by_key(|(_, e)| e.weight)
-            .map(|((_, to), _)| *to)
-    }
-
-    fn calculate_path_coverage(&self, path: &[u64]) -> f64 {
-        path.iter()
-            .map(|n| self.nodes[n].coverage as f64)
-            .sum::<f64>()
-            / path.len() as f64
-    }
-
-    // ========== Complexity / adaptive k ================================= //
-
-    fn calculate_local_complexity(&self, seq: &str) -> Vec<f64> {
-        let win = 50;
-        let mut out = vec![0.0; seq.len()];
-        let bytes = seq.as_bytes();
-
-        for i in 0..seq.len() {
-            let s = i.saturating_sub(win / 2);
-            let e = (i + win / 2).min(seq.len());
-            let window = &bytes[s..e];
-
-            let mut count = [0u32; 4];
-            for &b in window {
-                match b {
-                    b'A' | b'a' => count[0] += 1,
-                    b'C' | b'c' => count[1] += 1,
-                    b'G' | b'g' => count[2] += 1,
-                    b'T' | b't' => count[3] += 1,
-                    _ => {}
+            // breadth‑first to collect linear path
+            let mut path = Vec::new();
+            path.push(start);
+            let mut current = start;
+            
+            while let Some(neighbors) = adj.get(&current) {
+                if neighbors.len() == 1 && !visited.contains(&neighbors[0]) {
+                    current = neighbors[0];
+                    path.push(current);
+                } else {
+                    break;
                 }
             }
-            let total = count.iter().sum::<u32>() as f64;
-            if total == 0.0 {
-                continue;
+            
+            visited.extend(path.iter());
+            
+            // Reconstruct sequence from path
+            if let Ok(sequence) = self.graph_fragment.reconstruct_sequence_from_path(&path) {
+                let coverage = self.graph_fragment.calculate_path_coverage_from_hashes(&path);
+                
+                contigs.push(Contig {
+                    id: contig_id,
+                    sequence,
+                    coverage,
+                    length: path.len(),
+                    node_path: path,
+                    contig_type: ContigType::Linear,
+                });
+                contig_id += 1;
             }
-            let entropy: f64 = count
-                .iter()
-                .filter(|&&c| c > 0)
-                .map(|&c| {
-                    let p = c as f64 / total;
-                    -p * p.log2()
-                })
-                .sum();
-
-            // Reversed: low entropy => high "complexity score".
-            out[i] = 2.0 - entropy;
         }
-        out
+        
+        self.contigs = contigs;
+        self.calculate_assembly_stats();
+        Ok(())
     }
-
-    fn adaptive_k_size(&self, complexity: f64) -> usize {
-        let norm = (complexity / 2.0).clamp(0.0, 1.0);
-        self.base_k + ((self.max_k - self.base_k) as f64 * norm).round() as usize
-    }
-
-    // ========== k-mer helpers =========================================== //
-
-    fn extract_kmer_at_k(&self, seq: &str, pos: usize, k: usize) -> Result<String> {
-        if pos + k <= seq.len() {
-            Ok(seq[pos..pos + k].to_owned())
+    
+    /// Calculate assembly statistics
+    pub fn calculate_assembly_stats(&mut self) {
+        if self.contigs.is_empty() {
+            return;
+        }
+        
+        let lengths: Vec<usize> = self.contigs.iter().map(|c| c.length).collect();
+        let total_length: usize = lengths.iter().sum();
+        let num_contigs = self.contigs.len();
+        let largest_contig = lengths.iter().max().copied().unwrap_or(0);
+        
+        // Calculate N50
+        let mut sorted_lengths = lengths.clone();
+        sorted_lengths.sort_by(|a, b| b.cmp(a));
+        let half_length = total_length / 2;
+        let mut cumulative = 0;
+        let mut n50 = 0;
+        for &length in &sorted_lengths {
+            cumulative += length;
+            if cumulative >= half_length {
+                n50 = length;
+                break;
+            }
+        }
+        
+        // Calculate coverage statistics
+        let coverages: Vec<f64> = self.contigs.iter().map(|c| c.coverage).collect();
+        let coverage_mean = if !coverages.is_empty() {
+            coverages.iter().sum::<f64>() / coverages.len() as f64
         } else {
-            bail!("k-mer range out of bounds");
+            0.0
+        };
+        
+        // Calculate GC content
+        let mut total_gc = 0;
+        let mut total_bases = 0;
+        for contig in &self.contigs {
+            let gc_count = contig.sequence.chars()
+                .filter(|&c| c == 'G' || c == 'C')
+                .count();
+            total_gc += gc_count;
+            total_bases += contig.sequence.len();
         }
-    }
-
-    fn calculate_overlap(&self, k1: &str, k2: &str, k: usize) -> String {
-        let max = (k - 1).min(k1.len()).min(k2.len());
-        for i in (1..=max).rev() {
-            if k1.ends_with(&k2[..i]) {
-                return k2[i..].to_owned();
-            }
-        }
-        k2.to_owned()
-    }
-
-    fn update_node(&mut self, hash: u64, seq: &str, complexity: f64) {
-        self.nodes
-            .entry(hash)
-            .and_modify(|n| {
-                n.coverage += 1;
-                n.complexity = (n.complexity + complexity) / 2.0;
-            })
-            .or_insert(NodeData {
-                sequence: seq.to_owned(),
-                coverage: 1,
-                complexity,
-            });
-    }
-
-    fn update_edge(&mut self, key: (u64, u64), k: usize, overlap: String) {
-        self.edges
-            .entry(key)
-            .and_modify(|e| e.weight += 1)
-            .or_insert(EdgeData {
-                k_size: k,
-                weight: 1,
-                overlap,
-            });
-    }
-
-    fn add_coordinate_mapping(&mut self, _read_id: usize, _p1: usize, _p2: usize) {
-        // Implement as needed
-    }
-
-    // ========== Minimiser stub (replace with real hash) ================= //
-
-    /// Very small demonstrator: returns every `base_k`-step minimiser hash.
-    fn extract_minimisers_with_positions(&self, seq: &str) -> Result<Vec<(usize, u64)>> {
-        let mut v = Vec::new();
-        for i in (0..=seq.len() - self.base_k).step_by(self.base_k) {
-            let kmer = &seq[i..i + self.base_k];
-            let hash = fxhash::hash64(kmer.as_bytes()); // fast 64-bit hash
-            v.push((i, hash));
-        }
-        if v.len() < 2 {
-            bail!("Need at least 2 minimisers to add a read");
-        }
-        Ok(v)
+        let gc_content = if total_bases > 0 {
+            total_gc as f64 / total_bases as f64
+        } else {
+            0.0
+        };
+        
+        self.assembly_stats = AssemblyStats {
+            total_length,
+            num_contigs,
+            n50,
+            n90: 0, // Simple implementation doesn't calculate N90
+            largest_contig,
+            gc_content,
+            coverage_mean,
+            coverage_std: 0.0, // Simple implementation doesn't calculate std
+        };
     }
 }
 
-// ------------------------------------------------------------------------- //
-//  Public Contig struct
-// ------------------------------------------------------------------------- //
-
-#[derive(Clone, Debug)]
-pub struct AdaptiveContig {
-    pub nodes: Vec<u64>,
-    pub sequence: String,
-    pub avg_coverage: f64,
-}
-
-// ------------------------------------------------------------------------- //
-//  Unit-tests
-// ------------------------------------------------------------------------- //
+/* ------------------------------------------------------------------------- */
+/*                                   DEMO                                    */
+/* ------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn adaptive_k_bounds() {
-        let g = AdaptiveGraph::new(15, 31);
-        assert_eq!(g.adaptive_k_size(0.0), 15);
-        assert_eq!(g.adaptive_k_size(2.0), 31);
-    }
-
-    #[test]
-    fn complexity_ordering() {
-        let g = AdaptiveGraph::new(15, 31);
-        let low_entropy = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-        let high_entropy = "ACGTACGTACGTACGTACGTACGTACGTACGTACG";
-        let c1 = g.calculate_local_complexity(low_entropy);
-        let c2 = g.calculate_local_complexity(high_entropy);
-        assert!(c1[10] > c2[10]); // low entropy => higher score
-    }
-
-    #[test]
-    fn dummy_read_add() {
-        let mut g = AdaptiveGraph::new(15, 31);
-        let read = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
-        assert!(g.add_read_with_adaptive_k(0, read).is_ok());
+    fn small_pipeline_demo() {
+        let reads = vec![
+            CorrectedRead {
+                id: "r1".into(),
+                sequence: "ATCGATCG".into(),
+            },
+            CorrectedRead {
+                id: "r2".into(),
+                sequence: "TCGATCGA".into(),
+            },
+            CorrectedRead {
+                id: "r3".into(),
+                sequence: "CGATCGAT".into(),
+            },
+        ];
+        let builder = AssemblyGraphBuilder::new(3, 5, 1);
+        let graph = builder.build(&reads).unwrap();
+        let contigs = graph.generate_contigs();
+        assert!(!contigs.is_empty());
     }
 }

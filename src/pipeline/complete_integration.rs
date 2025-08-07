@@ -8,6 +8,8 @@ use tracing::{info, instrument};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 
 use crate::assembly::graph_construction::*;
+use crate::assembly::adaptive_k::AssemblyGraphBuilder;
+use crate::core::data_structures::CorrectedRead as CoreCorrectedRead;
 // use crate::tests::comprehensive_test_suite::{TestDataGenerator, TestRunner};
 use crate::utils::configuration::*;
 use crate::core::data_structures::*;
@@ -460,6 +462,12 @@ impl MetagenomicsPipeline {
                 corrected: sequence.to_string(),
                 corrections: Vec::new(),
                 quality_scores,
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             };
 
             corrected_reads.push(corrected_read);
@@ -489,6 +497,12 @@ impl MetagenomicsPipeline {
                 corrected: sequence.to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; sequence.len()], // Default quality
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             };
 
             corrected_reads.push(corrected_read);
@@ -503,11 +517,17 @@ impl MetagenomicsPipeline {
             self.config.assembly.k_min,
             self.config.assembly.k_max,
             self.config.assembly.min_coverage,
-            self.config.performance.num_threads,
-        )?;
+        );
 
-        let mut assembly_graph = builder.build_graph(reads)?;
-        assembly_graph.generate_contigs()?;
+        // Convert core CorrectedRead to assembly CorrectedRead for compatibility
+        let assembly_reads: Vec<_> = reads.iter().map(|r| {
+            crate::assembly::adaptive_k::CorrectedRead {
+                id: r.id.to_string(),
+                sequence: r.corrected.clone(),
+            }
+        }).collect();
+        let assembly_graph = builder.build(&assembly_reads)?;
+        // Note: Contigs are generated during the build process
 
         // Store assembly results in database if available
         if let Some(ref db) = self.database {
@@ -626,7 +646,7 @@ impl MetagenomicsPipeline {
                 total_contigs: assembly_results.contigs.len(),
                 total_length: assembly_results.assembly_stats.total_length,
                 n50: assembly_results.assembly_stats.n50,
-                mean_coverage: assembly_results.assembly_stats.mean_coverage,
+                mean_coverage: assembly_results.assembly_stats.coverage_mean,
                 unique_species: classifications
                     .iter()
                     .map(|c| &c.taxonomy_name)
@@ -865,6 +885,12 @@ impl MetagenomicsPipeline {
                 corrected: sequence.to_string(),
                 corrections: Vec::new(),
                 quality_scores,
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             };
 
             corrected_reads.push(corrected_read);
@@ -892,14 +918,13 @@ impl MetagenomicsPipeline {
             self.config.assembly.k_min,
             self.config.assembly.k_max,
             self.config.assembly.min_coverage,
-            self.config.performance.num_threads,
-        )?;
+        );
 
         multi_progress.update_line(line_id, "🧬 Assembly: Building assembly graph...".to_string());
-        let mut assembly_graph = builder.build_graph(reads)?;
+        let mut assembly_graph = builder.build(reads)?;
         
         multi_progress.update_line(line_id, "🧬 Assembly: Generating contigs...".to_string());
-        assembly_graph.generate_contigs()?;
+        // Note: Contigs are generated during the build process
 
         if let Some(ref db) = self.database {
             multi_progress.update_line(line_id, "🧬 Assembly: Storing results...".to_string());
@@ -1021,7 +1046,7 @@ impl MetagenomicsPipeline {
                 total_contigs: assembly.contigs.len(),
                 total_length: assembly.assembly_stats.total_length,
                 n50: assembly.assembly_stats.n50,
-                mean_coverage: assembly.assembly_stats.mean_coverage,
+                mean_coverage: assembly.assembly_stats.coverage_mean,
                 unique_species: classifications.len(),
                 diversity_index: classifications.iter().map(|c| c.confidence * c.confidence.ln()).sum::<f64>().abs(),
             },
@@ -1429,6 +1454,12 @@ mod integration_tests {
             corrected: "ATCGATCGATCGATCGATCGATCG".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 24],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 1.0,
+                context_window: 0,
+                correction_time_ms: 0,
+            },
         }];
 
         let fastq_file = TestDataGenerator::create_test_fastq(&test_reads)?;
