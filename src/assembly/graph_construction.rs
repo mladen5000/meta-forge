@@ -37,8 +37,17 @@ use ahash::{AHashMap, AHashSet};
 use anyhow::{Result, anyhow};
 use petgraph::algo::tarjan_scc;
 use petgraph::{Directed, Graph, graph::NodeIndex};
+use petgraph::visit::EdgeRef;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+
+/// Eulerian path types for graph traversal optimization
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EulerianType {
+    Circuit,  // Eulerian circuit exists (all vertices have even degree)
+    Path,     // Eulerian path exists (exactly 2 vertices have odd degree)
+    None,     // No Eulerian path/circuit exists
+}
 
 use crate::core::data_structures::*;
 
@@ -114,8 +123,9 @@ impl AssemblyGraphBuilder {
         // 3. merge
         let merged = self.merge_fragments(fragments)?;
 
-        // 4. simplify
-        self.simplify_graph(merged)
+        // 4. simplify (temporarily disabled for debugging)
+        println!("⚠️  Skipping graph simplification for debugging");
+        Ok(merged)
     }
 
     /* ------------------- phase 1: chunking & adaptive k ------------------- */
@@ -172,7 +182,7 @@ impl AssemblyGraphBuilder {
 
     /// Remove vertices whose `coverage` \< `min_coverage`.
     fn filter_low_coverage_nodes(&self, fragment: &mut GraphFragment) -> Result<()> {
-        let initial = fragment.nodes.len();
+        let _initial = fragment.nodes.len();
         let to_remove: Vec<u64> = fragment
             .nodes
             .iter()
@@ -266,6 +276,8 @@ impl AssemblyGraphBuilder {
         for &h in fragment.nodes.keys() {
             idx.insert(h, g.add_node(h));
         }
+        // Add edges with validation and performance tracking
+        let mut added_edges = 0;
         for e in &fragment.edges {
             if let (Some(&from), Some(&to)) = (idx.get(&e.from_hash), idx.get(&e.to_hash)) {
                 g.add_edge(
@@ -276,12 +288,18 @@ impl AssemblyGraphBuilder {
                         confidence: e.confidence,
                     },
                 );
+                added_edges += 1;
+            } else {
+                println!("   Warning: Edge references missing nodes: {} -> {}", 
+                         e.from_hash, e.to_hash);
             }
         }
+        
         println!(
-            "   Petgraph: {} nodes · {} edges",
+            "   Petgraph: {} nodes · {} edges ({}% edge success rate)",
             g.node_count(),
-            g.edge_count()
+            g.edge_count(),
+            if fragment.edges.is_empty() { 100 } else { (added_edges * 100) / fragment.edges.len() }
         );
         Ok(g)
     }
@@ -555,37 +573,140 @@ pub struct AssemblyStats {
 impl AssemblyGraph {
     /// Derive contigs from the simplified graph, update `assembly_stats`.
     pub fn generate_contigs(&mut self) -> Result<()> {
-        println!("📝 Generating contigs…");
+        println!("📝 Generating contigs from graph with {} nodes and {} edges…", 
+                 self.graph_fragment.nodes.len(), 
+                 self.graph_fragment.edges.len());
+        
+        // Validate graph structure before processing
+        if self.graph_fragment.nodes.is_empty() {
+            println!("⚠️  Warning: Graph has no nodes - cannot generate contigs");
+            return Ok(());
+        }
+        
+        if self.graph_fragment.edges.is_empty() {
+            println!("⚠️  Warning: Graph has no edges - creating single-node contigs");
+            self.create_singleton_contigs()?;
+            return Ok(());
+        }
+        
         let sccs = tarjan_scc(&self.petgraph);
+        println!("   Found {} strongly connected components", sccs.len());
+        
         let mut contigs = Vec::new();
         let mut cid = 0;
-
-        for comp in sccs {
-            if comp.len() == 1 {
-                if let Some(c) = self.build_linear_contig(cid, &comp)? {
-                    contigs.push(c);
-                    cid += 1;
+        
+        // Process components in parallel for better performance
+        use rayon::prelude::*;
+        
+        let component_contigs: Result<Vec<_>> = sccs
+            .par_iter()
+            .enumerate()
+            .map(|(i, comp)| -> Result<Vec<Contig>> {
+                let mut comp_contigs = Vec::new();
+                
+                println!("   Processing component {} with {} nodes", i, comp.len());
+                
+                if comp.len() == 1 {
+                    if let Some(c) = self.build_linear_contig(i, comp)? {
+                        comp_contigs.push(c);
+                    }
+                } else {
+                    // Try to build complex contig
+                    if let Some(c) = self.build_complex_contig(i, comp)? {
+                        comp_contigs.push(c);
+                    } else {
+                        // Fall back to individual node contigs
+                        println!("   Falling back to singleton contigs for component {}", i);
+                        for &node_idx in comp {
+                            if let Some(&node_hash) = self.petgraph.node_weight(node_idx) {
+                                if let Some(c) = self.build_singleton_contig(i * 1000 + comp_contigs.len(), node_hash)? {
+                                    comp_contigs.push(c);
+                                }
+                            }
+                        }
+                    }
                 }
-            } else if let Some(c) = self.build_complex_contig(cid, &comp)? {
-                contigs.push(c);
+                
+                Ok(comp_contigs)
+            })
+            .collect();
+        
+        // Flatten results
+        for comp_contigs in component_contigs? {
+            for mut contig in comp_contigs {
+                contig.id = cid;
+                contigs.push(contig);
                 cid += 1;
             }
         }
+        
+        // Sort by length (longest first)
         contigs.sort_by(|a, b| b.length.cmp(&a.length));
+        
+        // Reassign IDs after sorting
         for (i, c) in contigs.iter_mut().enumerate() {
             c.id = i;
         }
+        
         self.contigs = contigs;
         self.calculate_assembly_stats();
-        println!("   {} contigs generated", self.contigs.len());
+        
+        println!("   ✅ {} contigs generated successfully", self.contigs.len());
+        if !self.contigs.is_empty() {
+            println!("   📊 Longest contig: {} bp, N50: {}", 
+                     self.assembly_stats.longest_contig,
+                     self.assembly_stats.n50);
+        }
+        
         Ok(())
+    }
+    
+    fn create_singleton_contigs(&mut self) -> Result<()> {
+        let mut contigs = Vec::new();
+        
+        for (i, (&node_hash, _)) in self.graph_fragment.nodes.iter().enumerate() {
+            if let Some(contig) = self.build_singleton_contig(i, node_hash)? {
+                contigs.push(contig);
+            }
+        }
+        
+        self.contigs = contigs;
+        self.calculate_assembly_stats();
+        Ok(())
+    }
+    
+    fn build_singleton_contig(&self, id: usize, node_hash: u64) -> Result<Option<Contig>> {
+        if let Some(node) = self.graph_fragment.nodes.get(&node_hash) {
+            Ok(Some(Contig {
+                id,
+                sequence: node.kmer.sequence.clone(),
+                coverage: node.coverage as f64,
+                length: node.kmer.sequence.len(),
+                node_path: vec![node_hash],
+                contig_type: ContigType::Fragment,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /* --- helpers for contig construction (linear vs complex) ------------ */
 
     fn build_linear_contig(&self, id: usize, comp: &[NodeIndex]) -> Result<Option<Contig>> {
+        if comp.len() != 1 {
+            return Ok(None);
+        }
+        
         if let Some(&hash) = self.petgraph.node_weight(comp[0]) {
             if let Some(node) = self.graph_fragment.nodes.get(&hash) {
+                if node.kmer.sequence.is_empty() {
+                    println!("   Warning: Node {} has empty sequence", hash);
+                    return Ok(None);
+                }
+                
+                println!("   Linear contig: {} bp, coverage: {}", 
+                         node.kmer.sequence.len(), node.coverage);
+                
                 return Ok(Some(Contig {
                     id,
                     sequence: node.kmer.sequence.clone(),
@@ -594,73 +715,290 @@ impl AssemblyGraph {
                     node_path: vec![hash],
                     contig_type: ContigType::Linear,
                 }));
+            } else {
+                println!("   Warning: Node hash {} not found in graph fragment", hash);
             }
         }
         Ok(None)
     }
 
     fn build_complex_contig(&self, id: usize, comp: &[NodeIndex]) -> Result<Option<Contig>> {
+        println!("   Building complex contig from {} nodes", comp.len());
+        
         let path = self.find_eulerian_path(comp)?;
         if let Some(hash_path) = path {
-            let sequence = self.reconstruct_sequence_from_path(&hash_path)?;
+            if hash_path.is_empty() {
+                println!("   Warning: Empty path returned for complex contig");
+                return Ok(None);
+            }
+            
+            println!("   Found path with {} nodes", hash_path.len());
+            
+            // Reconstruct sequence with better error handling
+            let sequence = match self.reconstruct_sequence_from_path(&hash_path) {
+                Ok(seq) => {
+                    if seq.is_empty() {
+                        println!("   Warning: Empty sequence reconstructed");
+                        return Ok(None);
+                    }
+                    seq
+                },
+                Err(e) => {
+                    println!("   Error reconstructing sequence: {}", e);
+                    return Ok(None);
+                }
+            };
+            
             let coverage = self.calculate_path_coverage_from_hashes(&hash_path);
             let ctype = if self.is_circular_path(&hash_path) {
                 ContigType::Circular
             } else {
                 ContigType::Scaffold
             };
-            let k = self
-                .graph_fragment
-                .nodes
-                .values()
-                .next()
-                .map(|n| n.kmer_size)
-                .unwrap_or(0);
+            
+            println!("   Complex contig: {} bp, coverage: {:.2}", sequence.len(), coverage);
+            
             return Ok(Some(Contig {
                 id,
-                sequence,
+                sequence: sequence.clone(),
                 coverage,
-                length: hash_path.len() * k,
+                length: sequence.len(), // Use actual sequence length
                 node_path: hash_path,
                 contig_type: ctype,
             }));
         }
+        
+        println!("   No valid path found for complex contig");
         Ok(None)
     }
 
-    /* --- Eulerian path (placeholder simple walk) ------------------------ */
+    /* --- Efficient Eulerian path using Hierholzer's algorithm ----------- */
 
     fn find_eulerian_path(&self, comp: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
         if comp.is_empty() {
             return Ok(None);
         }
-        let mut path = Vec::with_capacity(comp.len());
-        for n in comp {
-            if let Some(&h) = self.petgraph.node_weight(*n) {
-                path.push(h);
+        
+        // First, check if an Eulerian path exists
+        let (start_node, path_type) = self.find_eulerian_start(comp)?;
+        
+        match path_type {
+            EulerianType::Circuit => self.find_eulerian_circuit(start_node, comp),
+            EulerianType::Path => self.find_eulerian_path_impl(start_node, comp),
+            EulerianType::None => {
+                // Fall back to longest path heuristic
+                self.find_longest_path(comp)
             }
         }
-        Ok(Some(path))
+    }
+    
+    fn find_eulerian_start(&self, comp: &[NodeIndex]) -> Result<(Option<u64>, EulerianType)> {
+        let mut odd_degree_nodes = Vec::new();
+        let mut node_degrees = AHashMap::new();
+        
+        // Calculate in and out degrees for each node in the component
+        for &node_idx in comp {
+            if let Some(&node_hash) = self.petgraph.node_weight(node_idx) {
+                let in_degree = self.petgraph.neighbors_directed(node_idx, petgraph::Direction::Incoming).count();
+                let out_degree = self.petgraph.neighbors_directed(node_idx, petgraph::Direction::Outgoing).count();
+                
+                node_degrees.insert(node_hash, (in_degree, out_degree));
+                
+                if (in_degree + out_degree) % 2 == 1 {
+                    odd_degree_nodes.push(node_hash);
+                }
+            }
+        }
+        
+        match odd_degree_nodes.len() {
+            0 => {
+                // Eulerian circuit exists
+                let start = comp.first()
+                    .and_then(|&idx| self.petgraph.node_weight(idx))
+                    .copied();
+                Ok((start, EulerianType::Circuit))
+            },
+            2 => {
+                // Eulerian path exists
+                let start_node = odd_degree_nodes.into_iter()
+                    .find(|&node| {
+                        if let Some(&(in_deg, out_deg)) = node_degrees.get(&node) {
+                            out_deg > in_deg
+                        } else {
+                            false
+                        }
+                    })
+                    .or_else(|| comp.first().and_then(|&idx| self.petgraph.node_weight(idx)).copied());
+                Ok((start_node, EulerianType::Path))
+            },
+            _ => Ok((None, EulerianType::None))
+        }
+    }
+    
+    fn find_eulerian_circuit(&self, start_node: Option<u64>, comp: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
+        if let Some(start) = start_node {
+            self.hierholzer_algorithm(start, comp, true)
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn find_eulerian_path_impl(&self, start_node: Option<u64>, comp: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
+        if let Some(start) = start_node {
+            self.hierholzer_algorithm(start, comp, false)
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn hierholzer_algorithm(&self, start_node: u64, comp: &[NodeIndex], _is_circuit: bool) -> Result<Option<Vec<u64>>> {
+        // Create adjacency list for the component
+        let mut adj_list: AHashMap<u64, Vec<u64>> = AHashMap::new();
+        let comp_nodes: AHashSet<u64> = comp.iter()
+            .filter_map(|&idx| self.petgraph.node_weight(idx))
+            .copied()
+            .collect();
+            
+        // Build adjacency list from edges
+        for edge_ref in self.petgraph.edge_references() {
+            if let (Some(&from_hash), Some(&to_hash)) = (
+                self.petgraph.node_weight(edge_ref.source()),
+                self.petgraph.node_weight(edge_ref.target())
+            ) {
+                if comp_nodes.contains(&from_hash) && comp_nodes.contains(&to_hash) {
+                    adj_list.entry(from_hash).or_default().push(to_hash);
+                }
+            }
+        }
+        
+        let mut path = Vec::new();
+        let mut stack = vec![start_node];
+        
+        while let Some(current) = stack.last().copied() {
+            if let Some(neighbors) = adj_list.get_mut(&current) {
+                if let Some(next) = neighbors.pop() {
+                    stack.push(next);
+                } else {
+                    path.push(stack.pop().unwrap());
+                }
+            } else {
+                path.push(stack.pop().unwrap());
+            }
+        }
+        
+        if !path.is_empty() {
+            path.reverse();
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    fn find_longest_path(&self, comp: &[NodeIndex]) -> Result<Option<Vec<u64>>> {
+        // Simple longest path heuristic using DFS
+        if comp.is_empty() {
+            return Ok(None);
+        }
+        
+        let mut longest_path = Vec::new();
+        
+        for &start_idx in comp {
+            if let Some(&start_hash) = self.petgraph.node_weight(start_idx) {
+                let path = self.dfs_longest_path(start_hash, comp)?;
+                if path.len() > longest_path.len() {
+                    longest_path = path;
+                }
+            }
+        }
+        
+        Ok(if longest_path.is_empty() { None } else { Some(longest_path) })
+    }
+    
+    fn dfs_longest_path(&self, start: u64, comp: &[NodeIndex]) -> Result<Vec<u64>> {
+        let comp_set: AHashSet<u64> = comp.iter()
+            .filter_map(|&idx| self.petgraph.node_weight(idx))
+            .copied()
+            .collect();
+            
+        let mut visited = AHashSet::new();
+        let mut path = Vec::new();
+        
+        self.dfs_helper(start, &comp_set, &mut visited, &mut path);
+        
+        Ok(path)
+    }
+    
+    fn dfs_helper(&self, node: u64, comp_set: &AHashSet<u64>, visited: &mut AHashSet<u64>, path: &mut Vec<u64>) {
+        visited.insert(node);
+        path.push(node);
+        
+        // Find neighbors in the component
+        for &comp_node in comp_set {
+            if comp_node != node && !visited.contains(&comp_node) {
+                // Check if there's an edge between node and comp_node
+                if self.has_edge_between(node, comp_node) {
+                    self.dfs_helper(comp_node, comp_set, visited, path);
+                }
+            }
+        }
+    }
+    
+    fn has_edge_between(&self, from: u64, to: u64) -> bool {
+        self.graph_fragment.edges.iter()
+            .any(|edge| edge.from_hash == from && edge.to_hash == to)
     }
 
     fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
         if path.is_empty() {
             return Ok(String::new());
         }
+        
         let first = self
             .graph_fragment
             .nodes
             .get(&path[0])
-            .ok_or_else(|| anyhow!("node missing"))?;
-        let mut seq = first.kmer.sequence.clone();
+            .ok_or_else(|| anyhow!("First node missing from path: {}", path[0]))?;
+            
+        // Pre-allocate string capacity for better performance
+        let estimated_length = path.len() * first.kmer_size;
+        let mut seq = String::with_capacity(estimated_length);
+        seq.push_str(&first.kmer.sequence);
+        
         let k = first.kmer_size;
-
-        for h in &path[1..] {
-            if let Some(n) = self.graph_fragment.nodes.get(h) {
-                let overlap = k - 1;
-                seq.push_str(&n.kmer.sequence[overlap..]);
+        
+        // Optimized sequence reconstruction with proper overlap validation
+        for (i, &h) in path[1..].iter().enumerate() {
+            if let Some(n) = self.graph_fragment.nodes.get(&h) {
+                let overlap = k.saturating_sub(1);
+                
+                // Validate k-mer size consistency
+                if n.kmer_size != k {
+                    return Err(anyhow!(
+                        "Inconsistent k-mer sizes in path: expected {}, got {} at position {}",
+                        k, n.kmer_size, i + 1
+                    ));
+                }
+                
+                // Validate overlap if possible
+                if overlap > 0 && seq.len() >= overlap && n.kmer.sequence.len() > overlap {
+                    let seq_suffix = &seq[seq.len().saturating_sub(overlap)..];
+                    let kmer_prefix = &n.kmer.sequence[..overlap.min(n.kmer.sequence.len())];
+                    
+                    if seq_suffix != kmer_prefix {
+                        // Overlaps don't match - add a gap marker
+                        seq.push_str("NNNN");
+                    }
+                }
+                
+                // Add the non-overlapping portion
+                if n.kmer.sequence.len() > overlap {
+                    seq.push_str(&n.kmer.sequence[overlap..]);
+                }
+            } else {
+                return Err(anyhow!("Node missing from path at position {}: {}", i + 1, h));
             }
         }
+        
         Ok(seq)
     }
 
@@ -668,12 +1006,17 @@ impl AssemblyGraph {
         if path.is_empty() {
             return 0.0;
         }
-        let tot: u32 = path
-            .iter()
+        
+        // Parallel coverage calculation for better performance
+        use rayon::prelude::*;
+        
+        let total_coverage: u32 = path
+            .par_iter()
             .filter_map(|h| self.graph_fragment.nodes.get(h))
             .map(|n| n.coverage)
             .sum();
-        tot as f64 / path.len() as f64
+            
+        total_coverage as f64 / path.len() as f64
     }
 
     fn is_circular_path(&self, path: &[u64]) -> bool {

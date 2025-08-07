@@ -661,25 +661,52 @@ impl AssemblyChunk {
     pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
         let start_time = std::time::Instant::now();
 
-        // Extract minimizers from the corrected read
-        let minimizer_extractor = MinimizerExtractor::new(self.k_size, self.k_size + 5);
-        let minimizers = minimizer_extractor.extract_minimizers(&read.corrected)?;
+        // Simple k-mer extraction instead of minimizers for more reliable results
+        let sequence = &read.corrected;
+        if sequence.len() < self.k_size {
+            println!("   Warning: Read {} too short ({} bp) for k-mer size {}", 
+                     read.id, sequence.len(), self.k_size);
+            return Ok(());
+        }
 
-        self.processing_stats.minimizers_found += minimizers.len();
+        let mut kmers = Vec::new();
+        for (i, window) in sequence.as_bytes().windows(self.k_size).enumerate() {
+            let kmer_str = match std::str::from_utf8(window) {
+                Ok(s) => s,
+                Err(_) => {
+                    println!("   Warning: Invalid UTF-8 in k-mer at position {}", i);
+                    continue;
+                }
+            };
+            
+            match CanonicalKmer::new(kmer_str) {
+                Ok(canonical_kmer) => {
+                    kmers.push((i, canonical_kmer));
+                },
+                Err(e) => {
+                    println!("   Warning: Failed to create k-mer '{}': {}", kmer_str, e);
+                    continue;
+                }
+            }
+        }
 
-        // Create nodes and edges from minimizers
-        for window in minimizers.windows(2) {
-            let min1 = &window[0];
-            let min2 = &window[1];
+        println!("   Read {}: extracted {} k-mers from {} bp sequence", 
+                 read.id, kmers.len(), sequence.len());
+        self.processing_stats.minimizers_found += kmers.len();
 
-            // Create or update nodes
-            self.add_or_update_node(&min1.kmer, read.id, min1.position)?;
-            self.add_or_update_node(&min2.kmer, read.id, min2.position)?;
+        // Create nodes from k-mers
+        for (pos, kmer) in &kmers {
+            self.add_or_update_node(kmer, read.id, *pos)?;
+        }
 
-            // Create edge
+        // Create edges between consecutive k-mers
+        for window in kmers.windows(2) {
+            let (_, kmer1) = &window[0];
+            let (_, kmer2) = &window[1];
+
             let edge = GraphEdge::new(
-                min1.kmer.hash,
-                min2.kmer.hash,
+                kmer1.hash,
+                kmer2.hash,
                 self.k_size - 1, // Overlap length
             );
             self.graph_fragment.add_edge(edge);

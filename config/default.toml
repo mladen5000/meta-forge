@@ -9,11 +9,11 @@ output_dir = "./output"
 debug_mode = true
 
 [assembly]
-k_min = 15
-k_max = 31
-min_coverage = 2
+k_min = 11
+k_max = 21
+min_coverage = 1
 complexity_threshold = 0.7
-enable_simplification = true
+enable_simplification = false
 
 [assembly.bubble_popping]
 enabled = true
