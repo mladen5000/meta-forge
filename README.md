@@ -1,207 +1,146 @@
-# MetaForge – Your Rust-Powered Metagenomics Sidekick
+# MetaForge – Rust Metagenomics Pipeline
 
-[![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+&#x20;&#x20;
 
-Hey there—welcome to MetaForge, the no-fluff metagenomics toolkit written in Rust. Whether you’re piecing together genomes, classifying species, or squeezing out every drop of performance, MetaForge is built to keep up without demanding a PhD in pipeline assembly.
-
----
-
-## Why You’ll Love MetaForge
-
-* **Smart K-mer Sizes**: It adjusts k-mer lengths on the fly so you don’t have to guess what works best.
-* **ML Where It Matters**: Machine-learning models tackle tricky classification and repeat regions, but we don’t use AI for the basics—those are fast enough.
-* **Deep Feature Mining**: Get both classic sequence stats and graph-based insights in one go.
-* **Speed That Scales**: Multithreaded from day one. Memory-hungry? Only if you ask for it.
-* **Built-In Database**: An embedded SQLite store for k-mer lookups and taxonomy—no extra dependencies.
-* **Live Feedback**: See progress bars, performance metrics, and logs as your job runs.
-* **Config Your Way**: TOML files with sensible defaults, plus a few presets to get started.
+MetaForge began as a side project in a small lab that needed a faster way to assemble and classify metagenomic reads. Over time it grew into a compact Rust toolkit that handles everything from k‑mer assembly to basic machine‑learning–assisted taxonomy, all without drowning you in dependencies.
 
 ---
 
-## Getting Started
+## What It Does
 
-### Prerequisites
-
-* Rust ≥ 1.70
-* SQLite3
-* OpenMP (optional, for parallel bits)
-
-### Clone & Build
-
-```bash
-git clone https://github.com/mladen5000/meta-forge.git
-cd meta-forge
-cargo build --release
-# You’ll find the `meta-forge` binary in target/release/
-```
-
-Or, if you prefer one-liners:
-
-```bash
-cargo install --path .
-```
+* **Adaptive k‑mers**: Picks k‑mer sizes based on local complexity, so you don’t run three assemblies to find the sweet spot.
+* **Pragmatic ML**: A lightweight neural model helps resolve repeats and tricky taxa, but core tasks stay in Rust for speed and reproducibility.
+* **Feature extraction**: Compute sequence stats and graph metrics in one go, then dump to JSON/CSV for downstream analysis.
+* **SQLite backend**: Simple embedded database for k‑mer lookups and taxonomy tables—no need to install PostgreSQL.
+* **Streamable & multithreaded**: Process large FASTQ files in chunks, use as many cores as you have, and keep memory in check.
+* **Minimal setup**: One `cargo build --release`, one binary, no Python or R required.
 
 ---
 
-## First Run
+## Quickstart
 
-Analyze a FASTQ in standard mode:
+1. Clone and build:
 
-```bash
-meta-forge analyze my_reads.fastq --sample-name project1 --mode standard
-```
+   ```bash
+   git clone https://github.com/mladen5000/meta-forge.git
+   cd meta-forge
+   cargo build --release
+   ```
 
-Need a config template? We got you:
+   The `meta-forge` binary will land in `target/release/`.
 
-```bash
-meta-forge config standard --output my_project.toml
-```
+2. Point it at your FASTQ:
+
+   ```bash
+   ./target/release/meta-forge analyze reads.fastq --sample-name sample1 --mode standard --threads 4
+   ```
+
+3. Check `./results` (or whatever folder you set) for:
+
+   * `contigs.fasta`
+   * `assembly_stats.json`
+   * `taxonomy.json`
+   * `abundance_profile.csv`
+   * performance logs in `performance.json`
 
 ---
 
-## Common Workflows
+## Modes & Examples
 
-### Standard Analysis
+### Standard analysis
 
 ```bash
 meta-forge analyze reads.fastq \
-  --sample-name sampleA \
-  --output ./results \
+  --sample-name projectX \
+  --output results/ \
   --threads 8
 ```
 
-### Big Data, High Performance
+### High‑throughput (more RAM/cores)
 
 ```bash
-meta-forge analyze big.fastq \
-  --sample-name bigA \
+meta-forge analyze big_dataset.fastq \
+  --sample-name bigRun \
   --mode high-performance \
-  --memory 16 \
+  --memory 32 \
   --threads 16 \
-  --output ./big_results
+  --output big_results/
 ```
 
-### Low-Memory Mode (Tiny Machines)
+### Low‑memory (for laptops)
 
 ```bash
-meta-forge analyze reads.fastq --sample-name lowmem \
-  --mode low-memory --memory 4 --threads 4
+meta-forge analyze reads.fastq \
+  --sample-name lightRun \
+  --mode low-memory \
+  --memory 4 \
+  --threads 2 \
+  --output lm_results/
 ```
 
-### Paired-End Reads
+### Assembly‑only
 
 ```bash
-meta-forge analyze R1.fastq R2.fastq --sample-name pairX --output ./pair_results
-```
-
-### Just Assembly
-
-```bash
-meta-forge assemble reads.fastq --k-range 21-31 --min-coverage 3 --output ./assembly
+meta-forge assemble reads.fastq --k-range 21-31 --min-coverage 4 --output asm_only/
 ```
 
 ---
 
-## Your Data, Your DB
+## Taxonomy Database
 
-Initialize a fresh database:
+Initialize DB:
 
 ```bash
-meta-forge database init ./data/metagenomics.db
+meta-forge database init data/metadb.sqlite
 ```
 
-Load NCBI taxonomy:
+Import NCBI dump files:
 
 ```bash
-meta-forge database import-taxonomy ./data/metagenomics.db \
-  --taxonomy-file ncbi_taxonomy.txt \
-  --names-file names.dmp \
-  --nodes-file nodes.dmp
+meta-forge database import-taxonomy data/metadb.sqlite \
+  --names nodes.dmp \
+  --nodes names.dmp
 ```
 
-Build your k-mer index:
+Build k‑mer index:
 
 ```bash
-meta-forge database build-index ./data/metagenomics.db \
-  --k 21 \
-  --input-fasta ref_genomes.fasta \
-  --batch-size 10000
+meta-forge database build-index data/metadb.sqlite --k 21 --input-fasta refs.fasta
+```
+
+Query examples:
+
+```bash
+meta-forge database query data/metadb.sqlite --sequence ATCGATCG --k 21 --output dbhits.json
 ```
 
 ---
 
-## Configuration at a Glance
+## Config template
 
-Drop this in `config.toml` to get rolling:
+A basic `config.toml` lives under `configs/`; tweak thread count, memory, k‑ranges, and feature flags there.
+
+Example snippet:
 
 ```toml
 [general]
-working_directory = "./data"
-output_directory  = "./results"
-max_threads       = 0  # auto-detect cores
+output = "./results"
+threads = 4
 
 [assembly]
-k_min               = 21
-k_max               = 31
-k_step              = 2
-min_coverage        = 3
-min_length          = 200
-graph_simplification = true
+k_min = 21
+k_max = 31
+min_coverage = 3
 
 [features]
-composition_features = true
-complexity_features  = true
-topology_features    = true
-feature_dimensions   = 100
-
-[database]
-connection_string = "sqlite:./data/metagenomics.db"
-batch_size        = 1000
-index_k_size      = 21
-
-[performance]
-memory_limit_gb   = 8
-enable_monitoring = true
-checkpoint_interval = 1000
+use_ml = true
+extract_graph_metrics = true
 ```
 
 ---
 
-## What You’ll See
+## Contributing
 
-**Results** land in your `--output` folder with clear names:
+This is a small open‑source project maintained by a former grad student. Issues, PRs, and real‑world test datasets welcome: [https://github.com/mladen5000/meta-forge](https://github.com/mladen5000/meta-forge)
 
-* `contigs.fasta` + `assembly_stats.json` + `assembly_graph.gfa`
-* `features.json` / `features.csv` + interactive HTML summary
-* `taxonomy.json` + `abundance_profile.csv` + HTML report
-* `performance.json` + `memory_profile.json`
-
----
-
-## Tips & Tricks
-
-* **OOM?** Drop into low-memory mode:
-  `meta-forge analyze reads.fastq --mode low-memory --memory 2`
-
-* **Feeling slow?** Crank threads or hit high-performance:
-  `meta-forge analyze reads.fastq --mode high-performance --threads 16`
-
-* **Database hiccup?**
-  `meta-forge database init ./data/metagenomics.db`
-
-* **Need more logs?**
-  `meta-forge analyze reads.fastq --verbose --debug`
-
----
-
-## Contributing & Support
-
-Spotted a bug or missing feature? Open an issue or PR:
-[https://github.com/mladen5000/meta-forge](https://github.com/mladen5000/meta-forge)
-
-Need help? Jump into Discussions or mail me: [youremail@example.com](mailto:youremail@example.com)
-
----
-
-Licensed under MIT. Have fun forging genomes! 🚀
+© 2024 Mladen Rasic. MIT License.
