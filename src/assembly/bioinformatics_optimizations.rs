@@ -365,42 +365,17 @@ pub fn adaptive_kmer_size(sequence: &str, min_k: usize, max_k: usize) -> usize {
 }
 
 /* ------------------------------------------------------------------------- */
-/*                        ASSEMBLY GRAPH & PARALLEL OPS                       */
+/*                     PARALLEL GRAPH PROCESSING UTILITIES                   */
 /* ------------------------------------------------------------------------- */
 
-#[derive(Debug, Clone)]
-pub struct AssemblyGraph {
-    adjacency: AHashMap<u64, AHashSet<u64>>, // Directed edges u -> v (overlap)
-}
+/// Parallel graph processing utilities for assembly graphs
+pub struct ParallelGraphUtils;
 
-impl AssemblyGraph {
-    pub fn new() -> Self {
-        Self {
-            adjacency: AHashMap::new(),
-        }
-    }
-
-    pub fn add_edge(&mut self, from: u64, to: u64) {
-        self.adjacency
-            .entry(from)
-            .or_insert_with(AHashSet::new)
-            .insert(to);
-    }
-
-    pub fn merge(&mut self, other: &AssemblyGraph) {
-        for (u, neigh) in &other.adjacency {
-            self.adjacency
-                .entry(*u)
-                .or_insert_with(AHashSet::new)
-                .extend(neigh);
-        }
-    }
-
-    /* ------------------- PARALLEL TRANSITIVE REDUCTION ------------------- */
-    pub fn transitive_reduction_parallel(&mut self) {
-        let arc_adj = Arc::new(self.adjacency.clone()); // read‑only snapshot
-        let edges_to_remove: Vec<(u64, u64)> = self
-            .adjacency
+impl ParallelGraphUtils {
+    /// Perform parallel transitive reduction on an adjacency list representation
+    pub fn transitive_reduction_parallel(adjacency: &mut AHashMap<u64, AHashSet<u64>>) {
+        let arc_adj = Arc::new(adjacency.clone()); // read‑only snapshot
+        let edges_to_remove: Vec<(u64, u64)> = adjacency
             .par_iter()
             .flat_map(|(&u, neigh)| {
                 neigh.iter().filter_map(move |&v| {
@@ -413,7 +388,7 @@ impl AssemblyGraph {
             })
             .collect();
         for (u, v) in edges_to_remove {
-            if let Some(neigh) = self.adjacency.get_mut(&u) {
+            if let Some(neigh) = adjacency.get_mut(&u) {
                 neigh.remove(&v);
             }
         }
@@ -450,165 +425,15 @@ impl AssemblyGraph {
         false
     }
 
-    /* --------------------------- TIP REMOVAL ----------------------------- */
-    pub fn remove_tips(&mut self, tip_len: usize) {
-        let mut to_remove = Vec::new();
-        for (&node, neigh) in &self.adjacency {
-            if neigh.is_empty() && self.in_degree(node) == 1 {
-                // dead‑end
-                to_remove.push((node, tip_len));
-            }
-        }
-        for (tip, mut len) in to_remove {
-            let mut current = tip;
-            while len > 0 {
-                let pred = self.predecessors(current).into_iter().next();
-                if let Some(p) = pred {
-                    self.adjacency.get_mut(&p).unwrap().remove(&current);
-                    current = p;
-                    len -= 1;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    /* --------------------------- BUBBLE POP ------------------------------ */
-    pub fn pop_bubbles(&mut self) {
-        // Simplistic implementation: for each pair of edges u->v and u->w where v & w converge
-        // to same successor, remove the longer path.
-        let mut to_remove = Vec::new();
-        for (&u, neigh) in &self.adjacency {
-            let neigh_vec: Vec<u64> = neigh.iter().cloned().collect();
-            for i in 0..neigh_vec.len() {
-                for j in (i + 1)..neigh_vec.len() {
-                    let v = neigh_vec[i];
-                    let w = neigh_vec[j];
-                    if let Some(common) = self.common_successor(v, w) {
-                        // decide which branch shorter
-                        let len_v = self.path_length(v, common, 10);
-                        let len_w = self.path_length(w, common, 10);
-                        if len_v > len_w {
-                            to_remove.push((u, v));
-                        } else {
-                            to_remove.push((u, w));
-                        }
-                    }
-                }
-            }
-        }
-        for (u, v) in to_remove {
-            if let Some(neigh) = self.adjacency.get_mut(&u) {
-                neigh.remove(&v);
-            }
-        }
-    }
-
-    fn common_successor(&self, a: u64, b: u64) -> Option<u64> {
-        let succ_a: AHashSet<u64> = self.successors(a).into_iter().collect();
-        for s in self.successors(b) {
-            if succ_a.contains(&s) {
-                return Some(s);
-            }
-        }
-        None
-    }
-
-    fn path_length(&self, from: u64, to: u64, max: usize) -> usize {
-        let mut queue: VecDeque<(u64, usize)> = VecDeque::new();
-        let mut visited: AHashSet<u64> = AHashSet::new();
-        queue.push_back((from, 0));
-        visited.insert(from);
-        while let Some((n, d)) = queue.pop_front() {
-            if d > max {
-                return max + 1;
-            }
-            if n == to {
-                return d;
-            }
-            for s in self.successors(n) {
-                if visited.insert(s) {
-                    queue.push_back((s, d + 1));
-                }
-            }
-        }
-        max + 1
-    }
-
-    /* --------------------- STRONGLY CONNECTED COMPONENTS ------------------ */
-    pub fn strongly_connected_components(&self) -> Vec<Vec<u64>> {
-        // Kosaraju (sequential). Adequate for typical component counts.
-        let mut visited: AHashSet<u64> = AHashSet::new();
-        let mut order = Vec::new();
-        for &v in self.adjacency.keys() {
-            if !visited.contains(&v) {
-                self.dfs_order(v, &mut visited, &mut order);
-            }
-        }
-        let transposed = self.transpose();
-        visited.clear();
-        let mut components = Vec::new();
-        for &v in order.iter().rev() {
-            if !visited.contains(&v) {
-                let mut comp = Vec::new();
-                transposed.collect_component(v, &mut visited, &mut comp);
-                components.push(comp);
-            }
-        }
+    /// Generate contigs from strongly connected components in parallel
+    pub fn generate_contigs_parallel(components: &[Vec<u64>], adjacency: &AHashMap<u64, AHashSet<u64>>) -> Vec<Vec<u64>> {
         components
-    }
-
-    fn dfs_order(&self, v: u64, visited: &mut AHashSet<u64>, order: &mut Vec<u64>) {
-        let mut stack = Vec::new();
-        stack.push((v, false));
-        while let Some((node, processed)) = stack.pop() {
-            if processed {
-                order.push(node);
-                continue;
-            }
-            if !visited.insert(node) {
-                continue;
-            }
-            stack.push((node, true));
-            for n in self.successors(node) {
-                stack.push((n, false));
-            }
-        }
-    }
-
-    fn collect_component(&self, v: u64, visited: &mut AHashSet<u64>, comp: &mut Vec<u64>) {
-        let mut stack = vec![v];
-        visited.insert(v);
-        while let Some(node) = stack.pop() {
-            comp.push(node);
-            for n in self.successors(node) {
-                if visited.insert(n) {
-                    stack.push(n);
-                }
-            }
-        }
-    }
-
-    fn transpose(&self) -> AssemblyGraph {
-        let mut g = AssemblyGraph::new();
-        for (&u, neigh) in &self.adjacency {
-            for &v in neigh {
-                g.add_edge(v, u);
-            }
-        }
-        g
-    }
-
-    /* ------------------- PARALLEL CONTIG GENERATION (OLC) ----------------- */
-    pub fn generate_contigs_parallel(&self) -> Vec<Vec<u64>> {
-        self.strongly_connected_components()
-            .into_par_iter()
-            .map(|comp| self.eulerian_trail(&comp))
+            .par_iter()
+            .map(|comp| Self::eulerian_trail(comp, adjacency))
             .collect()
     }
 
-    fn eulerian_trail(&self, nodes: &[u64]) -> Vec<u64> {
+    fn eulerian_trail(nodes: &[u64], adjacency: &AHashMap<u64, AHashSet<u64>>) -> Vec<u64> {
         // Hierholzer within component (naïve implementation)
         let mut stack = Vec::new();
         let mut path = Vec::new();
@@ -619,7 +444,7 @@ impl AssemblyGraph {
         stack.push(start);
         let mut adj_iter: AHashMap<u64, Vec<u64>> = AHashMap::new();
         for &n in nodes {
-            adj_iter.insert(n, self.successors(n));
+            adj_iter.insert(n, adjacency.get(&n).map(|s| s.iter().cloned().collect()).unwrap_or_default());
         }
         while let Some(v) = stack.last().cloned() {
             if let Some(next) = adj_iter.get_mut(&v).and_then(|l| l.pop()) {
@@ -632,44 +457,34 @@ impl AssemblyGraph {
         path.reverse();
         path
     }
-
-    /* ---------------------- AUXILIARY GRAPH HELPERS ---------------------- */
-    fn successors(&self, node: u64) -> Vec<u64> {
-        self.adjacency
-            .get(&node)
-            .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-    fn predecessors(&self, node: u64) -> Vec<u64> {
-        self.adjacency
-            .iter()
-            .filter_map(|(&u, neigh)| neigh.contains(&node).then(|| u))
-            .collect()
-    }
-    fn in_degree(&self, node: u64) -> usize {
-        self.predecessors(node).len()
-    }
 }
 
 /* -------------------------- HIERARCHICAL MERGE --------------------------- */
 
-pub fn merge_graphs_hierarchical(mut graphs: Vec<AssemblyGraph>) -> AssemblyGraph {
-    if graphs.is_empty() {
-        return AssemblyGraph::new();
+/// Hierarchical merge utility for adjacency-based graph representations
+pub fn merge_adjacency_hierarchical(mut adjacency_lists: Vec<AHashMap<u64, AHashSet<u64>>>) -> AHashMap<u64, AHashSet<u64>> {
+    if adjacency_lists.is_empty() {
+        return AHashMap::new();
     }
-    while graphs.len() > 1 {
-        graphs = graphs
+    while adjacency_lists.len() > 1 {
+        adjacency_lists = adjacency_lists
             .par_chunks(2)
             .map(|chunk| {
-                let mut g = chunk[0].clone();
+                let mut merged = chunk[0].clone();
                 if chunk.len() == 2 {
-                    g.merge(&chunk[1]);
+                    // Merge the second adjacency list into the first
+                    for (u, neigh) in &chunk[1] {
+                        merged
+                            .entry(*u)
+                            .or_insert_with(AHashSet::new)
+                            .extend(neigh);
+                    }
                 }
-                g
+                merged
             })
             .collect();
     }
-    graphs.pop().unwrap()
+    adjacency_lists.pop().unwrap()
 }
 
 /* ------------------------------------------------------------------------- */

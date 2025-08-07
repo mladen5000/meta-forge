@@ -434,9 +434,9 @@ impl AdaptiveAssembler {
         })
     }
 
-    fn assemble(&mut self, reads: &[String]) -> Result<AssemblyGraph> {
+    fn assemble(&mut self, reads: &[String]) -> Result<IntegratedAssemblyGraph> {
         // Simplified: analyze complexity and choose k adaptively
-        let mut assembly = AssemblyGraph::new();
+        let mut assembly = IntegratedAssemblyGraph::new();
 
         for read in reads {
             let complexity = self.measure_complexity(read);
@@ -704,7 +704,7 @@ impl AIRepeatResolver {
         Ok(Self { session })
     }
 
-    fn resolve_repeats(&self, graph: &AssemblyGraph) -> Result<ResolvedGraph> {
+    fn resolve_repeats(&self, graph: &IntegratedAssemblyGraph) -> Result<ResolvedGraph> {
         let mut resolved = ResolvedGraph::from_assembly(graph);
 
         if let Some(ref session) = self.session {
@@ -863,8 +863,8 @@ impl GraphBuilder {
     }
 }
 
-pub struct AssemblyGraph;
-impl AssemblyGraph {
+pub struct IntegratedAssemblyGraph;
+impl IntegratedAssemblyGraph {
     fn new() -> Self {
         Self
     }
@@ -872,8 +872,8 @@ impl AssemblyGraph {
         Ok(())
     }
     fn to_tensor(&self) -> Result<ort::Value> {
-        // Placeholder - would convert graph to tensor format
-        todo!("Convert graph to ONNX tensor")
+        // Simplified placeholder that compiles
+        Err(anyhow::anyhow!("Tensor conversion not implemented"))
     }
 }
 
@@ -881,7 +881,7 @@ pub struct ResolvedGraph {
     pub stats: AssemblyStats,
 }
 impl ResolvedGraph {
-    fn from_assembly(_graph: &AssemblyGraph) -> Self {
+    fn from_assembly(_graph: &IntegratedAssemblyGraph) -> Self {
         Self {
             stats: AssemblyStats::default(),
         }
@@ -894,7 +894,8 @@ impl ResolvedGraph {
         Ok(())
     }
     fn to_tensor(&self) -> Result<ort::Value> {
-        todo!("Convert resolved graph to tensor")
+        // Simplified placeholder that compiles
+        Err(anyhow::anyhow!("Resolved graph tensor conversion not implemented"))
     }
 }
 

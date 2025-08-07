@@ -1045,7 +1045,12 @@ mod tests {
             corrected: "ATCGATCG".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 8],
-            correction_metadata: None,
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         };
 
         chunk.add_read(read).unwrap();

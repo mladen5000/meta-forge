@@ -27,7 +27,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-use crate::core::data_structures::{Contig, AssemblyStats, ContigType};
+use crate::core::data_structures::{Contig, AssemblyStats, ContigType, GraphFragment};
 
 /* ------------------------------------------------------------------------- */
 /*                                 READ TYPE                                 */
@@ -111,11 +111,7 @@ pub struct GraphEdge {
     pub cov: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphFragment {
-    pub nodes: AHashMap<u64, GraphNode>,
-    pub edges: AHashSet<GraphEdge>,
-}
+// Removed duplicate GraphFragment definition - using core::data_structures::GraphFragment
 
 impl GraphFragment {
     pub fn empty() -> Self {
