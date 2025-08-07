@@ -24,6 +24,10 @@ path = "src/bin/demo_progress.rs"
 name = "integrated-demo"
 path = "src/bin/integrated_demo.rs"
 
+[[bin]]
+name = "meta-tui"
+path = "src/bin/tui.rs"
+
 [lib]
 name = "meta_forge"
 path = "src/lib.rs"
@@ -69,6 +73,13 @@ thiserror = "2.0.12"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
+
+
+# --- Terminal User Interface ---
+tui-input = "0.10.1"
+ratatui = "0.29.0"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+tui-textarea = "0.6.1"
 
 # --- Bioinformatics ---
 bio = "2.3.0"

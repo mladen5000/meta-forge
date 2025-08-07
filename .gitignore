@@ -264,3 +264,4 @@ ncbi_taxonomy.txt
 taxdump.tar.gz
 SRR390728_1.fastq
 SRR390728_2.fastq
+kraken2_benchmark.sh
