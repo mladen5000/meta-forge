@@ -112,7 +112,7 @@ fn main() -> Result<()> {
         
         // Apply quality filtering with reasonable defaults
         multi_progress.update_line(read_line, "📖 Read Processing: Applying quality filters...".to_string());
-        collection.filter_by_quality(25.0, 30);
+        collection.filter_by_quality(15.0, 20);
         
         // Calculate statistics
         collection.calculate_stats();

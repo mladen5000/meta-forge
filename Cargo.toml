@@ -7,6 +7,11 @@ description = "Metagenomic data analysis and LLM integration toolkit"
 license = "MIT"
 repository = "https://github.com/mladen5000/meta-forge"
 readme = "README.md"
+default-run = "demo-progress"
+
+[[bin]]
+name = "demo-progress"
+path = "src/bin/demo_progress.rs"
 
 [[bin]]
 name = "meta-forge"
@@ -15,10 +20,6 @@ path = "src/main.rs"
 [[bin]]
 name = "test-paired-reads"
 path = "src/bin/test_paired_reads.rs"
-
-[[bin]]
-name = "demo-progress"
-path = "src/bin/demo_progress.rs"
 
 [[bin]]
 name = "integrated-demo"

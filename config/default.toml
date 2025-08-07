@@ -6,7 +6,7 @@ version = "1.0.0"
 work_dir = "./work"
 temp_dir = "./tmp"
 output_dir = "./output"
-debug_mode = false
+debug_mode = true
 
 [assembly]
 k_min = 15
@@ -73,10 +73,10 @@ max_sequence_length = 10000
 
 [performance]
 num_threads = 8                 # 0 = auto-detect
-memory_limit_gb = 8
+memory_limit_gb = 16
 enable_memory_monitoring = true
 streaming_buffer_size = 1000
-chunk_size = 100
+chunk_size = 1000
 enable_compression = false
 
 [performance.monitoring]
@@ -92,7 +92,7 @@ enable_performance_logging = true
 enable_metrics = true
 
 [io]
-supported_input_formats = ["fasta", "fastq", "fasta.gz", "fastq.gz"]
+supported_input_formats = ["fa", "fq", "fasta", "fastq", "fasta.gz", "fastq.gz"]
 
 [io.output_formats]
 fasta = true
@@ -106,4 +106,4 @@ html_report = true
 enable_memory_mapping = true
 buffer_size = 8192
 max_file_size_gb = 10
-compression_level = 6
+compression_level = 2

@@ -483,7 +483,7 @@ impl PairedReadCollection {
             }
 
             // Count low quality pairs
-            if r1_avg < 25.0 || r2_avg < 25.0 {
+            if r1_avg < 15.0 || r2_avg < 15.0 {
                 low_quality_pairs += 1;
             }
         }
@@ -851,7 +851,7 @@ mod tests {
 
         assert_eq!(collection.pairs.len(), 2);
 
-        collection.filter_by_quality(25.0, 10);
+        collection.filter_by_quality(15.0, 10);
         assert_eq!(collection.pairs.len(), 1);
         assert!(collection.get_pair("pair_hq").is_some());
         assert!(collection.get_pair("pair_lq").is_none());

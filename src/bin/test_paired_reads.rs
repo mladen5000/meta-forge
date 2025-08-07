@@ -151,7 +151,7 @@ fn main() -> Result<()> {
     // Test quality filtering
     println!("\n🚿 Quality Filtering Test:");
     let original_count = collection.pairs.len();
-    collection.filter_by_quality(25.0, 30); // Remove reads with avg quality < 25 or length < 30
+    collection.filter_by_quality(15.0, 20); // Remove reads with avg quality < 15 or length < 20
     let filtered_count = collection.pairs.len();
     println!("Pairs before filtering:   {}", original_count);
     println!("Pairs after filtering:    {}", filtered_count);
