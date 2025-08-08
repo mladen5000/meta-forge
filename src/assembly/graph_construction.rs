@@ -36,7 +36,7 @@ use std::sync::{
 use crate::core::data_structures::*;
 
 /// Advanced metrics for parallel processing performance
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct ParallelMetrics {
     pub transitive_edges_removed: AtomicUsize,
     pub parallel_merge_depth: AtomicUsize,
@@ -839,7 +839,7 @@ impl AssemblyGraph {
             let out_deg = adj_list.get(&node).map(|v| v.len()).unwrap_or(0);
             out_degrees.insert(node, out_deg);
 
-            let in_deg = nodes
+            let in_deg: usize = nodes
                 .iter()
                 .map(|&n| {
                     adj_list
@@ -1333,6 +1333,12 @@ mod integration_tests {
                 corrected: "ATCGATCGATCGATCG".to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; 16],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             },
             CorrectedRead {
                 id: 1,
@@ -1340,6 +1346,12 @@ mod integration_tests {
                 corrected: "TCGATCGATCGATCGA".to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; 16],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             },
             CorrectedRead {
                 id: 2,
@@ -1347,6 +1359,12 @@ mod integration_tests {
                 corrected: "CGATCGATCGATCGAT".to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; 16],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "none".to_string(),
+                    confidence_threshold: 0.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             },
         ];
 
@@ -1373,7 +1391,7 @@ mod integration_tests {
         for &threads in &thread_counts {
             println!("\n🧪 Testing with {} threads", threads);
 
-            let start = Instant::now();
+            let start = std::time::Instant::now();
             let builder = AdvancedAssemblyGraphBuilder::new(15, 25, 2, threads).unwrap();
             let result = builder.build_graph(&test_reads);
             let elapsed = start.elapsed();
@@ -1398,6 +1416,12 @@ mod integration_tests {
                     corrected: seq.clone(),
                     corrections: Vec::new(),
                     quality_scores: vec![30; seq.len()],
+                    correction_metadata: CorrectionMetadata {
+                        algorithm: "none".to_string(),
+                        confidence_threshold: 0.0,
+                        context_window: 0,
+                        correction_time_ms: 0,
+                    },
                 }
             })
             .collect()
@@ -1407,4 +1431,3 @@ mod integration_tests {
 // Export all public interfaces
 #[cfg(test)]
 pub use self::benchmarks::{BenchmarkResult, PerformanceBenchmark};
-

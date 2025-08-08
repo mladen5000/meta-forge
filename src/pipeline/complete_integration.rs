@@ -521,9 +521,13 @@ impl MetagenomicsPipeline {
 
         // Convert core CorrectedRead to assembly CorrectedRead for compatibility
         let assembly_reads: Vec<_> = reads.iter().map(|r| {
-            crate::assembly::adaptive_k::CorrectedRead {
-                id: r.id.to_string(),
-                sequence: r.corrected.clone(),
+            crate::core::data_structures::CorrectedRead {
+                id: r.id,
+                original: r.original.clone(),
+                corrected: r.corrected.clone(),
+                corrections: r.corrections.clone(),
+                quality_scores: r.quality_scores.clone(),
+                correction_metadata: r.correction_metadata.clone(),
             }
         }).collect();
         let assembly_graph = builder.build(&assembly_reads)?;

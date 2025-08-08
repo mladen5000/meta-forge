@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 
+
 /// Core data structures for the enhanced metagenomics pipeline
 /// Implements proper k-mer handling, minimizer extraction, and graph structures
 
@@ -386,6 +387,49 @@ pub struct CoverageStats {
 }
 
 impl GraphFragment {
+    /// Reconstruct sequence from a path of node hashes
+    pub fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
+        if path.is_empty() {
+            return Ok(String::new());
+        }
+        
+        // For now, create a placeholder sequence based on path length
+        // In a real implementation, this would reconstruct from k-mer overlaps
+        let mut sequence = String::new();
+        for (i, &hash) in path.iter().enumerate() {
+            if let Some(node) = self.nodes.get(&hash) {
+                if i == 0 {
+                    // Add full sequence for first node
+                    sequence.push_str(&node.kmer.sequence);
+                } else {
+                    // Add only the last character for overlap (simple k-mer model)
+                    if let Some(last_char) = node.kmer.sequence.chars().last() {
+                        sequence.push(last_char);
+                    }
+                }
+            } else {
+                // Fallback: use hash as sequence component
+                sequence.push_str(&format!("N{}", i));
+            }
+        }
+        Ok(sequence)
+    }
+    
+    /// Calculate coverage for a path based on node hashes
+    pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
+        if path.is_empty() {
+            return 0.0;
+        }
+        
+        let total_coverage: u32 = path
+            .iter()
+            .filter_map(|&hash| self.nodes.get(&hash))
+            .map(|node| node.coverage)
+            .sum();
+            
+        total_coverage as f64 / path.len() as f64
+    }
+
     pub fn new(fragment_id: usize) -> Self {
         Self {
             nodes: AHashMap::new(),
@@ -712,6 +756,29 @@ pub struct AssemblyChunk {
     pub k_size: usize,
     pub graph_fragment: GraphFragment,
     pub processing_stats: ProcessingStats,
+}
+
+impl AssemblyChunk {
+    pub fn new(chunk_id: usize, k_size: usize) -> Self {
+        Self {
+            chunk_id,
+            reads: Vec::new(),
+            k_size,
+            graph_fragment: GraphFragment::new(chunk_id),
+            processing_stats: ProcessingStats::default(),
+        }
+    }
+
+    pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
+        self.reads.push(read);
+        self.processing_stats.reads_processed += 1;
+        Ok(())
+    }
+
+    pub fn finalize(&mut self) {
+        self.processing_stats.kmers_extracted = self.graph_fragment.nodes.len();
+        // Add any final processing logic here
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
