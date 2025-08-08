@@ -1,8 +1,8 @@
 //! Statistical accuracy tests for abundance estimation algorithms
 //! Tests coverage calculation, complexity scoring, statistical metrics, and quality assessment
 
-use crate::abundance_estimation_tests::create_test_read_with_quality;
-use anyhow::Result;
+use abundance_estimation_tests::create_test_read_with_quality;
+
 use meta_forge::assembly::adaptive_k::AssemblyGraph;
 use meta_forge::calculate_gc_content;
 use meta_forge::calculate_sequence_complexity;
@@ -86,7 +86,7 @@ pub mod abundance_estimation_tests {
         let mut node_id = 0;
         for (&coverage, &count) in &coverage_counts {
             for _ in 0..count {
-                let seq = format!("A{:03}", node_id);
+                let seq = format!("A{node_id:03}");
                 let kmer = CanonicalKmer::new(&seq).unwrap();
                 let mut node = GraphNode::new(kmer, 4);
                 node.coverage = coverage;
@@ -105,8 +105,7 @@ pub mod abundance_estimation_tests {
                 .unwrap_or(0);
             assert_eq!(
                 actual_count, expected_count,
-                "Coverage {} should have {} nodes",
-                expected_coverage, expected_count
+                "Coverage {expected_coverage} should have {expected_count} nodes"
             );
         }
 
@@ -330,10 +329,7 @@ mod gc_content_analysis_tests {
             let actual = calculate_gc_content(sequence);
             assert!(
                 (actual - expected).abs() < 1e-10,
-                "GC content of '{}' should be {}, got {}",
-                sequence,
-                expected,
-                actual
+                "GC content of '{sequence}' should be {expected}, got {actual}"
             );
         }
     }
@@ -411,7 +407,7 @@ mod assembly_statistics_tests {
         let mut assembly_graph = AssemblyGraph::from_fragment(fragment);
 
         // Create contigs with specific lengths for N50 calculation
-        let lengths = vec![100, 200, 300, 400, 500]; // Total: 1500, N50 should be 400
+        let lengths = [100, 200, 300, 400, 500]; // Total: 1500, N50 should be 400
         let mut contigs = Vec::new();
 
         for (i, length) in lengths.iter().enumerate() {

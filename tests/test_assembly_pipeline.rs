@@ -2,14 +2,13 @@
 //! Tests AssemblyGraphBuilder, adaptive k-mer selection, graph construction, and integration
 
 // use crate::assembly_graph_builder_tests::create_test_read;
-use crate::test_assembly_pipeline::create_test_read;
 use crate::test_statistical_accuracy::abundance_estimation_tests::create_test_read_with_quality;
+use assembly_graph_builder_tests::create_test_read;
 use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use meta_forge::assembly::bioinformatics_optimizations::BitPackedKmer;
 use meta_forge::core::data_structures::{
     AssemblyGraph, CorrectedRead, CorrectionMetadata, GraphFragment,
 };
-use meta_forge::AssemblyChunk;
 use meta_forge::AssemblyChunk;
 use meta_forge::CanonicalKmer;
 use meta_forge::GraphEdge;
@@ -18,7 +17,7 @@ use meta_forge::NodeType;
 use std::collections::HashSet;
 
 #[cfg(test)]
-mod assembly_graph_builder_tests {
+pub mod assembly_graph_builder_tests {
     use super::*;
 
     pub fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
