@@ -25,9 +25,9 @@ use anyhow::{anyhow, Result};
 use petgraph::{algo::tarjan_scc, graph::NodeIndex, visit::EdgeRef, Directed, Graph};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 
-use crate::core::data_structures::{AssemblyStats, Contig, ContigType, GraphFragment};
+use crate::core::data_structures::{AssemblyStats, Contig, ContigType, GraphFragment, GraphNode, GraphEdge, CanonicalKmer};
 
 /* ------------------------------------------------------------------------- */
 /*                                 READ TYPE                                 */
@@ -95,64 +95,52 @@ impl BitPackedKmer {
 /*                      GRAPH FRAGMENT + EDGE/NODE TYPES                      */
 /* ------------------------------------------------------------------------- */
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GraphNode {
-    pub kmer_hash: u64,
-    pub cov: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub from_hash: u64,
-    pub to_hash: u64,
-    pub cov: u32,
-}
+// GraphNode and GraphEdge are imported from core::data_structures
+// No need to redefine them here
 
 // Removed duplicate GraphFragment definition - using core::data_structures::GraphFragment
 
 impl GraphFragment {
     pub fn empty() -> Self {
-        Self {
-            nodes: AHashMap::new(),
-            edges: Vec::new(),
-        }
+        GraphFragment::new(0)
     }
 
     pub fn insert_edge(&mut self, from: u64, to: u64) {
         // Insert nodes separately to avoid double borrow
-        self.nodes.entry(from).or_insert(GraphNode {
-            kmer_hash: from,
-            cov: 0,
-        });
-        self.nodes.entry(to).or_insert(GraphNode {
-            kmer_hash: to,
-            cov: 0,
-        });
+        // Create placeholder k-mers for nodes if they don't exist
+        if !self.nodes.contains_key(&from) {
+            if let Ok(kmer) = CanonicalKmer::new("ATCG") {
+                let node = GraphNode::new(kmer, 4);
+                self.nodes.insert(from, node);
+            }
+        }
+        if !self.nodes.contains_key(&to) {
+            if let Ok(kmer) = CanonicalKmer::new("ATCG") {
+                let node = GraphNode::new(kmer, 4);
+                self.nodes.insert(to, node);
+            }
+        }
 
         // Now increment coverage
         if let Some(n1) = self.nodes.get_mut(&from) {
-            n1.cov += 1;
+            n1.coverage += 1;
         }
         if let Some(n2) = self.nodes.get_mut(&to) {
-            n2.cov += 1;
+            n2.coverage += 1;
         }
 
-        self.edges.push(GraphEdge {
+        self.add_edge(GraphEdge {
             from_hash: from,
             to_hash: to,
-            weight: 1.0,
+            weight: 1,
+            overlap_length: 0,
             confidence: 1.0,
-            supporting_reads: Vec::new(),
+            edge_type: crate::core::data_structures::EdgeType::Simple,
+            supporting_reads: HashSet::new(),
         });
     }
 
-    pub fn get_adjacency_list(&self) -> AHashMap<u64, Vec<u64>> {
-        let mut adj: AHashMap<u64, Vec<u64>> = AHashMap::new();
-        for e in &self.edges {
-            adj.entry(e.from_hash).or_default().push(e.to_hash);
-        }
-        adj
-    }
+    // Method moved to core::data_structures - removed duplicate
 }
 
 /* ------------------------------------------------------------------------- */
@@ -172,8 +160,8 @@ impl AssemblyGraph {
         let mut g: Graph<u64, (), Directed> = Graph::default();
         let mut index_map: AHashMap<u64, NodeIndex> = AHashMap::new();
         for node in f.nodes.values() {
-            let idx = g.add_node(node.kmer_hash);
-            index_map.insert(node.kmer_hash, idx);
+            let idx = g.add_node(node.kmer.hash);
+            index_map.insert(node.kmer.hash, idx);
         }
         for e in &f.edges {
             if let (Some(&u), Some(&v)) = (index_map.get(&e.from_hash), index_map.get(&e.to_hash)) {
@@ -291,7 +279,7 @@ impl AssemblyGraphBuilder {
                 frag.nodes.remove(&t);
             }
         }
-        // transitive reduction (parallel over edges)
+        // transitive reduction (parallel over edges)  
         let adj = frag.get_adjacency_list();
         let to_remove: Vec<GraphEdge> = frag
             .edges
@@ -368,12 +356,13 @@ impl AssemblyGraph {
             // Simple sequence reconstruction - just concatenate node hashes as placeholder
             let sequence = format!("CONTIG_{}", contig_id);
             let coverage = path.len() as f64;
+            let length = sequence.len();
 
             contigs.push(Contig {
                 id: contig_id,
                 sequence,
                 coverage,
-                length: sequence.len(),
+                length,
                 node_path: path,
                 contig_type: ContigType::Linear,
             });

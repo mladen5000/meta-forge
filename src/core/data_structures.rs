@@ -488,45 +488,7 @@ impl GraphFragment {
         Ok(())
     }
 
-    /// Reconstruct DNA sequence from a path of node hashes
-    pub fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
-        if path.is_empty() {
-            return Ok(String::new());
-        }
-
-        let mut sequence = String::new();
-        for (i, &hash) in path.iter().enumerate() {
-            if let Some(node) = self.nodes.get(&hash) {
-                if i == 0 {
-                    // First k-mer: add full sequence
-                    sequence.push_str(&node.kmer.sequence);
-                } else {
-                    // Subsequent k-mers: add only the last character (k-1 overlap)
-                    if let Some(last_char) = node.kmer.sequence.chars().last() {
-                        sequence.push(last_char);
-                    }
-                }
-            } else {
-                return Err(anyhow!("Node hash {} not found in graph", hash));
-            }
-        }
-        Ok(sequence)
-    }
-
-    /// Calculate average coverage from a path of node hashes
-    pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
-        if path.is_empty() {
-            return 0.0;
-        }
-
-        let total_coverage: u32 = path
-            .iter()
-            .filter_map(|&hash| self.nodes.get(&hash))
-            .map(|node| node.coverage)
-            .sum();
-
-        total_coverage as f64 / path.len() as f64
-    }
+    // Duplicate function definitions removed
 
     fn update_coverage_stats(&mut self) {
         let coverages: Vec<u32> = self.nodes.values().map(|n| n.coverage).collect();
@@ -759,26 +721,7 @@ pub struct AssemblyChunk {
 }
 
 impl AssemblyChunk {
-    pub fn new(chunk_id: usize, k_size: usize) -> Self {
-        Self {
-            chunk_id,
-            reads: Vec::new(),
-            k_size,
-            graph_fragment: GraphFragment::new(chunk_id),
-            processing_stats: ProcessingStats::default(),
-        }
-    }
-
-    pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
-        self.reads.push(read);
-        self.processing_stats.reads_processed += 1;
-        Ok(())
-    }
-
-    pub fn finalize(&mut self) {
-        self.processing_stats.kmers_extracted = self.graph_fragment.nodes.len();
-        // Add any final processing logic here
-    }
+    // Main implementation is below - removed duplicate
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1233,44 +1176,7 @@ impl AssemblyGraph {
         self.assembly_stats.gc_content = gc_count as f64 / self.assembly_stats.total_length as f64;
     }
 
-    pub fn reconstruct_sequence_from_path(&self, path: &[u64]) -> Result<String> {
-        if path.is_empty() {
-            return Ok(String::new());
-        }
-
-        let mut sequence = String::new();
-        for (i, &hash) in path.iter().enumerate() {
-            if let Some(node) = self.graph_fragment.nodes.get(&hash) {
-                if i == 0 {
-                    // First k-mer contributes full sequence
-                    sequence.push_str(&node.kmer.sequence);
-                } else {
-                    // Subsequent k-mers contribute only the last nucleotide
-                    if let Some(last_char) = node.kmer.sequence.chars().last() {
-                        sequence.push(last_char);
-                    }
-                }
-            } else {
-                return Err(anyhow!("Node with hash {} not found in graph", hash));
-            }
-        }
-
-        Ok(sequence)
-    }
-
-    pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
-        if path.is_empty() {
-            return 0.0;
-        }
-
-        let total_coverage: u32 = path
-            .iter()
-            .filter_map(|&hash| self.graph_fragment.nodes.get(&hash))
-            .map(|node| node.coverage)
-            .sum();
-
-        total_coverage as f64 / path.len() as f64
-    }
+    // Duplicate functions removed - using GraphFragment implementations
 
     /// Write contigs to FASTA format
     pub fn write_contigs_fasta<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {

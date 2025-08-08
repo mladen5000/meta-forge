@@ -100,7 +100,10 @@ impl AdvancedAssemblyGraphBuilder {
         let merged = self.hierarchical_merge(fragments)?;
 
         // Phase 4: Advanced graph simplification
-        let simplified = self.advanced_simplify_graph(merged)?;
+        // Convert GraphFragment to AssemblyGraph for simplification
+        let mut assembly_graph = AssemblyGraph::new();
+        assembly_graph.graph_fragment = merged;
+        let simplified = self.advanced_simplify_graph(assembly_graph)?;
 
         // Phase 5: Parallel contig generation via SCCs
         let mut final_graph = self.parallel_transitive_reduction(simplified)?;
@@ -810,8 +813,8 @@ impl AssemblyGraph {
             return Ok(None);
         }
 
-        let sequence = self.reconstruct_sequence_from_path(path)?;
-        let coverage = self.calculate_path_coverage_from_hashes(path);
+        let sequence = self.graph_fragment.reconstruct_sequence_from_path(path)?;
+        let coverage = self.graph_fragment.calculate_path_coverage_from_hashes(path);
 
         Ok(Some(Contig {
             id,

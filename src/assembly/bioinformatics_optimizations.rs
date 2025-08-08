@@ -378,8 +378,9 @@ impl ParallelGraphUtils {
         let edges_to_remove: Vec<(u64, u64)> = adjacency
             .par_iter()
             .flat_map(|(&u, neigh)| {
-                neigh.iter().filter_map(move |&v| {
-                    if Self::reachable_except_direct(&arc_adj, u, v) {
+                let arc_adj_clone = Arc::clone(&arc_adj);
+                neigh.par_iter().filter_map(move |&v| {
+                    if Self::reachable_except_direct(&arc_adj_clone, u, v) {
                         Some((u, v))
                     } else {
                         None
