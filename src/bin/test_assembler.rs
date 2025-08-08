@@ -59,9 +59,8 @@ fn main() -> anyhow::Result<()> {
     let builder = AssemblyGraphBuilder::new(
         11,  // base k-mer size
         15,  // max k-mer size  
-        1,   // minimum coverage
-        2    // threads
-    )?;
+        1    // minimum coverage
+    );
     
     println!("🏗️  Building assembly graph...");
     let mut graph = builder.build_graph(&test_reads)?;

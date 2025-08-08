@@ -22,10 +22,10 @@
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use petgraph::{algo::tarjan_scc, graph::NodeIndex, visit::EdgeRef, Directed, Graph};
+use petgraph::{graph::NodeIndex, Graph, Directed};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{VecDeque, HashSet};
+use std::collections::HashSet;
 
 use crate::core::data_structures::{AssemblyStats, Contig, ContigType, GraphFragment, GraphNode, GraphEdge, CanonicalKmer};
 

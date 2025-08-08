@@ -393,6 +393,8 @@ mod tests {
         assert!((0.0..=1.0).contains(&complex));
     }
 
+    use proptest::proptest;
+    
     proptest! {
         #[test]
         fn fuzz_no_panic(seq in "[ACGTN]{0,200}") {

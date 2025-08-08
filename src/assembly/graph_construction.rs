@@ -20,13 +20,10 @@
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use petgraph::algo::{is_cyclic_directed, tarjan_scc};
-use petgraph::visit::{EdgeRef, NodeRef};
-use petgraph::{graph::NodeIndex, Directed, Graph};
+use petgraph::algo::tarjan_scc;
+use petgraph::{graph::NodeIndex, Graph};
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,

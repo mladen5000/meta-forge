@@ -1,11 +1,10 @@
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashMap;
 use rayon::prelude::*;
 use ahash::AHashMap;
 
-use crate::core::data_structures::{CorrectedRead, BaseCorrection, ReadPosition, Strand, CorrectionMetadata};
+use crate::core::data_structures::{CorrectedRead, BaseCorrection, CorrectionMetadata};
 
 /// Enhanced paired-end read support for metagenomic assembly
 /// 

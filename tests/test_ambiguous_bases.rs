@@ -1,4 +1,5 @@
-use meta_forge::{CanonicalKmer, MinimizerExtractor, AmbiguousBaseConfig, AmbiguousBaseStrategy};
+use meta_forge::{AmbiguousBaseConfig, AmbiguousBaseStrategy, CanonicalKmer, MinimizerExtractor};
+use proptest::proptest;
 
 #[test]
 fn test_skip_strategy() {
@@ -19,7 +20,7 @@ fn test_skip_strategy() {
     assert!(result.unwrap_err().to_string().contains("ambiguous bases"));
 }
 
-#[test] 
+#[test]
 fn test_allow_strategy() {
     let config = AmbiguousBaseConfig {
         strategy: AmbiguousBaseStrategy::Allow,
@@ -43,7 +44,10 @@ fn test_allow_strategy() {
     // Should fail with too many N's
     let result = CanonicalKmer::new_with_config("ANNN", &config);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("too many ambiguous bases"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("too many ambiguous bases"));
 }
 
 #[test]
@@ -107,7 +111,6 @@ fn test_default_behavior() {
 
 #[test]
 fn test_minimizer_extraction_with_ambiguous_bases() {
-    
     let config = AmbiguousBaseConfig {
         strategy: AmbiguousBaseStrategy::Allow,
         max_n_count: 1,
@@ -117,11 +120,11 @@ fn test_minimizer_extraction_with_ambiguous_bases() {
 
     let extractor = MinimizerExtractor::new_with_config(4, 6, config);
     let sequence = "ATCGNATCG"; // Contains one N
-    
+
     // Should extract minimizers, skipping k-mers with too many N's
     let result = extractor.extract_minimizers(sequence);
     assert!(result.is_ok());
-    
+
     let minimizers = result.unwrap();
     assert!(!minimizers.is_empty());
 }
@@ -130,7 +133,7 @@ fn test_minimizer_extraction_with_ambiguous_bases() {
 fn test_original_error_sequence() {
     // Test the exact sequence that was causing the original error
     let problem_sequence = "AATACAAGCATCAAATNNNNNNGCTGTCTG";
-    
+
     // With Skip strategy (original behavior) - should fail
     let config_skip = AmbiguousBaseConfig {
         strategy: AmbiguousBaseStrategy::Skip,
@@ -138,12 +141,12 @@ fn test_original_error_sequence() {
         replacement_base: 'A',
         random_probabilities: None,
     };
-    
+
     let extractor = MinimizerExtractor::new_with_config(21, 25, config_skip);
     let result = extractor.extract_minimizers(problem_sequence);
     // Should succeed but with fewer minimizers (skipping problematic k-mers)
     assert!(result.is_ok());
-    
+
     // With Allow strategy - should work better
     let config_allow = AmbiguousBaseConfig {
         strategy: AmbiguousBaseStrategy::Allow,
@@ -151,11 +154,11 @@ fn test_original_error_sequence() {
         replacement_base: 'A',
         random_probabilities: None,
     };
-    
+
     let extractor = MinimizerExtractor::new_with_config(21, 25, config_allow);
     let result = extractor.extract_minimizers(problem_sequence);
     assert!(result.is_ok());
-    
+
     // With Replace strategy - should work and replace N's
     let config_replace = AmbiguousBaseConfig {
         strategy: AmbiguousBaseStrategy::Replace,
@@ -163,7 +166,7 @@ fn test_original_error_sequence() {
         replacement_base: 'A',
         random_probabilities: None,
     };
-    
+
     let extractor = MinimizerExtractor::new_with_config(21, 25, config_replace);
     let result = extractor.extract_minimizers(problem_sequence);
     assert!(result.is_ok());

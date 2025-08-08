@@ -1,6 +1,5 @@
 use ahash::{AHashMap, RandomState};
 use anyhow::{Result, anyhow};
-use bio::alphabets::dna;
 use petgraph::{Graph, Directed};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -489,7 +488,6 @@ impl GraphFragment {
     }
 
     // Duplicate function definitions removed
-
     fn update_coverage_stats(&mut self) {
         let coverages: Vec<u32> = self.nodes.values().map(|n| n.coverage).collect();
 

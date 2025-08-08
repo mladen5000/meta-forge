@@ -13,6 +13,8 @@
 //! sizing, classic graph‑cleaning passes (tip removal & bubble popping) and a lock‑free mindset using
 //! AHash* structures.
 
+use crate::assembly::adaptive_k::AssemblyGraph;
+use crate::AssemblyGraph;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
@@ -427,7 +429,10 @@ impl ParallelGraphUtils {
     }
 
     /// Generate contigs from strongly connected components in parallel
-    pub fn generate_contigs_parallel(components: &[Vec<u64>], adjacency: &AHashMap<u64, AHashSet<u64>>) -> Vec<Vec<u64>> {
+    pub fn generate_contigs_parallel(
+        components: &[Vec<u64>],
+        adjacency: &AHashMap<u64, AHashSet<u64>>,
+    ) -> Vec<Vec<u64>> {
         components
             .par_iter()
             .map(|comp| Self::eulerian_trail(comp, adjacency))
@@ -445,7 +450,13 @@ impl ParallelGraphUtils {
         stack.push(start);
         let mut adj_iter: AHashMap<u64, Vec<u64>> = AHashMap::new();
         for &n in nodes {
-            adj_iter.insert(n, adjacency.get(&n).map(|s| s.iter().cloned().collect()).unwrap_or_default());
+            adj_iter.insert(
+                n,
+                adjacency
+                    .get(&n)
+                    .map(|s| s.iter().cloned().collect())
+                    .unwrap_or_default(),
+            );
         }
         while let Some(v) = stack.last().cloned() {
             if let Some(next) = adj_iter.get_mut(&v).and_then(|l| l.pop()) {
@@ -463,7 +474,9 @@ impl ParallelGraphUtils {
 /* -------------------------- HIERARCHICAL MERGE --------------------------- */
 
 /// Hierarchical merge utility for adjacency-based graph representations
-pub fn merge_adjacency_hierarchical(mut adjacency_lists: Vec<AHashMap<u64, AHashSet<u64>>>) -> AHashMap<u64, AHashSet<u64>> {
+pub fn merge_adjacency_hierarchical(
+    mut adjacency_lists: Vec<AHashMap<u64, AHashSet<u64>>>,
+) -> AHashMap<u64, AHashSet<u64>> {
     if adjacency_lists.is_empty() {
         return AHashMap::new();
     }
@@ -475,10 +488,7 @@ pub fn merge_adjacency_hierarchical(mut adjacency_lists: Vec<AHashMap<u64, AHash
                 if chunk.len() == 2 {
                     // Merge the second adjacency list into the first
                     for (u, neigh) in &chunk[1] {
-                        merged
-                            .entry(*u)
-                            .or_insert_with(AHashSet::new)
-                            .extend(neigh);
+                        merged.entry(*u).or_insert_with(AHashSet::new).extend(neigh);
                     }
                 }
                 merged
