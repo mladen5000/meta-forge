@@ -13,7 +13,6 @@
 //! sizing, classic graph‑cleaning passes (tip removal & bubble popping) and a lock‑free mindset using
 //! AHash* structures.
 
-use crate::core::data_structures::AssemblyGraph;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;

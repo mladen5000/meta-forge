@@ -10,7 +10,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::tui::state::{AppState, Screen as ScreenEnum};
-use crate::tui::widgets::progress::MultiProgressWidget;
 use super::Screen;
 
 pub struct AnalysisScreen {

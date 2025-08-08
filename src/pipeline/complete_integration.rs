@@ -3,14 +3,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use std::io::Write;
 use tracing::{info, instrument};
 
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 
-use crate::assembly::graph_construction::*;
 use crate::assembly::adaptive_k::AssemblyGraphBuilder;
-use crate::core::data_structures::CorrectedRead as CoreCorrectedRead;
 // use crate::tests::comprehensive_test_suite::{TestDataGenerator, TestRunner};
 use crate::utils::configuration::*;
 use crate::core::data_structures::*;

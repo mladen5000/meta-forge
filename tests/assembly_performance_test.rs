@@ -8,7 +8,7 @@ use meta_forge::assembly::graph_construction::AssemblyGraphBuilder;
 use meta_forge::assembly::bioinformatics_optimizations::{
     BitPackedKmer, StreamingKmerProcessor, SimdNucleotideOps, RollingHash
 };
-use meta_forge::core::data_structures::CorrectedRead;
+use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use std::time::Instant;
 
 /// Generate test reads for performance benchmarking
@@ -29,6 +29,12 @@ fn generate_test_reads(num_reads: usize, read_length: usize) -> Vec<CorrectedRea
             corrected: sequence.clone(),
             corrections: Vec::new(),
             quality_scores: vec![30; read_length],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.9,
+                context_window: 5,
+                correction_time_ms: 0,
+            },
         });
     }
     

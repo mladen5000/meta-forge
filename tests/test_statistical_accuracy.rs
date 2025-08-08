@@ -10,7 +10,7 @@ use std::collections::HashMap;
 mod abundance_estimation_tests {
     use super::*;
 
-    fn create_test_read_with_quality(id: usize, sequence: &str, qualities: Vec<u8>) -> CorrectedRead {
+    pub fn create_test_read_with_quality(id: usize, sequence: &str, qualities: Vec<u8>) -> CorrectedRead {
         CorrectedRead {
             id,
             original: sequence.to_string(),

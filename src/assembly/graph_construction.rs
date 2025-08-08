@@ -23,7 +23,6 @@ use anyhow::{anyhow, Result};
 use petgraph::algo::tarjan_scc;
 use petgraph::{graph::NodeIndex, Graph};
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,

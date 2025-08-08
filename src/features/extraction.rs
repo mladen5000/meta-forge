@@ -4,7 +4,6 @@ use ndarray::Array1;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::assembly::graph_construction::*;
 use crate::core::data_structures::*;
 
 /// Comprehensive feature extraction for sequences and assembly graphs
