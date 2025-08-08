@@ -1,4 +1,5 @@
 use anyhow::Result;
+use criterion::criterion_group;
 use criterion::BenchmarkId;
 #[cfg(feature = "bench")]
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -254,10 +255,10 @@ mod integration_tests {
         assembly_graph.generate_contigs()?;
 
         // Verify assembly quality
-        assert!(assembly_graph.assembly_stats.total_contigs > 0);
+        assert!(assembly_graph.assembly_stats.num_contigs > 0);
         assert!(assembly_graph.assembly_stats.total_length > 0);
         assert!(assembly_graph.assembly_stats.n50 > 0);
-        assert!(assembly_graph.assembly_stats.mean_coverage > 0.0);
+        assert!(assembly_graph.assembly_stats.coverage_mean > 0.0);
 
         // Check that contigs are reasonable
         for contig in &assembly_graph.contigs {
@@ -702,7 +703,7 @@ mod unit_tests {
         // Test graph simplification (tips, bubbles, etc.)
         let initial_nodes = assembly_graph.graph_fragment.nodes.len();
         // Note: Simplification is built into the assembly process
-        
+
         // Verify that the assembly process completed successfully
         assert!(assembly_graph.graph_fragment.nodes.len() > 0);
     }
