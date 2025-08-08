@@ -6,7 +6,7 @@ use meta_forge::core::paired_reads::{PairedReadCollection, PairedRead, ReadPair,
 use meta_forge::utils::progress_display::{ProgressBar, MultiProgress};
 use meta_forge::utils::configuration::PipelineConfiguration;
 use meta_forge::pipeline::integrated::FeatureExtractor;
-use meta_forge::assembly::graph_construction::AssemblyGraphBuilder;
+use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 
 fn main() -> Result<()> {
     println!("🔬 Metagenomic Pipeline Integration Demo");

@@ -1,7 +1,7 @@
 //! Simple test of the optimized assembler to verify it generates contigs
 //! ===================================================================
 
-use meta_forge::assembly::graph_construction::AssemblyGraphBuilder;
+use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use meta_forge::core::data_structures::CorrectedRead;
 
 fn main() -> anyhow::Result<()> {

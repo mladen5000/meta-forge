@@ -54,3 +54,7 @@ kraken2_benchmark.sh
 SRR390728_*.fastq
 SRR390728_*.fastq
 SRR390728_*.fastq
+output/short_SRR390728_1_report.html
+output/short_SRR390728_1_report.json
+output/short_SRR390728_1_summary.tsv
+data/metagenomics.db-shm

@@ -109,6 +109,7 @@ pub struct AssemblyChunk {
 }
 
 impl EnhancedMetaPipeline {
+    /// Create a new integrated metagenomic pipeline with streaming capabilities
     pub fn new(config: PipelineConfig) -> Result<Self> {
         println!("🚀 Initializing enhanced metagenomics pipeline...");
 
@@ -144,6 +145,7 @@ impl EnhancedMetaPipeline {
     }
 
     /// Main pipeline: processes FASTQ → corrected reads → assembly → annotation
+    /// Process a FASTQ sample through the complete pipeline
     pub fn process_sample(&mut self, fastq_path: &PathBuf) -> Result<PipelineResults> {
         println!("📊 Processing sample: {}", fastq_path.display());
 
@@ -153,6 +155,7 @@ impl EnhancedMetaPipeline {
         Ok(results)
     }
 
+    /// Execute the streaming pipeline with parallel processing stages
     fn run_streaming_pipeline(&mut self, fastq_path: &PathBuf) -> Result<PipelineResults> {
         // Stage 1: Parallel FASTQ reading with memory mapping
         let reader_handle = self.spawn_fastq_reader(fastq_path)?;

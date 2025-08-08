@@ -66,6 +66,7 @@ pub struct AdvancedAssemblyGraphBuilder {
 
 impl AdvancedAssemblyGraphBuilder {
     /// Create a new advanced builder with optimized defaults
+    /// Create new adaptive graph constructor with parallel processing
     pub fn new(base_k: usize, max_k: usize, min_coverage: u32, num_threads: usize) -> Result<Self> {
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -85,6 +86,7 @@ impl AdvancedAssemblyGraphBuilder {
     }
 
     /// Build assembly graph using all advanced parallel techniques
+    /// Build assembly graph using adaptive k-mer selection and hierarchical merging
     pub fn build_graph(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
         println!("🚀 Advanced parallel assembly from {} reads", reads.len());
 
@@ -120,6 +122,7 @@ impl AdvancedAssemblyGraphBuilder {
     ///
     /// **Expert:** Uses Shannon entropy to measure local sequence complexity,
     /// then maps to optimal k-mer size using empirically-derived thresholds
+    /// Create chunks with adaptive k-mer sizes based on sequence complexity
     fn create_adaptive_chunks(&self, reads: &[CorrectedRead]) -> Result<Vec<AssemblyChunk>> {
         const CHUNK_SIZE: usize = 1_000;
         let chunks: Result<Vec<_>> = reads
@@ -260,6 +263,7 @@ impl AdvancedAssemblyGraphBuilder {
     ///
     /// **Expert:** Implements divide-and-conquer with O(log n) depth,
     /// using parallel reduction trees for optimal cache locality and minimal synchronization
+    /// Merge graph fragments hierarchically for optimal memory usage
     fn hierarchical_merge(&self, mut fragments: Vec<GraphFragment>) -> Result<GraphFragment> {
         if fragments.is_empty() {
             return Err(anyhow!("Cannot merge empty fragment list"));
@@ -312,6 +316,7 @@ impl AdvancedAssemblyGraphBuilder {
     ///
     /// **Expert:** Implements parallel Floyd-Warshall variant with early termination,
     /// using bitwise operations for efficient reachability queries
+    /// Perform transitive reduction in parallel to simplify graph structure
     fn parallel_transitive_reduction(&self, mut graph: AssemblyGraph) -> Result<AssemblyGraph> {
         println!("🔍 Parallel transitive reduction");
         let start_time = std::time::Instant::now();

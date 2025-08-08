@@ -4,6 +4,7 @@ use meta_forge::pipeline::complete_integration::{Cli, Commands, MetagenomicsPipe
 use meta_forge::utils::progress_display::MultiProgress;
 
 #[tokio::main]
+/// Main entry point for the metagenomic analysis pipeline
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 

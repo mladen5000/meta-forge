@@ -94,6 +94,7 @@ impl LearnedBloomFilter {
     }
 
     /// Train the neural oracle on k-mer embeddings
+    /// Train the neural oracle on k-mer embeddings with positive and negative samples
     pub fn train_on_kmers(&mut self, training_data: &[KmerEmbedding]) -> Result<()> {
         println!(
             "Training learned Bloom filter on {} k-mers",
@@ -126,6 +127,7 @@ impl LearnedBloomFilter {
     }
 
     /// Query the learned Bloom filter
+    /// Query the learned bloom filter for k-mer membership
     pub fn query(&mut self, kmer_hash: u64) -> Result<bool> {
         // Get k-mer embedding
         let embedding = if let Some(cached) = self.embedding_cache.get(&kmer_hash) {
@@ -153,6 +155,7 @@ impl LearnedBloomFilter {
     }
 
     /// Compute embedding for a k-mer hash
+    /// Compute feature embedding for a k-mer hash
     fn compute_kmer_embedding(&self, kmer_hash: u64) -> Result<Vec<f32>> {
         // Convert hash to embedding using learned features
         let mut embedding = vec![0.0; self.training_config.embedding_dim];
@@ -178,6 +181,7 @@ impl LearnedBloomFilter {
         Ok(embedding)
     }
 
+    /// Generate negative training samples for neural oracle training
     fn generate_negative_samples(&self, count: usize) -> Result<Vec<Vec<f32>>> {
         let mut negatives = Vec::with_capacity(count);
         let mut rng = fastrand::Rng::new();
@@ -256,6 +260,7 @@ impl LearnedBloomFilter {
     }
 
     /// Export the trained model to a compact format
+    /// Export the trained neural oracle model as serialized bytes
     pub fn export_model(&self) -> Result<Vec<u8>> {
         let model_data = SerializableModel {
             neural_oracle: self.neural_oracle.clone(),
@@ -276,6 +281,7 @@ impl LearnedBloomFilter {
         Ok(serialized)
     }
 
+    /// Get current performance metrics for the learned bloom filter
     pub fn get_metrics(&self) -> &FilterMetrics {
         &self.metrics
     }
@@ -298,6 +304,7 @@ enum NeuralPrediction {
 }
 
 impl NeuralOracle {
+    /// Create a new neural oracle with specified architecture dimensions
     fn new(input_size: usize, hidden_size: usize) -> Self {
         let mut rng = fastrand::Rng::new();
 
@@ -336,6 +343,7 @@ impl NeuralOracle {
         }
     }
 
+    /// Make a prediction using the neural network with confidence scoring
     fn predict(&self, input: &[f32]) -> Result<NeuralPrediction> {
         let output = self.forward(input)?;
 
@@ -348,6 +356,7 @@ impl NeuralOracle {
         }
     }
 
+    /// Forward pass through the neural network
     fn forward(&self, input: &[f32]) -> Result<f32> {
         if input.len() != self.input_size {
             return Err(anyhow!("Input size mismatch"));
@@ -414,6 +423,7 @@ impl NeuralOracle {
         Ok((total_loss, correct))
     }
 
+    /// Update neural network weights using backpropagation
     fn update_weights(&mut self, input: &[f32], error: f32, learning_rate: f32) -> Result<()> {
         // Simplified weight update (proper backprop would compute gradients layer by layer)
         // This is a basic approximation for demonstration

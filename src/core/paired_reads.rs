@@ -296,7 +296,7 @@ impl PairedRead {
             length: sequence.len(),
             avg_quality: quality_scores.iter().map(|&q| q as f64).sum::<f64>() / quality_scores.len() as f64,
             gc_content: calculate_gc_content(&sequence),
-            complexity: calculate_sequence_complexity(&sequence),
+            complexity: crate::core::data_structures::calculate_sequence_complexity(&sequence),
             passes_filter: true, // Initial assumption
         };
 
@@ -596,40 +596,6 @@ fn calculate_gc_content(sequence: &str) -> f64 {
     gc_count as f64 / sequence.len() as f64
 }
 
-/// Calculate sequence complexity using Shannon entropy
-fn calculate_sequence_complexity(sequence: &str) -> f64 {
-    if sequence.is_empty() {
-        return 0.0;
-    }
-
-    let mut counts = [0u32; 4]; // A, C, G, T
-    for byte in sequence.bytes() {
-        match byte {
-            b'A' | b'a' => counts[0] += 1,
-            b'C' | b'c' => counts[1] += 1,
-            b'G' | b'g' => counts[2] += 1,
-            b'T' | b't' => counts[3] += 1,
-            _ => {}
-        }
-    }
-
-    let total = counts.iter().sum::<u32>() as f64;
-    if total == 0.0 {
-        return 0.0;
-    }
-
-    let entropy = counts
-        .iter()
-        .filter(|&&c| c > 0)
-        .map(|&c| {
-            let p = c as f64 / total;
-            -p * p.log2()
-        })
-        .sum::<f64>();
-
-    // Normalize entropy (max entropy for DNA is 2.0)
-    entropy / 2.0
-}
 
 /// Generate reverse complement of a DNA sequence
 fn reverse_complement(sequence: &str) -> String {
@@ -882,11 +848,11 @@ mod tests {
     #[test]
     fn test_complexity_calculation() {
         // Uniform sequence (low complexity)
-        let complexity1 = calculate_sequence_complexity("AAAAAAA");
+        let complexity1 = crate::core::data_structures::calculate_sequence_complexity("AAAAAAA");
         assert!(complexity1 < 0.1);
 
         // Random sequence (high complexity)
-        let complexity2 = calculate_sequence_complexity("ATCGATCG");
+        let complexity2 = crate::core::data_structures::calculate_sequence_complexity("ATCGATCG");
         assert!(complexity2 > 0.8);
     }
 }
