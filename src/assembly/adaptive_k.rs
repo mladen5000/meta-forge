@@ -156,7 +156,7 @@ pub struct AssemblyGraph {
 }
 
 impl AssemblyGraph {
-    fn from_fragment(f: GraphFragment) -> Self {
+    pub fn from_fragment(f: GraphFragment) -> Self {
         let mut g: Graph<u64, (), Directed> = Graph::default();
         let mut index_map: AHashMap<u64, NodeIndex> = AHashMap::new();
         for node in f.nodes.values() {

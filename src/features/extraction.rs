@@ -1093,7 +1093,7 @@ impl PatternRecognizers {
         1.0 - calculate_sequence_complexity(sequence)
     }
 
-    fn analyze_homopolymer_runs(&self, sequence: &str) -> Vec<f64> {
+    pub fn analyze_homopolymer_runs(&self, sequence: &str) -> Vec<f64> {
         let mut features = vec![0.0; 4]; // A, C, G, T
         let bases = ['A', 'C', 'G', 'T'];
 

@@ -868,7 +868,7 @@ impl AssemblyChunk {
         self.processing_stats.memory_usage_bytes = self.estimate_memory_usage();
     }
 
-    fn estimate_memory_usage(&self) -> usize {
+    pub fn estimate_memory_usage(&self) -> usize {
         let nodes_size = self.graph_fragment.nodes.len() * std::mem::size_of::<GraphNode>();
         let edges_size = self.graph_fragment.edges.len() * std::mem::size_of::<GraphEdge>();
         let reads_size = self.reads.iter().map(|r| r.corrected.len()).sum::<usize>();

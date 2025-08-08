@@ -960,12 +960,20 @@ mod tests {
         neighbors.insert(123, 5);
         neighbors.insert(456, 3);
 
-        let blah: GraphEdge = neighbors.into();
         let mut graph = GraphFragment::default();
-        graph.edges.insert(789, neighbors.clone());
+        
+        // Create proper GraphEdge entries instead of using HashMap directly
+        let edges = vec![
+            GraphEdge::new(789, 123, 0),
+            GraphEdge::new(789, 456, 0)
+        ];
+        
+        for edge in edges {
+            graph.edges.push(edge);
+        }
 
         let features = extractor
-            .extract_node_features(789, &neighbors, &graph)
+            .extract_node_features(789, &graph.edges, &graph)
             .unwrap();
         assert_eq!(features.len(), 32);
         assert_eq!(features[0], 2.0); // Degree = 2

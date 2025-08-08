@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use std::io::Write;
 use tracing::{info, instrument};
 
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
@@ -1466,7 +1467,18 @@ mod integration_tests {
             },
         }];
 
-        let fastq_file = TestDataGenerator::create_test_fastq(&test_reads)?;
+        // Create test FASTQ file
+        let fastq_path = temp_dir.path().join("test_reads.fastq");
+        let mut fastq_file = std::fs::File::create(&fastq_path)?;
+        
+        for read in &test_reads {
+            writeln!(fastq_file, "@read_{}", read.id)?;
+            writeln!(fastq_file, "{}", read.corrected)?;
+            writeln!(fastq_file, "+")?;
+            writeln!(fastq_file, "I")?; // Simple quality scores
+        }
+        
+        let fastq_file = fastq_path;
 
         // Create minimal config
         let mut config = ConfigurationManager::create_minimal_config();
@@ -1485,7 +1497,7 @@ mod integration_tests {
         // Run analysis
         let results = pipeline
             .run_analysis(
-                &[fastq_file.path().to_path_buf()],
+                &[fastq_file.clone()],
                 "test_sample",
                 AnalysisMode::Fast,
             )

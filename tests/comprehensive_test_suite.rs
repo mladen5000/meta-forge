@@ -623,6 +623,12 @@ mod unit_tests {
                 corrected: "ATCGATCGATCG".to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; 12],
+                correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                    algorithm: "test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
             },
             CorrectedRead {
                 id: 1,
@@ -630,6 +636,12 @@ mod unit_tests {
                 corrected: "TCGATCGATCGA".to_string(),
                 corrections: Vec::new(),
                 quality_scores: vec![30; 12],
+                correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                    algorithm: "test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
             },
         ];
 
@@ -741,6 +753,12 @@ mod benchmarks {
                     corrected: TestDataGenerator::generate_random_dna(100),
                     corrections: Vec::new(),
                     quality_scores: vec![30; 100],
+                    correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                        algorithm: "test".to_string(),
+                        confidence_threshold: 0.9,
+                        context_window: 5,
+                        correction_time_ms: 0,
+                    },
                 })
                 .collect();
 

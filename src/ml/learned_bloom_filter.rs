@@ -270,7 +270,7 @@ impl LearnedBloomFilter {
             training_config: self.training_config.clone(),
         };
 
-        let serialized = bincode::serialize(&model_data).map_err(|e| anyhow!("Serialization failed: {}", e))?;
+        let serialized = serde_json::to_vec(&model_data).map_err(|e| anyhow!("Serialization failed: {}", e))?;
 
         println!(
             "Model exported, size: {} bytes ({:.2} MB)",
