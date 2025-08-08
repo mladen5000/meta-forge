@@ -218,7 +218,7 @@ impl AssemblyGraphBuilder {
                 continue;
             }
             let kmers: Vec<u64> = (0..=read.corrected.len() - k)
-                .map(|i| BitPackedKmer::new(&read.corrected[i..i + k]).unwrap().hash)
+                .filter_map(|i| BitPackedKmer::new(&read.corrected[i..i + k]).ok().map(|kmer| kmer.hash))
                 .collect();
             for win in kmers.windows(2) {
                 frag.insert_edge(win[0], win[1]);

@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_bit_packed_kmer_roundtrip() {
         let seq = "ATCGATCG";
-        let k = BitPackedKmer::new(seq).unwrap();
+        let k = BitPackedKmer::new(seq).expect("Test sequence should be valid");
         assert_eq!(k.unpack_sequence(), seq);
     }
 
