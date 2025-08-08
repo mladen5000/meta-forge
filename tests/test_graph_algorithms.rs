@@ -2,9 +2,8 @@
 //! Tests assembly graph construction, repeat resolution, tip removal, bubble detection, and path finding
 
 use meta_forge::core::data_structures::*;
-use meta_forge::assembly::adaptive_k::*;
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[cfg(test)]
 mod graph_construction_tests {

@@ -151,8 +151,13 @@ impl CanonicalKmer {
     }
 
     fn hash_sequence(seq: &str) -> u64 {
-        let hasher = RandomState::new();
-        hasher.hash_one(seq.as_bytes())
+        // Use a deterministic hash function for consistent results
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        seq.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub fn to_string(&self) -> &str {

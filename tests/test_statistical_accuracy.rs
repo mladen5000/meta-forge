@@ -1,7 +1,7 @@
 //! Statistical accuracy tests for abundance estimation algorithms
 //! Tests coverage calculation, complexity scoring, statistical metrics, and quality assessment
 
-use meta_forge::core::data_structures::{GraphFragment, GraphNode, GraphEdge, ProcessingStats, CorrectionMetadata, CorrectedRead};
+use meta_forge::core::data_structures::{GraphFragment, GraphNode, GraphEdge, CorrectionMetadata, CorrectedRead};
 use meta_forge::assembly::adaptive_k::AssemblyGraph;
 use anyhow::Result;
 use std::collections::HashMap;

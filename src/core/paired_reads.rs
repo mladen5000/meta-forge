@@ -602,10 +602,14 @@ fn reverse_complement(sequence: &str) -> String {
         .chars()
         .rev()
         .map(|c| match c {
-            'A' | 'a' => 'T',
-            'T' | 't' => 'A',
-            'G' | 'g' => 'C',
-            'C' | 'c' => 'G',
+            'A' => 'T',
+            'T' => 'A', 
+            'G' => 'C',
+            'C' => 'G',
+            'a' => 't',
+            't' => 'a',
+            'g' => 'c', 
+            'c' => 'g',
             'N' | 'n' => 'N',
             _ => c,
         })
@@ -662,16 +666,16 @@ mod tests {
             0,
             "pair_1".to_string(),
             ReadOrientation::Forward,
-            "ATCGATCGATCG".to_string(),
-            vec![30; 12],
+            "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
+            vec![30; 50],
         );
 
         let reverse = PairedRead::new(
             1,
             "pair_1".to_string(),
             ReadOrientation::Reverse,
-            "CGATATCGATCG".to_string(),
-            vec![30; 12],
+            "CGATATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
+            vec![30; 50],
         );
 
         let pair = ReadPair::new(forward, reverse).unwrap();
@@ -822,8 +826,8 @@ mod tests {
 
         assert_eq!(collection.pairs.len(), 2);
 
-        collection.filter_by_quality(15.0, 10);
-        assert_eq!(collection.pairs.len(), 1);
+        collection.filter_by_quality(20.0, 10); // Higher threshold to filter out low quality
+        assert_eq!(collection.pairs.len(), 1); // Only high quality pair should remain
         assert!(collection.get_pair("pair_hq").is_some());
         assert!(collection.get_pair("pair_lq").is_none());
     }
@@ -831,7 +835,7 @@ mod tests {
     #[test]
     fn test_reverse_complement() {
         assert_eq!(reverse_complement("ATCG"), "CGAT");
-        assert_eq!(reverse_complement("atcg"), "cgat");
+        assert_eq!(reverse_complement("atcg"), "cgat"); // Preserve case from implementation
         assert_eq!(reverse_complement("AAAATTTTGGGGCCCC"), "GGGGCCCCAAAATTTT");
         assert_eq!(reverse_complement("ATCGN"), "NCGAT");
     }

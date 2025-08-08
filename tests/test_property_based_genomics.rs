@@ -3,12 +3,11 @@
 
 use meta_forge::core::data_structures::*;
 use meta_forge::assembly::adaptive_k::*;
-use meta_forge::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
-mod canonical_kmer_properties {
+pub mod canonical_kmer_properties {
     use super::*;
 
     fn generate_valid_dna_char() -> char {
@@ -20,7 +19,7 @@ mod canonical_kmer_properties {
         }
     }
 
-    fn generate_random_dna_sequence(length: usize) -> String {
+    pub fn generate_random_dna_sequence(length: usize) -> String {
         (0..length).map(|_| generate_valid_dna_char()).collect()
     }
 
@@ -158,7 +157,7 @@ mod minimizer_properties {
             let k = fastrand::usize(3..8);
             let w = fastrand::usize(2..6);
             let seq_len = fastrand::usize(k..50);
-            let sequence = generate_random_dna_sequence(seq_len);
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(seq_len);
             
             let extractor = MinimizerExtractor::new(k, w);
             if let Ok(minimizers) = extractor.extract_minimizers(&sequence) {
@@ -185,7 +184,7 @@ mod minimizer_properties {
         for _ in 0..50 {
             let k = fastrand::usize(3..10);
             let w = fastrand::usize(2..8);
-            let sequence = generate_random_dna_sequence(fastrand::usize(k..100));
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(fastrand::usize(k..100));
             
             let extractor = MinimizerExtractor::new(k, w);
             if let Ok(minimizers) = extractor.extract_minimizers(&sequence) {
@@ -232,7 +231,7 @@ mod minimizer_properties {
         for _ in 0..30 {
             let k = 3;
             let w = 4;
-            let sequence = generate_random_dna_sequence(20);
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(20);
             
             let extractor = MinimizerExtractor::new(k, w);
             if let Ok(minimizers) = extractor.extract_minimizers(&sequence) {
@@ -446,7 +445,7 @@ mod sequence_complexity_properties {
         // Property: Complexity should always be in [0, 1] range
         for _ in 0..100 {
             let length = fastrand::usize(1..50);
-            let sequence = generate_random_dna_sequence(length);
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(length);
             
             let complexity = calculate_sequence_complexity(&sequence);
             assert!(complexity >= 0.0 && complexity <= 1.0,
@@ -523,7 +522,7 @@ mod sequence_complexity_properties {
         // Property: GC content should always be in [0, 1] range
         for _ in 0..100 {
             let length = fastrand::usize(1..100);
-            let sequence = generate_random_dna_sequence(length);
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(length);
             
             let gc_content = calculate_gc_content(&sequence);
             assert!(gc_content >= 0.0 && gc_content <= 1.0,
@@ -535,7 +534,7 @@ mod sequence_complexity_properties {
     fn property_gc_content_accuracy() {
         // Property: GC content should match manual calculation
         for _ in 0..50 {
-            let sequence = generate_random_dna_sequence(fastrand::usize(5..50));
+            let sequence = canonical_kmer_properties::generate_random_dna_sequence(fastrand::usize(5..50));
             
             let calculated_gc = calculate_gc_content(&sequence);
             
@@ -555,7 +554,7 @@ mod sequence_complexity_properties {
 mod assembly_invariants {
     use super::*;
 
-    fn create_property_test_read(id: usize, sequence: &str) -> CorrectedRead {
+    pub fn create_property_test_read(id: usize, sequence: &str) -> CorrectedRead {
         CorrectedRead {
             id,
             original: sequence.to_string(),
@@ -583,7 +582,7 @@ mod assembly_invariants {
             
             for i in 0..read_count {
                 let seq_len = fastrand::usize(k_size..30);
-                let sequence = generate_random_dna_sequence(seq_len);
+                let sequence = canonical_kmer_properties::generate_random_dna_sequence(seq_len);
                 let read = create_property_test_read(i, &sequence);
                 
                 if chunk.add_read(read).is_ok() {

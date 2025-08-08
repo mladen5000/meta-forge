@@ -1036,15 +1036,15 @@ impl PatternRecognizers {
                     break;
                 }
             }
-            max_palindrome = max_palindrome.max(length * 2 - 1);
+            max_palindrome = max_palindrome.max(length.saturating_mul(2).saturating_sub(1));
 
             // Even-length palindromes
             if center + 1 < sequence.len() {
                 let mut length = 0;
-                while center >= length && center + 1 + length < sequence.len() {
+                while center >= length && center.saturating_add(1).saturating_add(length) < sequence.len() {
                     if let (Some(left_char), Some(right_char)) = (
-                        sequence.chars().nth(center - length),
-                        sequence.chars().nth(center + 1 + length),
+                        sequence.chars().nth(center.saturating_sub(length)),
+                        sequence.chars().nth(center.saturating_add(1).saturating_add(length)),
                     ) {
                         if left_char == self.complement(right_char) {
                             length += 1;

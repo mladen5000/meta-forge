@@ -4,7 +4,7 @@
 //! These tests validate the performance improvements and correctness
 //! of the optimized graph construction and contig generation algorithms.
 
-use meta_forge::assembly::graph_construction::AssemblyGraphBuilder;
+use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use meta_forge::assembly::bioinformatics_optimizations::{
     BitPackedKmer, StreamingKmerProcessor, SimdNucleotideOps, RollingHash
 };
@@ -42,7 +42,7 @@ fn generate_test_reads(num_reads: usize, read_length: usize) -> Vec<CorrectedRea
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
@@ -50,11 +50,10 @@ mod tests {
         // Test with a small set of reads to ensure basic functionality
         let reads = generate_test_reads(50, 100);
         
-        let builder = AssemblyGraphBuilder::new(15, 31, 2, 4)
-            .expect("Failed to create graph builder");
+        let builder = AssemblyGraphBuilder::new(15, 31, 2);
         
         let start_time = Instant::now();
-        let mut graph = builder.build_graph(&reads)
+        let mut graph = builder.build(&reads)
             .expect("Failed to build graph");
         let construction_time = start_time.elapsed();
         
@@ -88,11 +87,10 @@ mod tests {
         // Test with medium-sized data to check performance improvements
         let reads = generate_test_reads(500, 150);
         
-        let builder = AssemblyGraphBuilder::new(21, 51, 3, 8)
-            .expect("Failed to create graph builder");
+        let builder = AssemblyGraphBuilder::new(21, 51, 3);
         
         let start_time = Instant::now();
-        let mut graph = builder.build_graph(&reads)
+        let mut graph = builder.build(&reads)
             .expect("Failed to build graph");
         let construction_time = start_time.elapsed();
         
@@ -249,12 +247,11 @@ mod tests {
         // Test memory usage of different approaches
         let reads = generate_test_reads(100, 200);
         
-        let builder = AssemblyGraphBuilder::new(25, 45, 2, 4)
-            .expect("Failed to create graph builder");
+        let builder = AssemblyGraphBuilder::new(25, 45, 2);
         
         // Build graph and measure memory usage (approximate)
         let start_memory = get_memory_usage();
-        let mut graph = builder.build_graph(&reads)
+        let mut graph = builder.build(&reads)
             .expect("Failed to build graph");
         let after_construction = get_memory_usage();
         
@@ -287,20 +284,18 @@ mod tests {
         let reads = generate_test_reads(1000, 100);
         
         // Test with single thread
-        let builder_single = AssemblyGraphBuilder::new(21, 41, 2, 1)
-            .expect("Failed to create single-threaded builder");
+        let builder_single = AssemblyGraphBuilder::new(21, 41, 2);
         
         let start_single = Instant::now();
-        let graph_single = builder_single.build_graph(&reads)
+        let graph_single = builder_single.build(&reads)
             .expect("Failed to build single-threaded graph");
         let time_single = start_single.elapsed();
         
         // Test with multiple threads
-        let builder_multi = AssemblyGraphBuilder::new(21, 41, 2, 4)
-            .expect("Failed to create multi-threaded builder");
+        let builder_multi = AssemblyGraphBuilder::new(21, 41, 2);
         
         let start_multi = Instant::now();
-        let graph_multi = builder_multi.build_graph(&reads)
+        let graph_multi = builder_multi.build(&reads)
             .expect("Failed to build multi-threaded graph");
         let time_multi = start_multi.elapsed();
         

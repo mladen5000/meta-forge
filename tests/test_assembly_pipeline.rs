@@ -1,16 +1,15 @@
 //! Comprehensive test suite for assembly pipeline
 //! Tests AssemblyGraphBuilder, adaptive k-mer selection, graph construction, and integration
 
-use meta_forge::assembly::adaptive_k::*;
-use meta_forge::core::data_structures::*;
-use anyhow::Result;
+use meta_forge::core::data_structures::{AssemblyGraph, GraphFragment, CorrectedRead, CorrectionMetadata};
+use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use std::collections::HashSet;
 
 #[cfg(test)]
 mod assembly_graph_builder_tests {
     use super::*;
 
-    fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
+    pub fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
         CorrectedRead {
             id,
             original: sequence.to_string(),

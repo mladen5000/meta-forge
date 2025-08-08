@@ -3,14 +3,12 @@
 
 use meta_forge::assembly::adaptive_k::*;
 use meta_forge::core::data_structures::*;
-use anyhow::Result;
-use std::collections::HashMap;
 
 #[cfg(test)]
 mod end_to_end_pipeline_tests {
     use super::*;
 
-    fn create_realistic_read(id: usize, sequence: &str, quality_avg: u8) -> CorrectedRead {
+    pub fn create_realistic_read(id: usize, sequence: &str, quality_avg: u8) -> CorrectedRead {
         let qualities = vec![quality_avg; sequence.len()];
         CorrectedRead {
             id,
@@ -107,7 +105,7 @@ mod end_to_end_pipeline_tests {
         let builder = AssemblyGraphBuilder::new(4, 6, 1);
         
         // Mix of valid and problematic reads
-        let mut reads = vec![
+        let reads = vec![
             create_realistic_read(0, "ATCGATCG", 35), // Valid
             create_realistic_read(1, "A", 30),        // Too short
             create_realistic_read(2, "", 0),          // Empty
@@ -247,7 +245,7 @@ mod field_access_validation_tests {
         assert!(true, "Constructor completed successfully");
         
         // Test building with the fixed constructor
-        let reads = vec![create_realistic_read(0, "ATCGATCG", 35)];
+        let reads = vec![end_to_end_pipeline_tests::create_realistic_read(0, "ATCGATCG", 35)];
         let result = builder.build(&reads);
         assert!(result.is_ok(), "Build method should work with fixed constructor");
     }
@@ -300,7 +298,7 @@ mod field_access_validation_tests {
         assert_eq!(chunk.k_size, 4);
         
         // Test add_read() method
-        let read = create_realistic_read(0, "ATCGATCG", 35);
+        let read = end_to_end_pipeline_tests::create_realistic_read(0, "ATCGATCG", 35);
         let result = chunk.add_read(read);
         assert!(result.is_ok(), "add_read method should work");
         
@@ -346,10 +344,10 @@ mod error_handling_integration_tests {
         
         // Include problematic reads that should be handled gracefully
         let reads = vec![
-            create_realistic_read(0, "ATCGATCG", 35),           // Valid
-            create_realistic_read(1, "A", 0),                  // Too short, bad quality
-            create_realistic_read(2, "", 0),                   // Empty sequence
-            create_realistic_read(3, "ATCGATCGATCGATCG", 45),  // Valid long read
+            end_to_end_pipeline_tests::create_realistic_read(0, "ATCGATCG", 35),           // Valid
+            end_to_end_pipeline_tests::create_realistic_read(1, "A", 0),                  // Too short, bad quality
+            end_to_end_pipeline_tests::create_realistic_read(2, "", 0),                   // Empty sequence
+            end_to_end_pipeline_tests::create_realistic_read(3, "ATCGATCGATCGATCG", 45),  // Valid long read
         ];
         
         // Pipeline should not crash
@@ -382,7 +380,7 @@ mod error_handling_integration_tests {
                     correction_time_ms: 0,
                 },
             },
-            create_realistic_read(1, "ATCGATCG", 35), // Valid read after error
+            end_to_end_pipeline_tests::create_realistic_read(1, "ATCGATCG", 35), // Valid read after error
         ];
         
         for read in problematic_reads {
@@ -403,10 +401,10 @@ mod error_handling_integration_tests {
         
         // Reads with no k-mer overlaps
         let reads = vec![
-            create_realistic_read(0, "AAAAAAAA", 35), // A homopolymer
-            create_realistic_read(1, "TTTTTTTT", 30), // T homopolymer
-            create_realistic_read(2, "GGGGGGGG", 40), // G homopolymer
-            create_realistic_read(3, "CCCCCCCC", 32), // C homopolymer
+            end_to_end_pipeline_tests::create_realistic_read(0, "AAAAAAAA", 35), // A homopolymer
+            end_to_end_pipeline_tests::create_realistic_read(1, "TTTTTTTT", 30), // T homopolymer
+            end_to_end_pipeline_tests::create_realistic_read(2, "GGGGGGGG", 40), // G homopolymer
+            end_to_end_pipeline_tests::create_realistic_read(3, "CCCCCCCC", 32), // C homopolymer
         ];
         
         let result = builder.build(&reads);
@@ -429,7 +427,7 @@ mod error_handling_integration_tests {
         let mut reads = Vec::new();
         
         for i in 0..100 {
-            reads.push(create_realistic_read(i, base_sequence, 35));
+            reads.push(end_to_end_pipeline_tests::create_realistic_read(i, base_sequence, 35));
         }
         
         let result = builder.build(&reads);
@@ -463,7 +461,7 @@ mod error_handling_integration_tests {
         let mut reads = Vec::new();
         for i in 0..500 {
             let sequence = format!("ATCGATCG{:04}", i % 1000); // Some overlap, mostly unique
-            reads.push(create_realistic_read(i, &sequence, 30));
+            reads.push(end_to_end_pipeline_tests::create_realistic_read(i, &sequence, 30));
         }
         
         let result = builder.build(&reads);

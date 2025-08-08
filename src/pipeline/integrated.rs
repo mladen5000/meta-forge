@@ -20,7 +20,7 @@ use petgraph::{Directed, Graph};
 use petgraph::graph::NodeIndex; // Graph algorithms
 
 // Core data structures
-use crate::core::data_structures::{GraphFragment, GraphNode, GraphEdge};
+use crate::core::data_structures::{GraphFragment, GraphNode, GraphEdge, CorrectionMetadata};
 
 // Performance & Utilities
 use ahash::AHashMap; // Faster hashing
@@ -87,10 +87,12 @@ struct RawRead {
 
 #[derive(Clone)]
 pub struct CorrectedRead {
-    id: usize,
-    original: String,
-    corrected: String,
-    corrections: Vec<BaseCorrection>,
+    pub id: usize,
+    pub original: String,
+    pub corrected: String,
+    pub corrections: Vec<BaseCorrection>,
+    pub quality_scores: Vec<u8>,
+    pub correction_metadata: CorrectionMetadata,
 }
 
 #[derive(Clone)]
@@ -591,6 +593,13 @@ impl StreamingCorrector {
             original: raw_read.sequence.clone(),
             corrected: corrected_sequence,
             corrections: Vec::new(), // Simplified for now
+            quality_scores: raw_read.quality.clone(),
+            correction_metadata: CorrectionMetadata {
+                algorithm: "integrated_correction".to_string(),
+                confidence_threshold: 0.95,
+                context_window: 10,
+                correction_time_ms: 0,
+            },
         })
     }
 }
@@ -669,7 +678,7 @@ impl SmartTaxonomyFilter {
         use smartcore::linalg::basic::matrix::DenseMatrix;
         let nrows = features.nrows();
         let ncols = features.ncols();
-        let features_data: Vec<f64> = features.into_raw_vec();
+        let features_data: Vec<f64> = features.into_raw_vec_and_offset().0;
         let features_2d: Vec<Vec<f64>> = features_data.chunks(ncols).map(|chunk| chunk.to_vec()).collect();
         let features_matrix = DenseMatrix::from_2d_vec(&features_2d)?;
         let labels_vec: Vec<u32> = labels.to_vec();

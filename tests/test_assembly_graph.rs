@@ -4,7 +4,7 @@ use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

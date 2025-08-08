@@ -3,15 +3,14 @@
 
 use meta_forge::core::data_structures::*;
 use meta_forge::assembly::adaptive_k::*;
-use anyhow::Result;
 use std::collections::HashMap;
 
 #[cfg(test)]
-mod synthetic_genome_tests {
+pub mod synthetic_genome_tests {
     use super::*;
 
     /// Generate synthetic genome with realistic properties
-    fn generate_synthetic_genome(length: usize, gc_content: f64) -> String {
+    pub fn generate_synthetic_genome(length: usize, gc_content: f64) -> String {
         let mut genome = String::with_capacity(length);
         
         // Define base probabilities based on GC content
@@ -36,7 +35,7 @@ mod synthetic_genome_tests {
     }
 
     /// Generate synthetic sequencing reads with realistic error patterns
-    fn generate_synthetic_reads(genome: &str, read_length: usize, coverage: f64, error_rate: f64) -> Vec<CorrectedRead> {
+    pub fn generate_synthetic_reads(genome: &str, read_length: usize, coverage: f64, error_rate: f64) -> Vec<CorrectedRead> {
         let num_reads = ((genome.len() as f64 * coverage) / read_length as f64) as usize;
         let mut reads = Vec::new();
         
@@ -120,14 +119,14 @@ mod synthetic_genome_tests {
     #[test]
     fn test_synthetic_bacterial_genome() {
         // Simulate small bacterial genome (E. coli has ~50% GC content)
-        let genome = generate_synthetic_genome(10000, 0.5);
+        let genome = synthetic_genome_tests::generate_synthetic_genome(10000, 0.5);
         
         // Verify GC content is approximately correct
         let actual_gc = calculate_gc_content(&genome);
         assert!((actual_gc - 0.5).abs() < 0.05, "GC content should be close to 50%");
         
         // Generate reads with realistic coverage
-        let reads = generate_synthetic_reads(&genome, 150, 10.0, 0.01); // 10x coverage, 1% error rate
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 150, 10.0, 0.01); // 10x coverage, 1% error rate
         
         // Test assembly pipeline
         let builder = AssemblyGraphBuilder::new(21, 31, 3); // Realistic k-mer sizes for bacterial assembly
@@ -152,8 +151,8 @@ mod synthetic_genome_tests {
     #[test]
     fn test_high_gc_genome() {
         // Simulate high-GC genome (like some Streptomyces species ~72% GC)
-        let genome = generate_synthetic_genome(5000, 0.72);
-        let reads = generate_synthetic_reads(&genome, 100, 15.0, 0.005); // High coverage, low error
+        let genome = synthetic_genome_tests::generate_synthetic_genome(5000, 0.72);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 100, 15.0, 0.005); // High coverage, low error
         
         let builder = AssemblyGraphBuilder::new(15, 25, 2);
         let result = builder.build(&reads);
@@ -172,8 +171,8 @@ mod synthetic_genome_tests {
     #[test]
     fn test_low_gc_genome() {
         // Simulate low-GC genome (like some Plasmodium species ~20% GC)
-        let genome = generate_synthetic_genome(5000, 0.2);
-        let reads = generate_synthetic_reads(&genome, 100, 12.0, 0.01);
+        let genome = synthetic_genome_tests::generate_synthetic_genome(5000, 0.2);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 100, 12.0, 0.01);
         
         let builder = AssemblyGraphBuilder::new(17, 27, 2);
         let result = builder.build(&reads);
@@ -198,8 +197,8 @@ mod synthetic_genome_tests {
     fn test_repetitive_genome_regions() {
         // Create genome with repetitive elements
         let repeat_unit = "ATCGATCGATCG";
-        let unique_sequence1 = generate_synthetic_genome(1000, 0.5);
-        let unique_sequence2 = generate_synthetic_genome(1000, 0.5);
+        let unique_sequence1 = synthetic_genome_tests::generate_synthetic_genome(1000, 0.5);
+        let unique_sequence2 = synthetic_genome_tests::generate_synthetic_genome(1000, 0.5);
         
         // Build genome with repeats: unique1 + repeat + unique2 + repeat + unique3
         let genome = format!("{}{}{}{}{}",
@@ -207,9 +206,9 @@ mod synthetic_genome_tests {
                            repeat_unit.repeat(10), // 120bp repeat
                            unique_sequence2,
                            repeat_unit.repeat(8),  // 96bp repeat
-                           generate_synthetic_genome(800, 0.5));
+                           synthetic_genome_tests::generate_synthetic_genome(800, 0.5));
         
-        let reads = generate_synthetic_reads(&genome, 150, 8.0, 0.008);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 150, 8.0, 0.008);
         
         let builder = AssemblyGraphBuilder::new(19, 29, 2);
         let result = builder.build(&reads);
@@ -232,7 +231,7 @@ mod synthetic_genome_tests {
     #[test]
     fn test_plasmid_like_circular_sequence() {
         // Simulate small circular plasmid
-        let plasmid_sequence = generate_synthetic_genome(3000, 0.48);
+        let plasmid_sequence = synthetic_genome_tests::generate_synthetic_genome(3000, 0.48);
         
         // Generate reads that span the junction (circular)
         let mut reads = Vec::new();
@@ -361,7 +360,7 @@ mod realistic_error_patterns {
 
     #[test]
     fn test_quality_based_correction_simulation() {
-        let genome = generate_synthetic_genome(2000, 0.45);
+        let genome = synthetic_genome_tests::generate_synthetic_genome(2000, 0.45);
         let mut reads = Vec::new();
         
         // Simulate quality-dependent error correction
@@ -421,7 +420,7 @@ mod realistic_error_patterns {
 
     #[test]
     fn test_paired_end_like_coverage() {
-        let genome = generate_synthetic_genome(3000, 0.52);
+        let genome = synthetic_genome_tests::generate_synthetic_genome(3000, 0.52);
         let mut reads = Vec::new();
         let insert_size = 500;
         let read_length = 150;
@@ -498,10 +497,10 @@ mod biological_accuracy_validation {
     fn test_codon_preservation_in_assembly() {
         // Create a sequence with valid start/stop codons
         let coding_sequence = "ATGAAATTTGGCCCCTAG"; // ATG (start), AAA (Lys), TTT (Phe), GGC (Gly), CCT (Pro), TAG (stop)
-        let non_coding = generate_synthetic_genome(500, 0.4);
+        let non_coding = synthetic_genome_tests::generate_synthetic_genome(500, 0.4);
         let genome = format!("{}{}{}", non_coding, coding_sequence, non_coding);
         
-        let reads = generate_synthetic_reads(&genome, 80, 20.0, 0.005);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 80, 20.0, 0.005);
         
         let builder = AssemblyGraphBuilder::new(15, 21, 3);
         let result = builder.build(&reads);
@@ -530,16 +529,16 @@ mod biological_accuracy_validation {
     fn test_ribosomal_rna_like_structure() {
         // Simulate highly conserved rRNA-like sequence
         let rrna_like = "GCCTAACATGCCAAGTCGAGCGGCGGCGGGAAGACCCGCGCCGCGGTGTTGATTTTGACGTGGGTTCCTCCGAATAGGGGCGACCACCCGGGCCGCGGTGTTGATTTTGACGTGGGTTC";
-        let variable_regions = generate_synthetic_genome(800, 0.6);
+        let variable_regions = synthetic_genome_tests::generate_synthetic_genome(800, 0.6);
         
         let genome = format!("{}{}{}{}{}", 
                            variable_regions,
                            rrna_like,
-                           generate_synthetic_genome(400, 0.55),
+                           synthetic_genome_tests::generate_synthetic_genome(400, 0.55),
                            rrna_like, // Repeated rRNA sequence
                            variable_regions);
         
-        let reads = generate_synthetic_reads(&genome, 120, 25.0, 0.003);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 120, 25.0, 0.003);
         
         let builder = AssemblyGraphBuilder::new(25, 35, 4);
         let result = builder.build(&reads);
@@ -559,7 +558,7 @@ mod biological_accuracy_validation {
     #[test]
     fn test_gc_skew_handling() {
         // Create genome with GC skew (common in bacterial genomes)
-        let leading_strand_high_g = generate_synthetic_genome(1000, 0.7); // High G+C
+        let leading_strand_high_g = synthetic_genome_tests::generate_synthetic_genome(1000, 0.7); // High G+C
         let lagging_strand_high_c = leading_strand_high_g
             .chars()
             .map(|c| match c {
@@ -572,7 +571,7 @@ mod biological_accuracy_validation {
             .collect::<String>();
         
         let genome = format!("{}{}", leading_strand_high_g, lagging_strand_high_c);
-        let reads = generate_synthetic_reads(&genome, 100, 15.0, 0.008);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 100, 15.0, 0.008);
         
         let builder = AssemblyGraphBuilder::new(17, 25, 2);
         let result = builder.build(&reads);
@@ -590,9 +589,9 @@ mod biological_accuracy_validation {
     fn test_mobile_element_detection() {
         // Simulate transposable element-like repeats
         let transposon = "TGCAGGGATGACGCCCGGCCAGATCGTT";
-        let unique_seq1 = generate_synthetic_genome(800, 0.45);
-        let unique_seq2 = generate_synthetic_genome(600, 0.50);
-        let unique_seq3 = generate_synthetic_genome(700, 0.48);
+        let unique_seq1 = synthetic_genome_tests::generate_synthetic_genome(800, 0.45);
+        let unique_seq2 = synthetic_genome_tests::generate_synthetic_genome(600, 0.50);
+        let unique_seq3 = synthetic_genome_tests::generate_synthetic_genome(700, 0.48);
         
         // Insert transposon at multiple locations
         let genome = format!("{}{}{}{}{}{}", 
@@ -603,7 +602,7 @@ mod biological_accuracy_validation {
                            unique_seq3,
                            transposon);
         
-        let reads = generate_synthetic_reads(&genome, 90, 18.0, 0.01);
+        let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 90, 18.0, 0.01);
         
         let builder = AssemblyGraphBuilder::new(13, 19, 2);
         let result = builder.build(&reads);
@@ -626,7 +625,7 @@ mod biological_accuracy_validation {
     #[test]
     fn test_snp_variant_handling() {
         // Create genome with SNP-like variations
-        let base_genome = generate_synthetic_genome(2000, 0.48);
+        let base_genome = synthetic_genome_tests::generate_synthetic_genome(2000, 0.48);
         let mut variant_reads = Vec::new();
         
         // Generate reads with some containing SNPs

@@ -4,7 +4,6 @@
 use meta_forge::core::data_structures::*;
 use meta_forge::assembly::adaptive_k::*;
 use meta_forge::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
-use anyhow::Result;
 
 #[cfg(test)]
 mod ambiguous_base_tests {

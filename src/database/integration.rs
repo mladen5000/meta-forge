@@ -1036,6 +1036,18 @@ mod tests {
         let config = DatabaseConfig::default();
         let db = MetagenomicsDatabase::new(db_path, config).unwrap();
         
+        // Insert required taxonomy entry first
+        let taxonomy_entries = vec![
+            TaxonomyEntry {
+                id: 1,
+                name: "Test Organism".to_string(),
+                rank: "species".to_string(),
+                parent_id: None,
+                lineage: "cellular organisms; Bacteria; Test Organism".to_string(),
+            },
+        ];
+        db.insert_taxonomy_entries(&taxonomy_entries).unwrap();
+        
         let sequences = vec![
             SequenceEntry {
                 id: 0,
@@ -1072,7 +1084,7 @@ mod tests {
                 id: 0,
                 features,
                 taxonomy_id: 1,
-                sequence_id: 1,
+                sequence_id: seq_ids[0], // Use actual sequence ID from database
                 feature_version: "v1.0".to_string(),
             },
         ];

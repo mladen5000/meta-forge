@@ -596,11 +596,11 @@ impl MetagenomicsPipeline {
     async fn classify_sequences(
         &self,
         assembly_results: &AssemblyResults,
-        features: &FeatureCollection,
+        _features: &FeatureCollection,
     ) -> Result<Vec<TaxonomicClassification>> {
         let mut classifications = Vec::new();
 
-        for (i, contig) in assembly_results.contigs.iter().enumerate() {
+        for (_i, contig) in assembly_results.contigs.iter().enumerate() {
             // Simple mock classification - would use actual ML models
             let classification = TaxonomicClassification {
                 contig_id: contig.id,
@@ -923,7 +923,7 @@ impl MetagenomicsPipeline {
         );
 
         multi_progress.update_line(line_id, "🧬 Assembly: Building assembly graph...".to_string());
-        let mut assembly_graph = builder.build(reads)?;
+        let assembly_graph = builder.build(reads)?;
         
         multi_progress.update_line(line_id, "🧬 Assembly: Generating contigs...".to_string());
         // Note: Contigs are generated during the build process
@@ -952,7 +952,7 @@ impl MetagenomicsPipeline {
     ) -> Result<FeatureCollection> {
         multi_progress.update_line(line_id, "🔍 Feature Extraction: Initializing extractors...".to_string());
         
-        let mut features = FeatureCollection::new();
+        let features = FeatureCollection::new();
 
         multi_progress.update_line(line_id, "🔍 Feature Extraction: Processing contigs...".to_string());
         
@@ -980,7 +980,7 @@ impl MetagenomicsPipeline {
         
         multi_progress.update_line(line_id, "🏷️  Classification: Analyzing sequences...".to_string());
         
-        for (i, contig) in assembly.contigs.iter().enumerate() {
+        for (i, _contig) in assembly.contigs.iter().enumerate() {
             // Mock classification - in real implementation would use ML models
             let classification = TaxonomicClassification {
                 contig_id: i,
@@ -1378,7 +1378,7 @@ pub async fn handle_database_operation(operation: DatabaseOps) -> Result<()> {
     match operation {
         DatabaseOps::Init { path } => {
             let config = DatabaseConfig::default();
-            let db = MetagenomicsDatabase::new(&path, config)?;
+            let _db = MetagenomicsDatabase::new(&path, config)?;
             println!("✅ Database initialized at: {}", path.display());
         }
 
@@ -1444,6 +1444,7 @@ fn parse_k_range(s: &str) -> Result<(usize, usize), String> {
 mod integration_tests {
     use super::*;
     use tempfile::tempdir;
+    use std::io::Write;
 
     #[tokio::test]
     async fn test_complete_pipeline() -> Result<()> {

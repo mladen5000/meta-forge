@@ -1277,7 +1277,7 @@ mod benchmarks {
 
         // Add random edges
         let nodes: Vec<u64> = fragment.nodes.keys().copied().collect();
-        for i in 0..num_edges.min(nodes.len() * (nodes.len() - 1)) {
+        for i in 0..num_edges.min(nodes.len() * nodes.len().saturating_sub(1)) {
             let from_idx = i % nodes.len();
             let to_idx = (i + 1) % nodes.len();
             if from_idx != to_idx {
