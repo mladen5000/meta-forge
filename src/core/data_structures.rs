@@ -413,7 +413,7 @@ impl GraphFragment {
                 }
             } else {
                 // Fallback: use hash as sequence component
-                sequence.push_str(&format!("N{}", i));
+                sequence.push_str(&format!("N{i}"));
             }
         }
         Ok(sequence)
@@ -793,7 +793,7 @@ impl AssemblyChunk {
             let kmer_str = match std::str::from_utf8(window) {
                 Ok(s) => s,
                 Err(_) => {
-                    println!("   Warning: Invalid UTF-8 in k-mer at position {}", i);
+                    println!("   Warning: Invalid UTF-8 in k-mer at position {i}");
                     continue;
                 }
             };
@@ -803,7 +803,7 @@ impl AssemblyChunk {
                     kmers.push((i, canonical_kmer));
                 },
                 Err(e) => {
-                    println!("   Warning: Failed to create k-mer '{}': {}", kmer_str, e);
+                    println!("   Warning: Failed to create k-mer '{kmer_str}': {e}");
                     continue;
                 }
             }
@@ -1119,6 +1119,12 @@ mod tests {
     }
 }
 
+
+impl Default for AssemblyGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl AssemblyGraph {
     pub fn new() -> Self {

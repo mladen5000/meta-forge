@@ -87,7 +87,7 @@ impl ProgressBar {
         let rate_str = if rate >= 1000.0 {
             format!("{:.1}K/s", rate / 1000.0)
         } else {
-            format!("{:.0}/s", rate)
+            format!("{rate:.0}/s")
         };
 
         // Clear line and move cursor to beginning
@@ -145,7 +145,7 @@ impl ProgressBar {
         );
         
         if !message.is_empty() {
-            println!("{}", message);
+            println!("{message}");
         }
         
         io::stdout().flush().unwrap();
@@ -206,7 +206,7 @@ impl ProgressCounter {
         let rate_str = if rate >= 1000.0 {
             format!("{:.1}K/s", rate / 1000.0)
         } else {
-            format!("{:.0}/s", rate)
+            format!("{rate:.0}/s")
         };
 
         // Clear line and update
@@ -239,7 +239,7 @@ impl ProgressCounter {
         );
         
         if !message.is_empty() {
-            println!("{}", message);
+            println!("{message}");
         }
         
         io::stdout().flush().unwrap();
@@ -262,13 +262,13 @@ fn format_number(num: u64) -> String {
 /// Convenience function for quick progress updates
 /// Uses carriage return to overwrite the same line
 pub fn update_progress_line(message: &str) {
-    print!("\r\x1b[2K{}", message);
+    print!("\r\x1b[2K{message}");
     io::stdout().flush().unwrap();
 }
 
 /// Finish progress line and move to next line
 pub fn finish_progress_line(message: &str) {
-    print!("\r\x1b[2K{}\n", message);
+    print!("\r\x1b[2K{message}\n");
     io::stdout().flush().unwrap();
 }
 
@@ -310,7 +310,7 @@ impl MultiProgress {
         
         // Clear and redraw each line
         for bar in &self.bars {
-            print!("\r\x1b[2K{}\n", bar);
+            print!("\r\x1b[2K{bar}\n");
         }
         
         io::stdout().flush().unwrap();

@@ -600,7 +600,7 @@ impl MetagenomicsPipeline {
     ) -> Result<Vec<TaxonomicClassification>> {
         let mut classifications = Vec::new();
 
-        for (_i, contig) in assembly_results.contigs.iter().enumerate() {
+        for contig in assembly_results.contigs.iter() {
             // Simple mock classification - would use actual ML models
             let classification = TaxonomicClassification {
                 contig_id: contig.id,
@@ -900,7 +900,7 @@ impl MetagenomicsPipeline {
             if read_id % 1000 == 0 {
                 pb.update(read_id as u64);
                 multi_progress.update_line(line_id,
-                    format!("📋 Preprocessing: {} reads processed", read_id));
+                    format!("📋 Preprocessing: {read_id} reads processed"));
             }
         }
 
@@ -1019,7 +1019,7 @@ impl MetagenomicsPipeline {
             
             if i % 10 == 0 {
                 multi_progress.update_line(line_id,
-                    format!("📊 Abundance: Processed {} k-mer groups", i));
+                    format!("📊 Abundance: Processed {i} k-mer groups"));
             }
         }
 

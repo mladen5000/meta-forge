@@ -510,7 +510,7 @@ mod path_reconstruction_tests {
     fn test_coverage_calculation_for_path() {
         let mut fragment = GraphFragment::new(0);
         
-        let sequences = vec!["ATCG", "TCGA"];
+        let sequences = ["ATCG", "TCGA"];
         let mut nodes = Vec::new();
         
         for (i, seq) in sequences.iter().enumerate() {
@@ -580,9 +580,9 @@ mod graph_statistics_tests {
         let mut fragment = GraphFragment::new(0);
         
         // Add nodes with different coverages
-        let coverages = vec![5, 10, 15, 20];
+        let coverages = [5, 10, 15, 20];
         for (i, &cov) in coverages.iter().enumerate() {
-            let seq = format!("A{:03}", i); // A000, A001, etc.
+            let seq = format!("A{i:03}"); // A000, A001, etc.
             let kmer = CanonicalKmer::new(&seq).unwrap();
             let mut node = GraphNode::new(kmer, 4);
             node.coverage = cov;

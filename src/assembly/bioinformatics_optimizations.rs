@@ -486,7 +486,7 @@ pub fn merge_adjacency_hierarchical(
                 if chunk.len() == 2 {
                     // Merge the second adjacency list into the first
                     for (u, neigh) in &chunk[1] {
-                        merged.entry(*u).or_insert_with(AHashSet::new).extend(neigh);
+                        merged.entry(*u).or_default().extend(neigh);
                     }
                 }
                 merged

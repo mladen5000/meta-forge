@@ -9,6 +9,7 @@ use thiserror::Error;
 
 /// Comprehensive configuration management for the metagenomics pipeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct PipelineConfiguration {
     /// General pipeline settings
     pub general: GeneralConfig,
@@ -91,10 +92,12 @@ pub struct AmbiguousBaseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum AmbiguousBaseStrategy {
     /// Skip k-mers containing any ambiguous bases (current behavior)
     Skip,
     /// Allow k-mers with limited number of ambiguous bases  
+    #[default]
     Allow,
     /// Replace N with a specific base
     Replace,
@@ -152,6 +155,7 @@ pub struct AutoVacuumConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MachineLearningConfig {
     /// Model paths
     pub taxonomy_model_path: Option<PathBuf>,
@@ -970,20 +974,6 @@ pub enum RecoveryAction {
 }
 
 // Default implementations for all configuration structures
-impl Default for PipelineConfiguration {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            assembly: AssemblyConfig::default(),
-            features: FeatureExtractionConfig::default(),
-            database: DatabaseIntegrationConfig::default(),
-            ml: MachineLearningConfig::default(),
-            performance: PerformanceConfig::default(),
-            logging: LoggingConfig::default(),
-            io: IOConfig::default(),
-        }
-    }
-}
 
 impl Default for GeneralConfig {
     fn default() -> Self {
@@ -1045,11 +1035,6 @@ impl Default for AmbiguousBaseConfig {
     }
 }
 
-impl Default for AmbiguousBaseStrategy {
-    fn default() -> Self {
-        AmbiguousBaseStrategy::Allow
-    }
-}
 
 impl Default for FeatureExtractionConfig {
     fn default() -> Self {
@@ -1095,17 +1080,6 @@ impl Default for AutoVacuumConfig {
     }
 }
 
-impl Default for MachineLearningConfig {
-    fn default() -> Self {
-        Self {
-            taxonomy_model_path: None,
-            repeat_model_path: None,
-            error_correction_model_path: None,
-            training: TrainingConfig::default(),
-            inference: InferenceConfig::default(),
-        }
-    }
-}
 
 impl Default for TrainingConfig {
     fn default() -> Self {

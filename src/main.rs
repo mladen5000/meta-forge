@@ -34,9 +34,9 @@ async fn main() -> Result<()> {
             // Create beautiful multi-line progress display
             println!("🧬 MetaForge - Advanced Metagenomics Analysis Pipeline");
             println!("====================================================");
-            println!("Sample: {}", sample_name);
+            println!("Sample: {sample_name}");
             println!("Input files: {}", input.len());
-            println!("Mode: {:?}\n", mode);
+            println!("Mode: {mode:?}\n");
 
             let mut multi_progress = MultiProgress::new();
             let init_line = multi_progress.add_line("🔧 Initialization: Loading configuration...".to_string());

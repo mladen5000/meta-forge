@@ -82,7 +82,7 @@ impl EventHandler {
                 if event::poll(timeout).unwrap_or(false) {
                     match event::read() {
                         Ok(Event::Key(key)) => {
-                            if let Err(_) = event_sender.send(AppEvent::Input(key)) {
+                            if event_sender.send(AppEvent::Input(key)).is_err() {
                                 break;
                             }
                         }
@@ -92,7 +92,7 @@ impl EventHandler {
                 }
                 
                 if last_tick.elapsed() >= tick_rate {
-                    if let Err(_) = event_sender.send(AppEvent::Tick) {
+                    if event_sender.send(AppEvent::Tick).is_err() {
                         break;
                     }
                     last_tick = Instant::now();

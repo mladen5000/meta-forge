@@ -301,7 +301,7 @@ impl AdvancedAssemblyGraphBuilder {
             .parallel_merge_depth
             .store(depth, Ordering::Relaxed);
 
-        println!("✅ Hierarchical merge completed in {} levels", depth);
+        println!("✅ Hierarchical merge completed in {depth} levels");
         Ok(fragments.into_iter().next().unwrap())
     }
 
@@ -331,7 +331,7 @@ impl AdvancedAssemblyGraphBuilder {
         }
 
         // Parallel reachability matrix construction
-        println!("   Building reachability matrix for {} nodes", n);
+        println!("   Building reachability matrix for {n} nodes");
         let mut reachable = vec![vec![false; n]; n];
 
         // Initialize direct connections sequentially to avoid borrow issues
@@ -396,8 +396,7 @@ impl AdvancedAssemblyGraphBuilder {
 
         let elapsed = start_time.elapsed().as_millis();
         println!(
-            "✅ Removed {} transitive edges in {}ms",
-            removed_count, elapsed
+            "✅ Removed {removed_count} transitive edges in {elapsed}ms"
         );
 
         Ok(graph)
@@ -409,7 +408,7 @@ impl AdvancedAssemblyGraphBuilder {
 
         // Multiple parallel simplification passes
         for pass in 1..=3 {
-            println!("   Pass {}/3", pass);
+            println!("   Pass {pass}/3");
 
             // Parallel tip removal
             self.parallel_remove_tips(&mut graph)?;
@@ -557,7 +556,7 @@ impl AdvancedAssemblyGraphBuilder {
             .retain(|edge| edge.confidence >= MIN_CONFIDENCE);
         let removed = initial_count - graph.graph_fragment.edges.len();
 
-        println!("     Removed {} low-confidence edges", removed);
+        println!("     Removed {removed} low-confidence edges");
         Ok(())
     }
 
@@ -578,7 +577,7 @@ impl AdvancedAssemblyGraphBuilder {
         );
         println!("   K-mer size distribution:");
         for (k, count) in &metrics.adaptive_k_selections {
-            println!("     k={}: {} chunks", k, count);
+            println!("     k={k}: {count} chunks");
         }
     }
 }
@@ -1002,6 +1001,12 @@ pub struct ConcurrentGraphStats {
     pub memory_usage_mb: AtomicUsize,
 }
 
+impl Default for ConcurrentGraphStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConcurrentGraphStats {
     pub fn new() -> Self {
         Self {
@@ -1089,10 +1094,10 @@ impl GraphMemoryPool {
     pub fn print_stats(&self) {
         let (nodes, edges, rounds, memory) = self.stats.get_snapshot();
         println!("🏊 Memory Pool Stats:");
-        println!("   Nodes processed: {}", nodes);
-        println!("   Edges processed: {}", edges);
-        println!("   Simplification rounds: {}", rounds);
-        println!("   Memory usage: {} MB", memory);
+        println!("   Nodes processed: {nodes}");
+        println!("   Edges processed: {edges}");
+        println!("   Simplification rounds: {rounds}");
+        println!("   Memory usage: {memory} MB");
     }
 }
 

@@ -57,7 +57,7 @@ impl<'a> ProgressWidget<'a> {
                 OperationStatus::Pending => Style::default().fg(Color::Gray),
             })
             .percent(percentage as u16)
-            .label(format!("{:.1}%", percentage));
+            .label(format!("{percentage:.1}%"));
         
         f.render_widget(gauge, chunks[0]);
         
@@ -69,7 +69,7 @@ impl<'a> ProgressWidget<'a> {
             OperationStatus::Pending => "Pending",
             OperationStatus::Running => "Running",
             OperationStatus::Completed => "Completed",
-            OperationStatus::Error(e) => &format!("Error: {}", e),
+            OperationStatus::Error(e) => &format!("Error: {e}"),
             OperationStatus::Cancelled => "Cancelled",
         };
         
@@ -102,7 +102,7 @@ impl<'a> ProgressWidget<'a> {
             let rate_text = if rate >= 1000.0 {
                 format!("{:.1}K/s", rate / 1000.0)
             } else {
-                format!("{:.0}/s", rate)
+                format!("{rate:.0}/s")
             };
             
             let mut rate_line = vec![
@@ -296,7 +296,7 @@ fn format_duration(duration: std::time::Duration) -> String {
     let secs = duration.as_secs();
     
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else if secs < 3600 {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {

@@ -56,7 +56,7 @@ impl BitPackedKmer {
         if k > 1024 {
             return Err(anyhow!("k‑mer too long (>1024)"));
         }
-        let mut packed = Vec::with_capacity((k + 31) / 32);
+        let mut packed = Vec::with_capacity(k.div_ceil(32));
         let mut word = 0u64;
         let mut used = 0;
         for c in seq.chars() {
@@ -289,7 +289,7 @@ impl AssemblyGraphBuilder {
                     .and_then(|neigh_u| {
                         neigh_u.par_iter().find_any(|&&w| {
                             adj.get(&w)
-                                .map_or(false, |neigh_w| neigh_w.contains(&e.to_hash))
+                                .is_some_and(|neigh_w| neigh_w.contains(&e.to_hash))
                         })
                     })
                     .map(|_| e.clone())
@@ -354,7 +354,7 @@ impl AssemblyGraph {
             visited.extend(path.iter());
 
             // Simple sequence reconstruction - just concatenate node hashes as placeholder
-            let sequence = format!("CONTIG_{}", contig_id);
+            let sequence = format!("CONTIG_{contig_id}");
             let coverage = path.len() as f64;
             let length = sequence.len();
 

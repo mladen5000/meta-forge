@@ -109,7 +109,7 @@ impl TuiApp {
         
         self.terminal.draw(|f| {
             if let Err(e) = self.screen_manager.render(f, &current_screen) {
-                eprintln!("Render error: {}", e);
+                eprintln!("Render error: {e}");
             }
         })?;
         
@@ -121,15 +121,12 @@ impl TuiApp {
         match event {
             AppEvent::Input(key) => {
                 // Handle global key bindings first
-                match key.code {
-                    crossterm::event::KeyCode::Char('q') => {
-                        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                            let mut state = self.state.write().await;
-                            state.should_quit = true;
-                            return Ok(());
-                        }
+                if let crossterm::event::KeyCode::Char('q') = key.code {
+                    if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                        let mut state = self.state.write().await;
+                        state.should_quit = true;
+                        return Ok(());
                     }
-                    _ => {}
                 }
                 
                 // Get current screen for handling
@@ -150,7 +147,7 @@ impl TuiApp {
             AppEvent::AnalysisStarted(name) => {
                 let mut state = self.state.write().await;
                 state.add_operation(&name, None);
-                state.add_status_message(format!("Started: {}", name));
+                state.add_status_message(format!("Started: {name}"));
             }
             
             AppEvent::AnalysisProgress { operation, current, total, message } => {
@@ -164,13 +161,13 @@ impl TuiApp {
             AppEvent::AnalysisCompleted(name) => {
                 let mut state = self.state.write().await;
                 state.complete_operation(&name);
-                state.add_status_message(format!("Completed: {}", name));
+                state.add_status_message(format!("Completed: {name}"));
             }
             
             AppEvent::AnalysisError(name, error) => {
                 let mut state = self.state.write().await;
                 state.error_operation(&name, &error);
-                state.set_error(format!("Analysis error in {}: {}", name, error));
+                state.set_error(format!("Analysis error in {name}: {error}"));
             }
             
             AppEvent::DatabaseUpdate(db_info) => {
@@ -239,7 +236,7 @@ pub async fn run_tui() -> Result<()> {
     std::panic::set_hook(Box::new(|panic| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        eprintln!("Application panicked: {}", panic);
+        eprintln!("Application panicked: {panic}");
     }));
     
     let result = app.run().await;

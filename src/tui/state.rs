@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 
 /// Current screen in the TUI application
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Screen {
+    #[default]
     MainMenu,
     FileSelection,
     Configuration,
@@ -15,11 +17,6 @@ pub enum Screen {
     Error(String),
 }
 
-impl Default for Screen {
-    fn default() -> Self {
-        Screen::MainMenu
-    }
-}
 
 /// Analysis configuration state
 #[derive(Debug, Clone)]
@@ -119,6 +116,7 @@ impl OperationProgress {
 
 /// Database status information
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct DatabaseInfo {
     pub path: Option<PathBuf>,
     pub initialized: bool,
@@ -127,17 +125,6 @@ pub struct DatabaseInfo {
     pub last_updated: Option<String>,
 }
 
-impl Default for DatabaseInfo {
-    fn default() -> Self {
-        Self {
-            path: None,
-            initialized: false,
-            size: None,
-            tables: Vec::new(),
-            last_updated: None,
-        }
-    }
-}
 
 /// File browser state
 #[derive(Debug, Clone)]
@@ -178,6 +165,7 @@ pub struct ResultsData {
 
 /// Main application state
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct AppState {
     /// Current screen being displayed
     pub current_screen: Screen,
@@ -219,25 +207,6 @@ pub struct AppState {
     pub status_messages: Vec<String>,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            current_screen: Screen::default(),
-            previous_screen: None,
-            should_quit: false,
-            analysis_config: AnalysisConfig::default(),
-            operations: HashMap::new(),
-            database_info: DatabaseInfo::default(),
-            file_browser: FileBrowserState::default(),
-            results: ResultsData::default(),
-            error_message: None,
-            input_mode: false,
-            input_field: String::new(),
-            input_buffer: String::new(),
-            status_messages: Vec::new(),
-        }
-    }
-}
 
 impl AppState {
     pub fn new() -> Self {
