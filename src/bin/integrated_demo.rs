@@ -157,9 +157,8 @@ fn main() -> Result<()> {
     let graph_builder = AssemblyGraphBuilder::new(
         config.assembly.k_min,
         config.assembly.k_max,
-        config.assembly.min_coverage,
-        4  // num_threads
-    )?;
+        config.assembly.min_coverage
+    );
     
     multi_progress.update_line(assembly_line, "🧬 Assembly: Extracting k-mers from paired reads...".to_string());
     

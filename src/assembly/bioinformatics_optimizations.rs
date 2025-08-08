@@ -14,7 +14,6 @@
 //! AHash* structures.
 
 use crate::assembly::adaptive_k::AssemblyGraph;
-use crate::AssemblyGraph;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;

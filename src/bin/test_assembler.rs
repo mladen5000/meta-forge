@@ -15,6 +15,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
         CorrectedRead {
             id: 1,
@@ -22,6 +28,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "TCGATCGATCGATCGATCGATCGATCGATCGATCGATCGA".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
         CorrectedRead {
             id: 2,
@@ -29,6 +41,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "CGATCGATCGATCGATCGATCGATCGATCGATCGATCGAT".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
         CorrectedRead {
             id: 3,
@@ -36,6 +54,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "GATCGATCGATCGATCGATCGATCGATCGATCGATCGATC".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
         CorrectedRead {
             id: 4,
@@ -43,6 +67,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
         CorrectedRead {
             id: 5,
@@ -50,6 +80,12 @@ fn main() -> anyhow::Result<()> {
             corrected: "CTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG".to_string(),
             corrections: Vec::new(),
             quality_scores: vec![30; 40],
+            correction_metadata: meta_forge::core::data_structures::CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
         },
     ];
     
@@ -63,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     );
     
     println!("🏗️  Building assembly graph...");
-    let mut graph = builder.build_graph(&test_reads)?;
+    let mut graph = builder.build(&test_reads)?;
     
     println!("📈 Graph statistics:");
     println!("   Nodes: {}", graph.graph_fragment.nodes.len());
@@ -120,11 +156,11 @@ fn main() -> anyhow::Result<()> {
     }
     
     println!("📊 Assembly statistics:");
-    println!("   Total contigs: {}", graph.assembly_stats.total_contigs);
+    println!("   Total contigs: {}", graph.assembly_stats.num_contigs);
     println!("   Total length: {} bp", graph.assembly_stats.total_length);
-    println!("   Longest contig: {} bp", graph.assembly_stats.longest_contig);
+    println!("   Longest contig: {} bp", graph.assembly_stats.largest_contig);
     println!("   N50: {} bp", graph.assembly_stats.n50);
-    println!("   Mean coverage: {:.2}", graph.assembly_stats.mean_coverage);
+    println!("   Mean coverage: {:.2}", graph.assembly_stats.coverage_mean);
     println!("   GC content: {:.3}", graph.assembly_stats.gc_content);
     
     println!("\n🎉 Assembler test completed successfully!");

@@ -64,8 +64,8 @@ fn main() -> anyhow::Result<()> {
     let graph = builder.build(&test_reads)?;
 
     println!("✅ Assembly graph built successfully!");
-    println!("   - Nodes: {}", graph.nodes.len());
-    println!("   - Edges: {}", graph.edges.len());
+    println!("   - Nodes: {}", graph.graph_fragment.nodes.len());
+    println!("   - Edges: {}", graph.graph_fragment.edges.len());
     println!("   - Contigs: {}", graph.contigs.len());
 
     if !graph.contigs.is_empty() {
