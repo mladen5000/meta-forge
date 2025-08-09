@@ -31,6 +31,110 @@ use std::sync::{
 // Import from the existing core module
 use crate::core::data_structures::*;
 
+/// Calculate sequence complexity using Shannon entropy
+pub fn calculate_sequence_complexity(sequence: &str) -> f64 {
+    let mut counts = [0usize; 4]; // A, C, G, T
+    let mut total = 0;
+
+    for c in sequence.chars() {
+        match c.to_ascii_uppercase() {
+            'A' => {
+                counts[0] += 1;
+                total += 1;
+            }
+            'C' => {
+                counts[1] += 1;
+                total += 1;
+            }
+            'G' => {
+                counts[2] += 1;
+                total += 1;
+            }
+            'T' => {
+                counts[3] += 1;
+                total += 1;
+            }
+            _ => {} // Ignore non-ACGT characters
+        }
+    }
+
+    if total == 0 {
+        return 0.0;
+    }
+
+    let mut entropy = 0.0;
+    for count in counts {
+        if count > 0 {
+            let p = count as f64 / total as f64;
+            entropy -= p * p.log2();
+        }
+    }
+
+    // Normalize by maximum entropy for 4 symbols (2 bits)
+    entropy / 2.0
+}
+
+/// Assembly chunk for parallel processing
+#[derive(Debug, Clone)]
+pub struct AssemblyChunk {
+    pub id: usize,
+    pub k: usize,
+    pub reads: Vec<CorrectedRead>,
+    pub graph_fragment: GraphFragment,
+}
+
+impl AssemblyChunk {
+    pub fn new(id: usize, k: usize) -> Self {
+        Self {
+            id,
+            k,
+            reads: Vec::new(),
+            graph_fragment: GraphFragment::new(id),
+        }
+    }
+
+    pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
+        self.reads.push(read);
+        Ok(())
+    }
+
+    pub fn finalize(&mut self) {
+        // Process reads to build graph fragment
+        for read in &self.reads {
+            self.process_read_to_graph(&read);
+        }
+    }
+
+    fn process_read_to_graph(&mut self, read: &CorrectedRead) {
+        if read.corrected.len() < self.k {
+            return;
+        }
+
+        // Extract k-mers and add nodes/edges
+        let mut prev_hash = None;
+        for i in 0..=read.corrected.len() - self.k {
+            let kmer_seq = &read.corrected[i..i + self.k];
+            if let Ok(kmer) = CanonicalKmer::new(kmer_seq) {
+                let node = GraphNode::new(kmer.clone(), kmer_seq.len());
+                self.graph_fragment.add_node(node);
+
+                if let Some(prev) = prev_hash {
+                    let edge = GraphEdge::new(prev, kmer.hash, 1);
+                    self.graph_fragment.add_edge(edge);
+                }
+                prev_hash = Some(kmer.hash);
+            }
+        }
+    }
+}
+
+/// Edge weight for petgraph
+#[derive(Debug, Clone)]
+pub struct EdgeWeight {
+    pub weight: u32,
+    pub confidence: f64,
+}
+
 /// Advanced metrics for parallel processing performance
 #[derive(Debug, Default)]
 pub struct ParallelMetrics {
@@ -395,9 +499,7 @@ impl AdvancedAssemblyGraphBuilder {
             .store(removed_count, Ordering::Relaxed);
 
         let elapsed = start_time.elapsed().as_millis();
-        println!(
-            "✅ Removed {removed_count} transitive edges in {elapsed}ms"
-        );
+        println!("✅ Removed {removed_count} transitive edges in {elapsed}ms");
 
         Ok(graph)
     }
@@ -663,7 +765,7 @@ impl AssemblyGraph {
                 self.petgraph.add_edge(
                     from_idx,
                     to_idx,
-                    EdgeWeight {
+                    crate::core::data_structures::EdgeWeight {
                         weight: edge.weight,
                         confidence: edge.confidence,
                     },
@@ -814,7 +916,9 @@ impl AssemblyGraph {
         }
 
         let sequence = self.graph_fragment.reconstruct_sequence_from_path(path)?;
-        let coverage = self.graph_fragment.calculate_path_coverage_from_hashes(path);
+        let coverage = self
+            .graph_fragment
+            .calculate_path_coverage_from_hashes(path);
 
         Ok(Some(Contig {
             id,

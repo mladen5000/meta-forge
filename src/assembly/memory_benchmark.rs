@@ -5,15 +5,14 @@
 //! improvements in the optimized metagenomic assembly pipeline.
 
 use crate::assembly::optimized_structures::{
-    CompactKmer, StreamingKmerProcessor, UnifiedAssemblyGraph, MemoryBenchmark, MemoryFootprint, MemoryBenchmark
+    CompactKmer, StreamingKmerProcessor, UnifiedAssemblyGraph, MemoryBenchmark
 };
 use crate::core::data_structures::{
-    CanonicalKmer, GraphFragment, AssemblyGraph, GraphNode, GraphEdge,
+    CanonicalKmer, GraphFragment, GraphNode, GraphEdge,
 };
 use anyhow::Result;
 use rayon::prelude::*;
-use std::time::{Duration, Instant};
-use std::sync::Arc;
+use std::time::Instant;
 
 /* ========================================================================= */
 /*                      COMPREHENSIVE BENCHMARK SUITE                      */
@@ -91,17 +90,14 @@ impl AssemblyMemoryBenchmark {
     fn generate_random_kmers(count: usize, k: usize) -> Result<Vec<String>> {
         let nucleotides = ['A', 'C', 'G', 'T'];
         
-        (0..count)
+        Ok((0..count)
             .into_par_iter()
             .map(|_| {
                 (0..k)
                     .map(|_| nucleotides[fastrand::usize(..4)])
                     .collect::<String>()
             })
-            .collect::<Vec<String>>()
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| anyhow::anyhow!("Failed to generate k-mers"))
+            .collect::<Vec<String>>())
     }
 
     /// Generate random DNA sequence
@@ -349,7 +345,7 @@ impl AssemblyMemoryBenchmark {
         
         let before_footprint = graph.memory_footprint();
         graph.transitive_reduction()?;
-        let after_footprint = graph.memory_footprint();
+        let _after_footprint = graph.memory_footprint();
         
         // Return peak memory usage (before reduction)
         Ok(before_footprint.total_bytes)
@@ -469,8 +465,8 @@ impl AssemblyMemoryBenchmark {
             println!("{}", "-".repeat(50));
             benchmark.print_results();
             
-            total_baseline += benchmark.baseline_memory;
-            total_optimized += benchmark.optimized_memory;
+            total_baseline += benchmark.baseline_memory();
+            total_optimized += benchmark.optimized_memory();
         }
         
         // Overall summary
