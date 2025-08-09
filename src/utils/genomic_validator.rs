@@ -370,7 +370,9 @@ mod tests {
     #[test]
     fn basic_pass() {
         let mut v = GenomicDataValidator::new();
-        let res = v.validate_sequence("ATCGATCGATCG", None);
+        // Use a sequence that's longer than min_sequence_length (50)
+        let long_sequence = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG";
+        let res = v.validate_sequence(long_sequence, None);
         assert!(res.passed);
         assert!(res.errors.is_empty());
     }

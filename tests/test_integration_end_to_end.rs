@@ -55,7 +55,7 @@ mod end_to_end_pipeline_tests {
         assert!(assembly.assembly_stats.n50 > 0);
         
         // Verify field access patterns (the fixes we implemented)
-        assert!(assembly.graph_fragment.nodes.len() > 0);
+        assert!(!assembly.graph_fragment.nodes.is_empty());
         for (_, node) in &assembly.graph_fragment.nodes {
             assert!(node.coverage > 0);
             assert_eq!(node.kmer_size, 4);
@@ -128,12 +128,10 @@ mod end_to_end_pipeline_tests {
         let builder = AssemblyGraphBuilder::new(6, 10, 3);
         
         // Generate larger dataset
-        let base_sequences = vec![
-            "ATCGATCGATCGATCGATCGATCG",
+        let base_sequences = ["ATCGATCGATCGATCGATCGATCG",
             "TCGATCGATCGATCGATCGATCGA",
             "CGATCGATCGATCGATCGATCGAT",
-            "GATCGATCGATCGATCGATCGATC",
-        ];
+            "GATCGATCGATCGATCGATCGATC"];
         
         let mut reads = Vec::new();
         for i in 0..50 {
@@ -197,7 +195,7 @@ mod end_to_end_pipeline_tests {
         
         // Memory tracking through chunk processing
         // (In a real system, you'd have more detailed memory profiling)
-        assert!(assembly.graph_fragment.nodes.len() > 0);
+        assert!(!assembly.graph_fragment.nodes.is_empty());
         assert!(assembly.graph_fragment.coverage_stats.total_nodes > 0);
     }
 }
@@ -415,7 +413,7 @@ mod error_handling_integration_tests {
         // Should create separate contigs
         assert!(!assembly.graph_fragment.nodes.is_empty());
         assert!(!assembly.contigs.is_empty());
-        assert!(assembly.contigs.len() >= 1); // At least one contig
+        assert!(!assembly.contigs.is_empty()); // At least one contig
     }
 
     #[test]
@@ -472,6 +470,6 @@ mod error_handling_integration_tests {
         // Should successfully process all reads
         assert!(assembly.graph_fragment.nodes.len() > 100);
         assert!(assembly.assembly_stats.total_length > 1000);
-        assert!(assembly.contigs.len() > 0);
+        assert!(!assembly.contigs.is_empty());
     }
 }

@@ -1292,7 +1292,7 @@ mod tests {
     #[test]
     fn test_error_recovery() {
         let memory_error = PipelineError::MemoryError {
-            required_mb: 1000,
+            required_mb: 1500, // More than 2x available (1500 > 500*2)
             available_mb: 500,
         };
         

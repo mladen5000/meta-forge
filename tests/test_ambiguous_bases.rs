@@ -1,5 +1,4 @@
 use meta_forge::{AmbiguousBaseConfig, AmbiguousBaseStrategy, CanonicalKmer, MinimizerExtractor};
-use proptest::proptest;
 
 #[test]
 fn test_skip_strategy() {

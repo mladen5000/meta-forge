@@ -680,7 +680,7 @@ mod tests {
 
         // Should be close to 1000 with some error
         assert!(estimate > 800 && estimate < 1200);
-        println!("HLL estimate: {} (expected ~1000)", estimate);
+        println!("HLL estimate: {estimate} (expected ~1000)");
     }
 
     #[test]

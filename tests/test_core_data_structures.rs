@@ -3,8 +3,6 @@
 
 use meta_forge::core::data_structures::*;
 use meta_forge::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
-use anyhow::Result;
-use std::collections::HashMap;
 
 #[cfg(test)]
 mod canonical_kmer_tests {

@@ -17,23 +17,23 @@ fn main() -> Result<()> {
     // Check if files exist
     if !std::path::Path::new(fastq_r1).exists() || !std::path::Path::new(fastq_r2).exists() {
         println!("❌ FASTQ files not found. Expected:");
-        println!("   - {}", fastq_r1);
-        println!("   - {}", fastq_r2);
+        println!("   - {fastq_r1}");
+        println!("   - {fastq_r2}");
         return Ok(());
     }
     
     println!("📁 Found paired FASTQ files:");
-    println!("   - R1: {}", fastq_r1);
-    println!("   - R2: {}", fastq_r2);
+    println!("   - R1: {fastq_r1}");
+    println!("   - R2: {fastq_r2}");
     
     // Count total reads for progress tracking
     println!("\n🔍 Counting reads...");
     let total_reads = count_fastq_reads(fastq_r1)?;
-    println!("   Total reads per file: {}", total_reads);
+    println!("   Total reads per file: {total_reads}");
     
     // Process a subset of reads for demonstration
     let max_reads_to_process = 10000.min(total_reads);
-    println!("   Processing first {} read pairs for demo", max_reads_to_process);
+    println!("   Processing first {max_reads_to_process} read pairs for demo");
     
     let mut collection = PairedReadCollection::new();
     let mut pb = ProgressBar::new(max_reads_to_process as u64, "Processing paired reads");
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
         pb.update(processed as u64);
     }
     
-    pb.finish_with_message(&format!("Successfully processed {} read pairs!", processed));
+    pb.finish_with_message(&format!("Successfully processed {processed} read pairs!"));
     
     // Calculate and display statistics
     collection.calculate_stats();
@@ -153,8 +153,8 @@ fn main() -> Result<()> {
     let original_count = collection.pairs.len();
     collection.filter_by_quality(15.0, 20); // Remove reads with avg quality < 15 or length < 20
     let filtered_count = collection.pairs.len();
-    println!("Pairs before filtering:   {}", original_count);
-    println!("Pairs after filtering:    {}", filtered_count);
+    println!("Pairs before filtering:   {original_count}");
+    println!("Pairs after filtering:    {filtered_count}");
     println!("Removed {} pairs ({:.1}%)", 
         original_count - filtered_count,
         ((original_count - filtered_count) as f64 / original_count as f64) * 100.0

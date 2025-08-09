@@ -57,7 +57,7 @@ pub mod tests {
             .expect("Failed to build graph");
         let construction_time = start_time.elapsed();
         
-        println!("Small graph construction time: {:?}", construction_time);
+        println!("Small graph construction time: {construction_time:?}");
         println!("Graph nodes: {}, edges: {}", 
                  graph.graph_fragment.nodes.len(), 
                  graph.graph_fragment.edges.len());
@@ -68,7 +68,7 @@ pub mod tests {
             .expect("Failed to generate contigs");
         let contig_time = contig_start.elapsed();
         
-        println!("Contig generation time: {:?}", contig_time);
+        println!("Contig generation time: {contig_time:?}");
         println!("Generated {} contigs", graph.contigs.len());
         
         // Validate that we have contigs now
@@ -94,14 +94,14 @@ pub mod tests {
             .expect("Failed to build graph");
         let construction_time = start_time.elapsed();
         
-        println!("Medium graph construction time: {:?}", construction_time);
+        println!("Medium graph construction time: {construction_time:?}");
         println!("Graph nodes: {}, edges: {}", 
                  graph.graph_fragment.nodes.len(), 
                  graph.graph_fragment.edges.len());
         
         // Should complete within reasonable time (under 10 seconds)
         assert!(construction_time.as_secs() < 10, 
-                "Graph construction taking too long: {:?}", construction_time);
+                "Graph construction taking too long: {construction_time:?}");
         
         // Test contig generation
         let contig_start = Instant::now();
@@ -109,12 +109,12 @@ pub mod tests {
             .expect("Failed to generate contigs");
         let contig_time = contig_start.elapsed();
         
-        println!("Medium contig generation time: {:?}", contig_time);
+        println!("Medium contig generation time: {contig_time:?}");
         println!("Generated {} contigs", graph.contigs.len());
         
         // Should complete within reasonable time (under 5 seconds)
         assert!(contig_time.as_secs() < 5, 
-                "Contig generation taking too long: {:?}", contig_time);
+                "Contig generation taking too long: {contig_time:?}");
         
         // Should generate contigs
         assert!(!graph.contigs.is_empty(), "Should generate contigs for medium dataset");
@@ -176,11 +176,11 @@ pub mod tests {
             .expect("Failed to process sequence");
         let processing_time = start_time.elapsed();
         
-        println!("Streaming k-mer processing time: {:?}", processing_time);
+        println!("Streaming k-mer processing time: {processing_time:?}");
         println!("Processed {} k-mers", kmers.len());
         
         let stats = processor.get_statistics();
-        println!("Streaming stats: {:?}", stats);
+        println!("Streaming stats: {stats:?}");
         
         assert!(!kmers.is_empty(), "Should extract k-mers from sequence");
         assert!(stats.unique_kmers > 0, "Should have unique k-mers");
@@ -227,15 +227,15 @@ pub mod tests {
         let gc_content = SimdNucleotideOps::gc_content(&long_sequence);
         let gc_time = gc_start.elapsed();
         
-        println!("SIMD nucleotide counting time: {:?}", counting_time);
-        println!("SIMD GC content calculation time: {:?}", gc_time);
+        println!("SIMD nucleotide counting time: {counting_time:?}");
+        println!("SIMD GC content calculation time: {gc_time:?}");
         println!("Nucleotide counts: A={}, C={}, G={}, T={}", counts[0], counts[1], counts[2], counts[3]);
-        println!("GC content: {:.3}", gc_content);
+        println!("GC content: {gc_content:.3}");
         
         // Validate correctness
         let total = counts.iter().sum::<usize>();
         assert_eq!(total, long_sequence.len(), "Total count should match sequence length");
-        assert!(gc_content >= 0.0 && gc_content <= 1.0, "GC content should be between 0 and 1");
+        assert!((0.0..=1.0).contains(&gc_content), "GC content should be between 0 and 1");
         
         // Performance assertions
         assert!(counting_time.as_millis() < 50, "Nucleotide counting should be fast");
@@ -260,16 +260,16 @@ pub mod tests {
         let after_contigs = get_memory_usage();
         
         println!("Memory usage:");
-        println!("  Start: {} KB", start_memory);
-        println!("  After construction: {} KB", after_construction);
-        println!("  After contigs: {} KB", after_contigs);
+        println!("  Start: {start_memory} KB");
+        println!("  After construction: {after_construction} KB");
+        println!("  After contigs: {after_contigs} KB");
         println!("  Graph construction delta: {} KB", after_construction - start_memory);
         println!("  Contig generation delta: {} KB", after_contigs - after_construction);
         
         // Memory usage should be reasonable for the dataset size
         let construction_memory = after_construction - start_memory;
         assert!(construction_memory < 50_000, // Less than 50MB for small test
-                "Memory usage too high: {} KB", construction_memory);
+                "Memory usage too high: {construction_memory} KB");
     }
 
     // Helper function to estimate memory usage (simplified)
@@ -299,8 +299,8 @@ pub mod tests {
             .expect("Failed to build multi-threaded graph");
         let time_multi = start_multi.elapsed();
         
-        println!("Single-threaded time: {:?}", time_single);
-        println!("Multi-threaded time: {:?}", time_multi);
+        println!("Single-threaded time: {time_single:?}");
+        println!("Multi-threaded time: {time_multi:?}");
         println!("Speedup: {:.2}x", time_single.as_secs_f64() / time_multi.as_secs_f64());
         
         // Validate both produce similar results

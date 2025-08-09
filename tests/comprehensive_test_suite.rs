@@ -610,7 +610,7 @@ mod unit_tests {
         assert!(!complexity_features.is_empty());
 
         for &complexity in &complexity_features {
-            assert!(complexity >= 0.0 && complexity <= 2.0); // Reasonable range
+            assert!((0.0..=2.0).contains(&complexity)); // Reasonable range
         }
     }
 
@@ -705,7 +705,7 @@ mod unit_tests {
         // Note: Simplification is built into the assembly process
 
         // Verify that the assembly process completed successfully
-        assert!(assembly_graph.graph_fragment.nodes.len() > 0);
+        assert!(!assembly_graph.graph_fragment.nodes.is_empty());
     }
 }
 
@@ -732,13 +732,13 @@ mod property_tests {
         #[test]
         fn test_gc_content_bounds(s in "[ATCG]{1,100}") {
             let gc_content = calculate_gc_content(&s);
-            prop_assert!(gc_content >= 0.0 && gc_content <= 1.0);
+            prop_assert!((0.0..=1.0).contains(&gc_content));
         }
 
         #[test]
         fn test_complexity_score_bounds(s in "[ATCG]{1,100}") {
             let complexity = calculate_sequence_complexity(&s);
-            prop_assert!(complexity >= 0.0 && complexity <= 1.0);
+            prop_assert!((0.0..=1.0).contains(&complexity));
         }
 
         #[test]

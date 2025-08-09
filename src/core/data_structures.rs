@@ -994,131 +994,6 @@ pub fn validate_dna_sequence(sequence: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_canonical_kmer() {
-        let kmer = CanonicalKmer::new("ATCG").unwrap();
-        assert_eq!(kmer.sequence, "ATCG"); // ATCG < CGAT (reverse complement)
-
-        let kmer2 = CanonicalKmer::new("CGAT").unwrap();
-        assert_eq!(kmer2.sequence, "ATCG"); // Should be canonicalized to ATCG
-
-        assert_eq!(kmer.hash, kmer2.hash); // Same hash for canonical form
-    }
-
-    #[test]
-    fn test_minimizer_extraction() {
-        let extractor = MinimizerExtractor::new(3, 5);
-        let sequence = "ATCGATCG";
-        let minimizers = extractor.extract_minimizers(sequence).unwrap();
-
-        assert!(!minimizers.is_empty());
-
-        // Check that minimizers are within bounds
-        for min in &minimizers {
-            assert!(min.position < sequence.len() - 3 + 1);
-            assert_eq!(min.kmer.len(), 3);
-        }
-    }
-
-    #[test]
-    fn test_graph_fragment_operations() {
-        let mut fragment = GraphFragment::new(0);
-
-        // Add a test node
-        let kmer = CanonicalKmer::new("ATCG").unwrap();
-        let node = GraphNode::new(kmer.clone(), 4);
-        fragment.add_node(node);
-
-        assert_eq!(fragment.nodes.len(), 1);
-        assert!(fragment.nodes.contains_key(&kmer.hash));
-
-        // Add an edge
-        let kmer2 = CanonicalKmer::new("TCGA").unwrap();
-        let node2 = GraphNode::new(kmer2.clone(), 4);
-        fragment.add_node(node2);
-
-        let edge = GraphEdge::new(kmer.hash, kmer2.hash, 3);
-        fragment.add_edge(edge);
-
-        assert_eq!(fragment.edges.len(), 1);
-        assert_eq!(fragment.nodes.len(), 2);
-    }
-
-    #[test]
-    fn test_assembly_chunk() {
-        let mut chunk = AssemblyChunk::new(0, 4);
-
-        let read = CorrectedRead {
-            id: 0,
-            original: "ATCGATCG".to_string(),
-            corrected: "ATCGATCG".to_string(),
-            corrections: Vec::new(),
-            quality_scores: vec![30; 8],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "test".to_string(),
-                confidence_threshold: 0.8,
-                context_window: 3,
-                correction_time_ms: 0,
-            },
-        };
-
-        chunk.add_read(read).unwrap();
-        chunk.finalize();
-
-        assert_eq!(chunk.processing_stats.reads_processed, 1);
-        assert!(chunk.processing_stats.nodes_created > 0);
-        assert!(chunk.graph_fragment.nodes.len() > 0);
-    }
-
-    #[test]
-    fn test_sequence_complexity() {
-        // Uniform sequence (low complexity)
-        let complexity1 = calculate_sequence_complexity("AAAAAAAAAA");
-        assert!(complexity1 < 0.1);
-
-        // Random sequence (high complexity)
-        let complexity2 = calculate_sequence_complexity("ATCGATCGAT");
-        assert!(complexity2 > 0.8);
-
-        // Mixed sequence
-        let complexity3 = calculate_sequence_complexity("AAAATCGATC");
-        assert!(complexity3 > complexity1 && complexity3 < complexity2);
-    }
-
-    #[test]
-    fn test_gc_content() {
-        assert_eq!(calculate_gc_content("ATCG"), 0.5);
-        assert_eq!(calculate_gc_content("AAAA"), 0.0);
-        assert_eq!(calculate_gc_content("CCGG"), 1.0);
-        assert_eq!(calculate_gc_content(""), 0.0);
-    }
-
-    #[test]
-    fn test_graph_merge() {
-        let mut fragment1 = GraphFragment::new(0);
-        let mut fragment2 = GraphFragment::new(1);
-
-        // Add overlapping content
-        let kmer = CanonicalKmer::new("ATCG").unwrap();
-        let node1 = GraphNode::new(kmer.clone(), 4);
-        let node2 = GraphNode::new(kmer.clone(), 4);
-
-        fragment1.add_node(node1);
-        fragment2.add_node(node2);
-
-        fragment1.merge_with(fragment2).unwrap();
-
-        // Should have merged the nodes
-        assert_eq!(fragment1.nodes.len(), 1);
-        let merged_node = fragment1.nodes.get(&kmer.hash).unwrap();
-        assert_eq!(merged_node.coverage, 2); // Combined coverage
-    }
-}
-
 
 impl Default for AssemblyGraph {
     fn default() -> Self {
@@ -1203,5 +1078,130 @@ impl AssemblyGraph {
         }
         
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_canonical_kmer() {
+        let kmer = CanonicalKmer::new("ATCG").unwrap();
+        assert_eq!(kmer.sequence, "ATCG"); // ATCG < CGAT (reverse complement)
+
+        let kmer2 = CanonicalKmer::new("CGAT").unwrap();
+        assert_eq!(kmer2.sequence, "ATCG"); // Should be canonicalized to ATCG
+
+        assert_eq!(kmer.hash, kmer2.hash); // Same hash for canonical form
+    }
+
+    #[test]
+    fn test_minimizer_extraction() {
+        let extractor = MinimizerExtractor::new(3, 5);
+        let sequence = "ATCGATCG";
+        let minimizers = extractor.extract_minimizers(sequence).unwrap();
+
+        assert!(!minimizers.is_empty());
+
+        // Check that minimizers are within bounds
+        for min in &minimizers {
+            assert!(min.position < sequence.len() - 3 + 1);
+            assert_eq!(min.kmer.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_graph_fragment_operations() {
+        let mut fragment = GraphFragment::new(0);
+
+        // Add a test node
+        let kmer = CanonicalKmer::new("ATCG").unwrap();
+        let node = GraphNode::new(kmer.clone(), 4);
+        fragment.add_node(node);
+
+        assert_eq!(fragment.nodes.len(), 1);
+        assert!(fragment.nodes.contains_key(&kmer.hash));
+
+        // Add an edge
+        let kmer2 = CanonicalKmer::new("TCGA").unwrap();
+        let node2 = GraphNode::new(kmer2.clone(), 4);
+        fragment.add_node(node2);
+
+        let edge = GraphEdge::new(kmer.hash, kmer2.hash, 3);
+        fragment.add_edge(edge);
+
+        assert_eq!(fragment.edges.len(), 1);
+        assert_eq!(fragment.nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_assembly_chunk() {
+        let mut chunk = AssemblyChunk::new(0, 4);
+
+        let read = CorrectedRead {
+            id: 0,
+            original: "ATCGATCG".to_string(),
+            corrected: "ATCGATCG".to_string(),
+            corrections: Vec::new(),
+            quality_scores: vec![30; 8],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.8,
+                context_window: 3,
+                correction_time_ms: 0,
+            },
+        };
+
+        chunk.add_read(read).unwrap();
+        chunk.finalize();
+
+        assert_eq!(chunk.processing_stats.reads_processed, 1);
+        assert!(chunk.processing_stats.nodes_created > 0);
+        assert!(!chunk.graph_fragment.nodes.is_empty());
+    }
+
+    #[test]
+    fn test_sequence_complexity() {
+        // Uniform sequence (low complexity)
+        let complexity1 = calculate_sequence_complexity("AAAAAAAAAA");
+        assert!(complexity1 < 0.1);
+
+        // Random sequence (high complexity)
+        let complexity2 = calculate_sequence_complexity("ATCGATCGAT");
+        assert!(complexity2 > 0.8);
+
+        // Mixed sequence
+        let complexity3 = calculate_sequence_complexity("AAAATCGATC");
+        assert!(complexity3 > complexity1 && complexity3 < complexity2);
+    }
+
+    #[test]
+    fn test_gc_content() {
+        assert_eq!(calculate_gc_content("ATCG"), 0.5);
+        assert_eq!(calculate_gc_content("AAAA"), 0.0);
+        assert_eq!(calculate_gc_content("CCGG"), 1.0);
+        assert_eq!(calculate_gc_content(""), 0.0);
+    }
+
+    #[test]
+    fn test_graph_merge() {
+        let mut fragment1 = GraphFragment::new(0);
+        let mut fragment2 = GraphFragment::new(1);
+
+        // Add overlapping content
+        let kmer = CanonicalKmer::new("ATCG").unwrap();
+        let node1 = GraphNode::new(kmer.clone(), 4);
+        let node2 = GraphNode::new(kmer.clone(), 4);
+
+        fragment1.add_node(node1);
+        fragment2.add_node(node2);
+
+        fragment1.merge_with(fragment2).unwrap();
+
+        // Should have merged the nodes
+        assert_eq!(fragment1.nodes.len(), 1);
+        let merged_node = fragment1.nodes.get(&kmer.hash).unwrap();
+        assert_eq!(merged_node.coverage, 2); // Combined coverage
     }
 }

@@ -1440,6 +1440,62 @@ fn parse_k_range(s: &str) -> Result<(usize, usize), String> {
     Ok((min, max))
 }
 
+// Example usage documentation
+const USAGE_EXAMPLES: &str = r#"
+EXAMPLES:
+
+# Complete analysis of a single sample
+meta-pipeline analyze sample.fastq --sample-name "Sample_001" --mode standard
+
+# Assembly only with custom k-mer range  
+meta-pipeline assemble reads.fastq --k-range 21-31 --min-coverage 3
+
+# Extract specific feature types
+meta-pipeline features sequences.fasta --types composition,patterns --format json
+
+# Database operations
+meta-pipeline database init ./data/metagenomics.db
+meta-pipeline database import-taxonomy ./data/metagenomics.db taxonomy.txt
+meta-pipeline database build-index ./data/metagenomics.db --k 21
+
+# Generate configuration templates
+meta-pipeline config high-performance --output high_perf_config.toml
+
+# Run tests and benchmarks
+meta-pipeline test --bench --report test_report.html
+
+# High-performance analysis with custom resources
+meta-pipeline analyze *.fastq --threads 16 --memory 32 --mode accurate
+
+# Low-memory mode for limited resources
+meta-pipeline analyze sample.fastq --config low_memory_config.toml
+"#;
+
+/// Calculate Shannon diversity index from abundance data
+fn calculate_shannon_diversity(abundant_kmers: &std::collections::HashMap<u64, f64>) -> f64 {
+    if abundant_kmers.is_empty() {
+        return 0.0;
+    }
+
+    let total: f64 = abundant_kmers.values().sum();
+    if total == 0.0 {
+        return 0.0;
+    }
+
+    abundant_kmers
+        .values()
+        .filter(|&&count| count > 0.0)
+        .map(|&count| {
+            let p = count / total;
+            -p * p.ln()
+        })
+        .sum()
+}
+
+pub fn print_usage_examples() {
+    println!("{USAGE_EXAMPLES}");
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
@@ -1450,20 +1506,48 @@ mod integration_tests {
     async fn test_complete_pipeline() -> Result<()> {
         let temp_dir = tempdir()?;
 
-        // Create test FASTQ file
-        let test_reads = vec![CorrectedRead {
-            id: 0,
-            original: "ATCGATCGATCGATCGATCGATCG".to_string(),
-            corrected: "ATCGATCGATCGATCGATCGATCG".to_string(),
-            corrections: Vec::new(),
-            quality_scores: vec![30; 24],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "test".to_string(),
-                confidence_threshold: 1.0,
-                context_window: 0,
-                correction_time_ms: 0,
+        // Create multiple overlapping test reads for successful assembly
+        let test_reads = vec![
+            CorrectedRead {
+                id: 0,
+                original: "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
+                corrected: "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
+                corrections: Vec::new(),
+                quality_scores: vec![30; 46],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "test".to_string(),
+                    confidence_threshold: 1.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
             },
-        }];
+            CorrectedRead {
+                id: 1,
+                original: "TCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGA".to_string(),
+                corrected: "TCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGA".to_string(),
+                corrections: Vec::new(),
+                quality_scores: vec![30; 46],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "test".to_string(),
+                    confidence_threshold: 1.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
+            },
+            CorrectedRead {
+                id: 2,
+                original: "CGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGAT".to_string(),
+                corrected: "CGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGAT".to_string(),
+                corrections: Vec::new(),
+                quality_scores: vec![30; 46],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "test".to_string(),
+                    confidence_threshold: 1.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
+            },
+        ];
 
         // Create test FASTQ file
         let fastq_path = temp_dir.path().join("test_reads.fastq");
@@ -1540,60 +1624,4 @@ mod integration_tests {
             _ => panic!("Expected Analyze command"),
         }
     }
-}
-
-// Example usage documentation
-const USAGE_EXAMPLES: &str = r#"
-EXAMPLES:
-
-# Complete analysis of a single sample
-meta-pipeline analyze sample.fastq --sample-name "Sample_001" --mode standard
-
-# Assembly only with custom k-mer range  
-meta-pipeline assemble reads.fastq --k-range 21-31 --min-coverage 3
-
-# Extract specific feature types
-meta-pipeline features sequences.fasta --types composition,patterns --format json
-
-# Database operations
-meta-pipeline database init ./data/metagenomics.db
-meta-pipeline database import-taxonomy ./data/metagenomics.db taxonomy.txt
-meta-pipeline database build-index ./data/metagenomics.db --k 21
-
-# Generate configuration templates
-meta-pipeline config high-performance --output high_perf_config.toml
-
-# Run tests and benchmarks
-meta-pipeline test --bench --report test_report.html
-
-# High-performance analysis with custom resources
-meta-pipeline analyze *.fastq --threads 16 --memory 32 --mode accurate
-
-# Low-memory mode for limited resources
-meta-pipeline analyze sample.fastq --config low_memory_config.toml
-"#;
-
-/// Calculate Shannon diversity index from abundance data
-fn calculate_shannon_diversity(abundant_kmers: &std::collections::HashMap<u64, f64>) -> f64 {
-    if abundant_kmers.is_empty() {
-        return 0.0;
-    }
-
-    let total: f64 = abundant_kmers.values().sum();
-    if total == 0.0 {
-        return 0.0;
-    }
-
-    abundant_kmers
-        .values()
-        .filter(|&&count| count > 0.0)
-        .map(|&count| {
-            let p = count / total;
-            -p * p.ln()
-        })
-        .sum()
-}
-
-pub fn print_usage_examples() {
-    println!("{USAGE_EXAMPLES}");
 }

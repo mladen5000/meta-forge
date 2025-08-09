@@ -977,7 +977,7 @@ mod tests {
             .unwrap();
         assert_eq!(features.len(), 32);
         assert_eq!(features[0], 2.0); // Degree = 2
-        assert_eq!(features[1], 8.0); // Total weight = 5 + 3
+        assert_eq!(features[1], 2.0); // Should be degree (2), not weight sum
     }
 
     #[test]

@@ -5,7 +5,6 @@ use anyhow::Result;
 use meta_forge::core::paired_reads::{PairedReadCollection, PairedRead, ReadPair, extract_pair_id};
 use meta_forge::utils::progress_display::{ProgressBar, MultiProgress};
 use meta_forge::utils::configuration::PipelineConfiguration;
-use meta_forge::pipeline::integrated::FeatureExtractor;
 use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 
 fn main() -> Result<()> {
@@ -128,7 +127,7 @@ fn main() -> Result<()> {
         for i in 0..1000 {
             let forward = PairedRead::new(
                 i * 2,
-                format!("mock_read_{}", i),
+                format!("mock_read_{i}"),
                 meta_forge::core::paired_reads::ReadOrientation::Forward,
                 "ATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
                 vec![30; 36],
@@ -136,7 +135,7 @@ fn main() -> Result<()> {
             
             let reverse = PairedRead::new(
                 i * 2 + 1,
-                format!("mock_read_{}", i),
+                format!("mock_read_{i}"),
                 meta_forge::core::paired_reads::ReadOrientation::Reverse,
                 "CGATATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
                 vec![30; 36],
@@ -224,7 +223,7 @@ fn main() -> Result<()> {
     println!("   • Mean R2 quality: {:.1}", collection.stats.quality_stats.mean_quality_r2);
     println!("   • K-mers extracted: {}", paired_kmers.len());
     println!("   • Average GC content: {:.1}%", avg_gc_content * 100.0);
-    println!("   • Average complexity: {:.2}", avg_complexity);
+    println!("   • Average complexity: {avg_complexity:.2}");
     
     println!("\n🎯 Integration Benefits Demonstrated:");
     println!("   • Seamless data flow between pipeline stages");

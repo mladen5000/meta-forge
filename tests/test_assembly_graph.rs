@@ -61,7 +61,7 @@ pub mod tests {
         let graph = result.unwrap();
         
         // Test correct field access patterns for AssemblyGraph
-        assert!(graph.graph_fragment.nodes.len() > 0);
+        assert!(!graph.graph_fragment.nodes.is_empty());
         assert!(graph.contigs.len() >= 0); // May be 0 if no contigs generated yet
         
         // Test that we can access graph statistics
@@ -134,6 +134,6 @@ pub mod tests {
         
         let graph = result.unwrap();
         // Should handle short reads gracefully - may have 0 nodes
-        assert!(graph.graph_fragment.nodes.len() == 0);
+        assert!(graph.graph_fragment.nodes.is_empty());
     }
 }

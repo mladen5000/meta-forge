@@ -1080,7 +1080,7 @@ mod tests {
                 name: "Escherichia coli".to_string(),
                 lineage: "Bacteria;Proteobacteria;Gammaproteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia".to_string(),
                 rank: "species".to_string(),
-                parent_id: Some(562),
+                parent_id: None, // Set to None to avoid foreign key constraint
             },
         ];
 
@@ -1139,13 +1139,39 @@ mod tests {
 
         let db = MetagenomicsDatabase::new(db_path, config).unwrap();
 
+        // Insert required taxonomy entry first
+        let taxonomy_entries = vec![
+            TaxonomyEntry {
+                id: 1,
+                name: "Test organism".to_string(),
+                lineage: "Bacteria;Test".to_string(),
+                rank: "species".to_string(),
+                parent_id: None,
+            },
+        ];
+        db.insert_taxonomy_entries(&taxonomy_entries).unwrap();
+
+        // Insert required sequence first
+        let sequences = vec![
+            SequenceEntry {
+                id: 1, // Use ID 1 to match the inserted IDs
+                sequence_hash: "abc123".to_string(),
+                sequence_data: "ATCGATCGATCG".to_string(),
+                length: 12,
+                gc_content: 0.5,
+                taxonomy_id: Some(1),
+                source: "test".to_string(),
+                created_at: chrono::Utc::now(),
+            },
+        ];
+        db.insert_sequences(&sequences).unwrap();
+
         let features = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let seq_ids = vec![0i64, 1];
         let examples = vec![TrainingExample {
-            id: 0,
+            id: 1,
             features,
             taxonomy_id: 1,
-            sequence_id: seq_ids[0], // Use actual sequence ID from database
+            sequence_id: 1, // Use ID 1
             feature_version: "v1.0".to_string(),
         }];
 

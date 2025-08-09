@@ -1143,7 +1143,7 @@ mod benchmarks {
             for _ in 0..self.iterations {
                 let start = Instant::now();
                 if let Err(e) = test_fn() {
-                    eprintln!("Benchmark error: {}", e);
+                    eprintln!("Benchmark error: {e}");
                     continue;
                 }
                 times.push(start.elapsed());
@@ -1273,7 +1273,7 @@ mod benchmarks {
 
         // Add nodes with synthetic sequences
         for i in 0..num_nodes {
-            let seq = format!("ATCG{:04}GCTA", i);
+            let seq = format!("ATCG{i:04}GCTA");
             if let Ok(kmer) = CanonicalKmer::new(&seq) {
                 let node = GraphNode::new(kmer, seq.len());
                 fragment.add_node(node);
@@ -1306,7 +1306,7 @@ mod benchmarks {
 
                 // Add a few nodes per fragment
                 for j in 0..5 {
-                    let seq = format!("ATCG{:02}{:02}GCTA", i, j);
+                    let seq = format!("ATCG{i:02}{j:02}GCTA");
                     if let Ok(kmer) = CanonicalKmer::new(&seq) {
                         let node = GraphNode::new(kmer, seq.len());
                         fragment.add_node(node);
@@ -1338,10 +1338,10 @@ mod integration_tests {
         let test_reads = vec![
             CorrectedRead {
                 id: 0,
-                original: "ATCGATCGATCGATCG".to_string(),
-                corrected: "ATCGATCGATCGATCG".to_string(),
+                original: "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
+                corrected: "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG".to_string(),
                 corrections: Vec::new(),
-                quality_scores: vec![30; 16],
+                quality_scores: vec![30; 40],
                 correction_metadata: CorrectionMetadata {
                     algorithm: "none".to_string(),
                     confidence_threshold: 0.0,
@@ -1351,10 +1351,10 @@ mod integration_tests {
             },
             CorrectedRead {
                 id: 1,
-                original: "TCGATCGATCGATCGA".to_string(),
-                corrected: "TCGATCGATCGATCGA".to_string(),
+                original: "TCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGA".to_string(),
+                corrected: "TCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGA".to_string(),
                 corrections: Vec::new(),
-                quality_scores: vec![30; 16],
+                quality_scores: vec![30; 40],
                 correction_metadata: CorrectionMetadata {
                     algorithm: "none".to_string(),
                     confidence_threshold: 0.0,
@@ -1364,10 +1364,10 @@ mod integration_tests {
             },
             CorrectedRead {
                 id: 2,
-                original: "CGATCGATCGATCGAT".to_string(),
-                corrected: "CGATCGATCGATCGAT".to_string(),
+                original: "CGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGAT".to_string(),
+                corrected: "CGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGAT".to_string(),
                 corrections: Vec::new(),
-                quality_scores: vec![30; 16],
+                quality_scores: vec![30; 40],
                 correction_metadata: CorrectionMetadata {
                     algorithm: "none".to_string(),
                     confidence_threshold: 0.0,
@@ -1398,7 +1398,7 @@ mod integration_tests {
         let test_reads = create_large_test_dataset(5000);
 
         for &threads in &thread_counts {
-            println!("\n🧪 Testing with {} threads", threads);
+            println!("\n🧪 Testing with {threads} threads");
 
             let start = std::time::Instant::now();
             let builder = AdvancedAssemblyGraphBuilder::new(15, 25, 2, threads).unwrap();
