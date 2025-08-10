@@ -1,11 +1,11 @@
-pub mod main_menu;
-pub mod file_selection;
-pub mod configuration;
 pub mod analysis;
+pub mod configuration;
 pub mod database;
-pub mod results;
-pub mod help;
 pub mod error;
+pub mod file_selection;
+pub mod help;
+pub mod main_menu;
+pub mod results;
 
 use anyhow::Result;
 use crossterm::event::KeyEvent;
@@ -19,15 +19,15 @@ use crate::tui::state::{AppState, Screen as ScreenEnum};
 pub trait Screen {
     /// Render the screen
     fn render(&mut self, f: &mut Frame, area: ratatui::layout::Rect) -> Result<()>;
-    
+
     /// Handle key input
     fn handle_key(&mut self, key: KeyEvent) -> Result<Option<ScreenEnum>>;
-    
+
     /// Update the screen on tick
     fn tick(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Initialize the screen
     fn initialize(&mut self) -> Result<()> {
         Ok(())
@@ -61,7 +61,7 @@ impl ScreenManager {
             error: error::ErrorScreen::new(state.clone()),
         }
     }
-    
+
     pub async fn initialize(&mut self) -> Result<()> {
         self.main_menu.initialize()?;
         self.file_selection.initialize()?;
@@ -73,10 +73,10 @@ impl ScreenManager {
         self.error.initialize()?;
         Ok(())
     }
-    
+
     pub fn render(&mut self, f: &mut Frame, current_screen: &ScreenEnum) -> Result<()> {
         let area = f.area();
-        
+
         match current_screen {
             ScreenEnum::MainMenu => self.main_menu.render(f, area),
             ScreenEnum::FileSelection => self.file_selection.render(f, area),
@@ -88,12 +88,18 @@ impl ScreenManager {
             ScreenEnum::Error(_) => self.error.render(f, area),
         }
     }
-    
-    pub async fn handle_key_input(&mut self, key: KeyEvent, current_screen: &ScreenEnum) -> Result<()> {
+
+    pub async fn handle_key_input(
+        &mut self,
+        key: KeyEvent,
+        current_screen: &ScreenEnum,
+    ) -> Result<()> {
         // Check for quit signals from main menu
         if matches!(current_screen, ScreenEnum::MainMenu) {
             match key.code {
-                crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') | crossterm::event::KeyCode::Char('Q') => {
+                crossterm::event::KeyCode::Esc
+                | crossterm::event::KeyCode::Char('q')
+                | crossterm::event::KeyCode::Char('Q') => {
                     let mut state = self.state.write().await;
                     state.should_quit = true;
                     return Ok(());
@@ -101,7 +107,7 @@ impl ScreenManager {
                 _ => {}
             }
         }
-        
+
         let new_screen = match current_screen {
             ScreenEnum::MainMenu => self.main_menu.handle_key(key)?,
             ScreenEnum::FileSelection => self.file_selection.handle_key(key)?,
@@ -112,15 +118,15 @@ impl ScreenManager {
             ScreenEnum::Help => self.help.handle_key(key)?,
             ScreenEnum::Error(_) => self.error.handle_key(key)?,
         };
-        
+
         if let Some(screen) = new_screen {
             let mut state = self.state.write().await;
             state.navigate_to(screen);
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn tick(&mut self) -> Result<()> {
         self.main_menu.tick()?;
         self.file_selection.tick()?;

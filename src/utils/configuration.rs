@@ -1,15 +1,13 @@
-use std::path::{Path, PathBuf};
-use std::env;
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use config::{Config, ConfigError, File, Environment, FileFormat};
-use tracing::{info, warn, error};
+use config::{Config, ConfigError, Environment, File, FileFormat};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
-
+use tracing::{error, info, warn};
 
 /// Comprehensive configuration management for the metagenomics pipeline
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PipelineConfiguration {
     /// General pipeline settings
     pub general: GeneralConfig,
@@ -91,8 +89,7 @@ pub struct AmbiguousBaseConfig {
     pub random_probabilities: Option<[f64; 4]>, // A, C, G, T
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum AmbiguousBaseStrategy {
     /// Skip k-mers containing any ambiguous bases (current behavior)
     Skip,
@@ -154,8 +151,7 @@ pub struct AutoVacuumConfig {
     pub schedule: String, // Cron-like schedule
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MachineLearningConfig {
     /// Model paths
     pub taxonomy_model_path: Option<PathBuf>,
@@ -258,31 +254,34 @@ pub struct FileHandlingConfig {
 pub enum PipelineError {
     #[error("Configuration error: {message}")]
     ConfigurationError { message: String },
-    
+
     #[error("Input/Output error: {message}")]
     IOError { message: String },
-    
+
     #[error("Database error: {message}")]
     DatabaseError { message: String },
-    
+
     #[error("Assembly error: {message}")]
     AssemblyError { message: String },
-    
+
     #[error("Feature extraction error: {message}")]
     FeatureExtractionError { message: String },
-    
+
     #[error("Machine learning error: {message}")]
     MachineLearningError { message: String },
-    
+
     #[error("Memory error: insufficient memory (required: {required_mb}MB, available: {available_mb}MB)")]
-    MemoryError { required_mb: usize, available_mb: usize },
-    
+    MemoryError {
+        required_mb: usize,
+        available_mb: usize,
+    },
+
     #[error("Resource error: {resource} limit exceeded")]
     ResourceError { resource: String },
-    
+
     #[error("Validation error: {field} is invalid: {reason}")]
     ValidationError { field: String, reason: String },
-    
+
     #[error("Recovery error: {message}")]
     RecoveryError { message: String },
 }
@@ -323,122 +322,120 @@ impl ConfigurationManager {
     pub fn new() -> Result<Self, PipelineError> {
         Self::load_from_default_locations()
     }
-    
+
     /// Create configuration manager with pure defaults (no file dependencies)
     pub fn new_with_defaults() -> Result<Self, PipelineError> {
         let config = PipelineConfiguration::default();
-        
+
         let manager = Self {
             config,
             config_path: None,
             environment_prefix: "META".to_string(),
         };
-        
+
         manager.validate_configuration()?;
         manager.setup_logging()?;
-        
+
         Ok(manager)
     }
-    
+
     /// Load configuration from specific file
     pub fn from_file<P: AsRef<Path>>(config_path: P) -> Result<Self, PipelineError> {
         let config_path = config_path.as_ref().to_path_buf();
         let config = Self::load_config_from_file(&config_path)?;
-        
+
         let manager = Self {
             config,
             config_path: Some(config_path),
             environment_prefix: "META".to_string(),
         };
-        
+
         manager.validate_configuration()?;
         manager.setup_logging()?;
-        
+
         Ok(manager)
     }
-    
+
     /// Load configuration from default locations
     fn load_from_default_locations() -> Result<Self, PipelineError> {
         let mut config_builder = Config::builder();
-        
+
         // Start with default configuration from Rust defaults
         let default_config = PipelineConfiguration::default();
-        
-        // Try to load from embedded config file if available, but continue without it  
+
+        // Try to load from embedded config file if available, but continue without it
         if let Ok(embedded_config) = std::fs::read_to_string("./config/default.toml") {
-            config_builder = config_builder.add_source(
-                config::File::from_str(&embedded_config, FileFormat::Toml)
-            );
+            config_builder = config_builder
+                .add_source(config::File::from_str(&embedded_config, FileFormat::Toml));
         } else {
             info!("No config/default.toml found, using built-in defaults");
         }
-        
+
         // Add system-wide config
         if let Ok(system_config) = env::var("META_SYSTEM_CONFIG") {
-            config_builder = config_builder.add_source(
-                File::with_name(&system_config).required(false)
-            );
+            config_builder =
+                config_builder.add_source(File::with_name(&system_config).required(false));
         }
-        
+
         // Add user config
         if let Some(home_dir) = dirs::home_dir() {
-            let user_config = home_dir.join(".config").join("metagenomics").join("config.toml");
-            config_builder = config_builder.add_source(
-                File::from(user_config).required(false)
-            );
+            let user_config = home_dir
+                .join(".config")
+                .join("metagenomics")
+                .join("config.toml");
+            config_builder = config_builder.add_source(File::from(user_config).required(false));
         }
-        
+
         // Add local config
-        config_builder = config_builder.add_source(
-            File::with_name("config").required(false)
-        );
-        
+        config_builder = config_builder.add_source(File::with_name("config").required(false));
+
         // Add environment variables
-        config_builder = config_builder.add_source(
-            Environment::with_prefix("META").separator("__")
-        );
-        
+        config_builder =
+            config_builder.add_source(Environment::with_prefix("META").separator("__"));
+
         // Try to build configuration, fallback to default if it fails
         let config: PipelineConfiguration = match config_builder.build() {
-            Ok(built_config) => {
-                match built_config.try_deserialize() {
-                    Ok(config) => config,
-                    Err(e) => {
-                        warn!("Failed to deserialize configuration: {}, using built-in defaults", e);
-                        default_config
-                    }
+            Ok(built_config) => match built_config.try_deserialize() {
+                Ok(config) => config,
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize configuration: {}, using built-in defaults",
+                        e
+                    );
+                    default_config
                 }
             },
             Err(e) => {
-                warn!("Failed to build configuration: {}, using built-in defaults", e);
+                warn!(
+                    "Failed to build configuration: {}, using built-in defaults",
+                    e
+                );
                 default_config
             }
         };
-        
+
         let manager = Self {
             config,
             config_path: None,
             environment_prefix: "META".to_string(),
         };
-        
+
         manager.validate_configuration()?;
         manager.setup_logging()?;
-        
+
         Ok(manager)
     }
-    
+
     fn load_config_from_file(path: &Path) -> Result<PipelineConfiguration, PipelineError> {
-        let config = Config::builder()
-            .add_source(File::from(path))
-            .build()?;
-        
+        let config = Config::builder().add_source(File::from(path)).build()?;
+
         Ok(config.try_deserialize()?)
     }
-    
+
     /// Validate configuration parameters
     fn validate_configuration(&self) -> Result<(), PipelineError> {
         info!("🔍 Validating configuration...");
-        
+
         // Validate assembly parameters
         if self.config.assembly.k_min >= self.config.assembly.k_max {
             return Err(PipelineError::ValidationError {
@@ -446,21 +443,21 @@ impl ConfigurationManager {
                 reason: "must be less than k_max".to_string(),
             });
         }
-        
+
         if self.config.assembly.k_min < 3 {
             return Err(PipelineError::ValidationError {
                 field: "assembly.k_min".to_string(),
                 reason: "must be at least 3".to_string(),
             });
         }
-        
+
         if self.config.assembly.k_max > 255 {
             return Err(PipelineError::ValidationError {
                 field: "assembly.k_max".to_string(),
                 reason: "must be at most 255".to_string(),
             });
         }
-        
+
         // Validate feature extraction parameters
         if self.config.features.sequence_feature_dim == 0 {
             return Err(PipelineError::ValidationError {
@@ -468,14 +465,14 @@ impl ConfigurationManager {
                 reason: "must be greater than 0".to_string(),
             });
         }
-        
+
         if self.config.features.kmer_sizes.is_empty() {
             return Err(PipelineError::ValidationError {
                 field: "features.kmer_sizes".to_string(),
                 reason: "must contain at least one k-mer size".to_string(),
             });
         }
-        
+
         // Validate performance parameters
         if self.config.performance.num_threads == 0 {
             return Err(PipelineError::ValidationError {
@@ -483,13 +480,15 @@ impl ConfigurationManager {
                 reason: "must be greater than 0".to_string(),
             });
         }
-        
+
         let available_threads = num_cpus::get();
         if self.config.performance.num_threads > available_threads * 2 {
-            warn!("Configured threads ({}) exceeds available cores ({})", 
-                self.config.performance.num_threads, available_threads);
+            warn!(
+                "Configured threads ({}) exceeds available cores ({})",
+                self.config.performance.num_threads, available_threads
+            );
         }
-        
+
         // Validate memory limits
         if self.config.performance.memory_limit_gb == 0 {
             return Err(PipelineError::ValidationError {
@@ -497,21 +496,21 @@ impl ConfigurationManager {
                 reason: "must be greater than 0".to_string(),
             });
         }
-        
+
         // Validate directories exist or can be created
         self.ensure_directories_exist()?;
-        
+
         info!("✅ Configuration validation passed");
         Ok(())
     }
-    
+
     fn ensure_directories_exist(&self) -> Result<(), PipelineError> {
         let directories = [
             &self.config.general.work_dir,
             &self.config.general.temp_dir,
             &self.config.general.output_dir,
         ];
-        
+
         for dir in &directories {
             if !dir.exists() {
                 std::fs::create_dir_all(dir).map_err(|e| PipelineError::IOError {
@@ -520,101 +519,117 @@ impl ConfigurationManager {
                 info!("📁 Created directory: {}", dir.display());
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Setup logging based on configuration
     fn setup_logging(&self) -> Result<(), PipelineError> {
-        use tracing_subscriber::{EnvFilter, fmt, prelude::*};
         use tracing_appender::rolling;
-        
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
         // Check if global subscriber is already set
         if tracing::dispatcher::has_been_set() {
             info!("⏭️  Logging already initialized, skipping setup");
             return Ok(());
         }
-        
+
         let level = &self.config.logging.level;
         let format = &self.config.logging.format;
-        
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(level));
-        
+
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+
         let subscriber = tracing_subscriber::registry().with(env_filter);
-        
+
         match format.as_str() {
             "json" => {
                 let layer = fmt::layer().with_target(true).with_thread_ids(true);
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),
-                        file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
+                        file_path
+                            .file_name()
+                            .unwrap_or(std::ffi::OsStr::new("pipeline.log")),
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
+                    let _ = tracing::subscriber::set_global_default(
+                        subscriber.with(layer.with_writer(non_blocking)),
+                    );
                 } else {
                     let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
-            },
+            }
             "compact" => {
                 let layer = fmt::layer().compact();
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),
-                        file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
+                        file_path
+                            .file_name()
+                            .unwrap_or(std::ffi::OsStr::new("pipeline.log")),
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
+                    let _ = tracing::subscriber::set_global_default(
+                        subscriber.with(layer.with_writer(non_blocking)),
+                    );
                 } else {
                     let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
-            },
-            _ => { // "pretty" or default
+            }
+            _ => {
+                // "pretty" or default
                 let layer = fmt::layer().pretty();
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),
-                        file_path.file_name().unwrap_or(std::ffi::OsStr::new("pipeline.log"))
+                        file_path
+                            .file_name()
+                            .unwrap_or(std::ffi::OsStr::new("pipeline.log")),
                     );
                     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-                    let _ = tracing::subscriber::set_global_default(subscriber.with(layer.with_writer(non_blocking)));
+                    let _ = tracing::subscriber::set_global_default(
+                        subscriber.with(layer.with_writer(non_blocking)),
+                    );
                 } else {
                     let _ = tracing::subscriber::set_global_default(subscriber.with(layer));
                 }
             }
         }
-        
-        info!("📝 Logging initialized with level: {}, format: {}", level, format);
+
+        info!(
+            "📝 Logging initialized with level: {}, format: {}",
+            level, format
+        );
         Ok(())
     }
-    
+
     /// Get configuration reference
     pub fn config(&self) -> &PipelineConfiguration {
         &self.config
     }
-    
+
     /// Get mutable configuration reference
     pub fn config_mut(&mut self) -> &mut PipelineConfiguration {
         &mut self.config
     }
-    
+
     /// Save current configuration to file
     pub fn save_config<P: AsRef<Path>>(&self, path: P) -> Result<(), PipelineError> {
-        let toml_string = toml::to_string_pretty(&self.config)
-            .map_err(|e| PipelineError::ConfigurationError {
+        let toml_string = toml::to_string_pretty(&self.config).map_err(|e| {
+            PipelineError::ConfigurationError {
                 message: format!("Failed to serialize configuration: {e}"),
-            })?;
-        
-        std::fs::write(path.as_ref(), toml_string)
-            .map_err(|e| PipelineError::IOError {
-                message: format!("Failed to write configuration file: {e}"),
-            })?;
-        
+            }
+        })?;
+
+        std::fs::write(path.as_ref(), toml_string).map_err(|e| PipelineError::IOError {
+            message: format!("Failed to write configuration file: {e}"),
+        })?;
+
         info!("💾 Configuration saved to {}", path.as_ref().display());
         Ok(())
     }
-    
+
     /// Update configuration from environment variables
     pub fn update_from_environment(&mut self) -> Result<(), PipelineError> {
         // This would update configuration from environment variables
@@ -622,7 +637,7 @@ impl ConfigurationManager {
         info!("🌍 Updated configuration from environment variables");
         Ok(())
     }
-    
+
     /// Create configuration for specific use cases
     pub fn create_minimal_config() -> PipelineConfiguration {
         PipelineConfiguration {
@@ -745,60 +760,60 @@ impl ConfigurationManager {
             },
         }
     }
-    
+
     pub fn create_high_performance_config() -> PipelineConfiguration {
         let mut config = Self::create_minimal_config();
-        
+
         // Optimize for performance
         config.performance.num_threads = num_cpus::get() * 2;
         config.performance.memory_limit_gb = 32;
         config.performance.streaming_buffer_size = 10000;
         config.performance.chunk_size = 1000;
-        
+
         // Larger feature dimensions for better accuracy
         config.features.sequence_feature_dim = 200;
         config.features.graph_feature_dim = 100;
         config.features.kmer_feature_dim = 128;
         config.features.include_centrality = true;
         config.features.max_kmers = 100000;
-        
+
         // Larger database caches
         config.database.cache_size = 100000;
         config.database.cache_memory_limit_mb = 1024;
         config.database.batch_size = 10000;
-        
+
         // Enable GPU if available
         config.ml.inference.use_gpu = true;
         config.ml.inference.batch_size = 128;
-        
+
         config
     }
-    
+
     pub fn create_low_memory_config() -> PipelineConfiguration {
         let mut config = Self::create_minimal_config();
-        
+
         // Optimize for low memory usage
         config.performance.memory_limit_gb = 2;
         config.performance.streaming_buffer_size = 100;
         config.performance.chunk_size = 10;
         config.performance.enable_compression = true;
-        
+
         // Smaller feature dimensions
         config.features.sequence_feature_dim = 50;
         config.features.graph_feature_dim = 25;
         config.features.kmer_feature_dim = 32;
         config.features.include_centrality = false;
         config.features.max_kmers = 1000;
-        
+
         // Smaller database caches
         config.database.cache_size = 1000;
         config.database.cache_memory_limit_mb = 64;
         config.database.enable_compression = true;
-        
+
         // Disable expensive features
         config.assembly.enable_simplification = false;
         config.assembly.bubble_popping.enabled = false;
-        
+
         config
     }
 }
@@ -837,26 +852,30 @@ impl ResourceMonitor {
             alert_handlers: Vec::new(),
         }
     }
-    
+
     pub fn start_monitoring(&mut self) -> Result<(), PipelineError> {
         if !self.config.enabled {
             return Ok(());
         }
-        
+
         info!("🔍 Starting resource monitoring...");
-        
+
         // This would start a background thread for monitoring
         // For now, just log the baseline values
-        info!("📊 Memory baseline: {} MB", self.memory_baseline / 1024 / 1024);
+        info!(
+            "📊 Memory baseline: {} MB",
+            self.memory_baseline / 1024 / 1024
+        );
         info!("📊 CPU baseline: {:.1}%", self.cpu_baseline);
-        
+
         Ok(())
     }
-    
+
     pub fn check_resources(&self) -> Result<(), PipelineError> {
         let memory_usage = Self::get_memory_usage();
-        let memory_percent = memory_usage as f64 / (self.config.alert_memory_threshold_percent / 100.0);
-        
+        let memory_percent =
+            memory_usage as f64 / (self.config.alert_memory_threshold_percent / 100.0);
+
         if memory_percent > self.config.alert_memory_threshold_percent {
             let alert = ResourceAlert {
                 alert_type: AlertType::MemoryHigh,
@@ -865,10 +884,10 @@ impl ResourceMonitor {
                 threshold: self.config.alert_memory_threshold_percent,
                 timestamp: chrono::Utc::now(),
             };
-            
+
             self.handle_alert(&alert);
         }
-        
+
         let cpu_usage = Self::get_cpu_usage();
         if cpu_usage > self.config.alert_cpu_threshold_percent {
             let alert = ResourceAlert {
@@ -878,33 +897,33 @@ impl ResourceMonitor {
                 threshold: self.config.alert_cpu_threshold_percent,
                 timestamp: chrono::Utc::now(),
             };
-            
+
             self.handle_alert(&alert);
         }
-        
+
         Ok(())
     }
-    
+
     fn handle_alert(&self, alert: &ResourceAlert) {
         warn!("🚨 Resource Alert: {}", alert.message);
-        
+
         for handler in &self.alert_handlers {
             handler(alert);
         }
     }
-    
+
     fn get_memory_usage() -> usize {
         // Simplified memory usage calculation
         // In a real implementation, would use system APIs
         1024 * 1024 * 100 // 100 MB placeholder
     }
-    
+
     fn get_cpu_usage() -> f64 {
         // Simplified CPU usage calculation
         // In a real implementation, would use system APIs
         25.0 // 25% placeholder
     }
-    
+
     pub fn add_alert_handler<F>(&mut self, handler: F)
     where
         F: Fn(&ResourceAlert) + Send + Sync + 'static,
@@ -919,48 +938,51 @@ pub struct ErrorRecoveryManager;
 impl ErrorRecoveryManager {
     pub fn handle_pipeline_error(error: &PipelineError) -> RecoveryAction {
         match error {
-            PipelineError::MemoryError { required_mb, available_mb } => {
+            PipelineError::MemoryError {
+                required_mb,
+                available_mb,
+            } => {
                 if *required_mb > *available_mb * 2 {
                     RecoveryAction::Abort("Insufficient memory, cannot continue".to_string())
                 } else {
                     RecoveryAction::Retry("Reduce memory usage and retry".to_string())
                 }
-            },
+            }
             PipelineError::IOError { .. } => {
                 RecoveryAction::Retry("I/O error, retry with backoff".to_string())
-            },
+            }
             PipelineError::DatabaseError { .. } => {
                 RecoveryAction::Recover("Database error, attempt recovery".to_string())
-            },
+            }
             PipelineError::ValidationError { .. } => {
                 RecoveryAction::Abort("Configuration validation failed".to_string())
-            },
+            }
             _ => RecoveryAction::Continue("Log error and continue".to_string()),
         }
     }
-    
+
     pub fn attempt_recovery(action: &RecoveryAction) -> Result<(), PipelineError> {
         match action {
             RecoveryAction::Retry(message) => {
                 warn!("🔄 Attempting recovery: {}", message);
                 // Implement retry logic
                 Ok(())
-            },
+            }
             RecoveryAction::Recover(message) => {
                 warn!("🛠️  Attempting recovery: {}", message);
                 // Implement recovery logic
                 Ok(())
-            },
+            }
             RecoveryAction::Continue(message) => {
                 info!("➡️  Continuing: {}", message);
                 Ok(())
-            },
+            }
             RecoveryAction::Abort(message) => {
                 error!("🛑 Aborting: {}", message);
                 Err(PipelineError::RecoveryError {
                     message: message.clone(),
                 })
-            },
+            }
         }
     }
 }
@@ -1035,7 +1057,6 @@ impl Default for AmbiguousBaseConfig {
     }
 }
 
-
 impl Default for FeatureExtractionConfig {
     fn default() -> Self {
         Self {
@@ -1079,7 +1100,6 @@ impl Default for AutoVacuumConfig {
         }
     }
 }
-
 
 impl Default for TrainingConfig {
     fn default() -> Self {
@@ -1194,11 +1214,11 @@ impl Default for ConfigurationManager {
 /// Utility functions for configuration management
 pub mod config_utils {
     use super::*;
-    
+
     /// Validate a configuration file without loading it
     pub fn validate_config_file<P: AsRef<Path>>(path: P) -> Result<(), PipelineError> {
         let config = ConfigurationManager::load_config_from_file(path.as_ref())?;
-        
+
         // Basic validation
         if config.assembly.k_min >= config.assembly.k_max {
             return Err(PipelineError::ValidationError {
@@ -1206,31 +1226,34 @@ pub mod config_utils {
                 reason: "must be less than k_max".to_string(),
             });
         }
-        
+
         Ok(())
     }
-    
+
     /// Merge two configurations, with the second taking precedence
-    pub fn merge_configs(base: PipelineConfiguration, override_config: PipelineConfiguration) -> PipelineConfiguration {
+    pub fn merge_configs(
+        base: PipelineConfiguration,
+        override_config: PipelineConfiguration,
+    ) -> PipelineConfiguration {
         // For simplicity, just return the override config
         // In a real implementation, would merge field by field
         override_config
     }
-    
+
     /// Generate a template configuration file
     pub fn generate_config_template<P: AsRef<Path>>(path: P) -> Result<(), PipelineError> {
         let template_config = ConfigurationManager::create_minimal_config();
-        
-        let toml_string = toml::to_string_pretty(&template_config)
-            .map_err(|e| PipelineError::ConfigurationError {
+
+        let toml_string = toml::to_string_pretty(&template_config).map_err(|e| {
+            PipelineError::ConfigurationError {
                 message: format!("Failed to serialize template: {e}"),
-            })?;
-        
-        std::fs::write(path.as_ref(), toml_string)
-            .map_err(|e| PipelineError::IOError {
-                message: format!("Failed to write template: {e}"),
-            })?;
-        
+            }
+        })?;
+
+        std::fs::write(path.as_ref(), toml_string).map_err(|e| PipelineError::IOError {
+            message: format!("Failed to write template: {e}"),
+        })?;
+
         Ok(())
     }
 }
@@ -1239,86 +1262,86 @@ pub mod config_utils {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-    
+
     #[test]
     fn test_minimal_config_creation() {
         let config = ConfigurationManager::create_minimal_config();
-        
+
         assert_eq!(config.general.name, "metagenomics-pipeline");
         assert!(config.assembly.k_min < config.assembly.k_max);
         assert!(config.features.sequence_feature_dim > 0);
         assert!(config.performance.num_threads > 0);
     }
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = ConfigurationManager::create_minimal_config();
-        
+
         // Test invalid k-mer range
         config.assembly.k_min = 30;
         config.assembly.k_max = 20;
-        
+
         let temp_dir = tempdir().unwrap();
         config.general.work_dir = temp_dir.path().to_path_buf();
         config.general.temp_dir = temp_dir.path().join("tmp");
         config.general.output_dir = temp_dir.path().join("output");
-        
+
         let manager = ConfigurationManager {
             config,
             config_path: None,
             environment_prefix: "TEST".to_string(),
         };
-        
+
         assert!(manager.validate_configuration().is_err());
     }
-    
+
     #[test]
     fn test_config_serialization() {
         let config = ConfigurationManager::create_minimal_config();
         let temp_dir = tempdir().unwrap();
         let config_path = temp_dir.path().join("test_config.toml");
-        
+
         // Serialize
         let toml_string = toml::to_string_pretty(&config).unwrap();
         std::fs::write(&config_path, toml_string).unwrap();
-        
+
         // Deserialize
         let loaded_config = ConfigurationManager::load_config_from_file(&config_path).unwrap();
-        
+
         assert_eq!(config.general.name, loaded_config.general.name);
         assert_eq!(config.assembly.k_min, loaded_config.assembly.k_min);
     }
-    
+
     #[test]
     fn test_error_recovery() {
         let memory_error = PipelineError::MemoryError {
             required_mb: 1500, // More than 2x available (1500 > 500*2)
             available_mb: 500,
         };
-        
+
         let action = ErrorRecoveryManager::handle_pipeline_error(&memory_error);
-        
+
         match action {
             RecoveryAction::Abort(_) => {
                 // Expected for severe memory shortage
-            },
+            }
             _ => panic!("Expected abort action for severe memory error"),
         }
-        
+
         let io_error = PipelineError::IOError {
             message: "File not found".to_string(),
         };
-        
+
         let action = ErrorRecoveryManager::handle_pipeline_error(&io_error);
-        
+
         match action {
             RecoveryAction::Retry(_) => {
                 // Expected for I/O errors
-            },
+            }
             _ => panic!("Expected retry action for I/O error"),
         }
     }
-    
+
     #[test]
     fn test_resource_monitoring() {
         let monitoring_config = MonitoringConfig {
@@ -1327,14 +1350,14 @@ mod tests {
             alert_memory_threshold_percent: 80.0,
             alert_cpu_threshold_percent: 90.0,
         };
-        
+
         let mut monitor = ResourceMonitor::new(monitoring_config);
-        
+
         // Add a test alert handler
         monitor.add_alert_handler(|alert| {
             println!("Test alert: {}", alert.message);
         });
-        
+
         assert!(monitor.start_monitoring().is_ok());
         assert!(monitor.check_resources().is_ok());
     }

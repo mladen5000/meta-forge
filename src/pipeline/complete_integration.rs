@@ -9,11 +9,11 @@ use crate::utils::progress_display::{MultiProgress, ProgressBar};
 
 use crate::assembly::adaptive_k::AssemblyGraphBuilder;
 // use crate::tests::comprehensive_test_suite::{TestDataGenerator, TestRunner};
-use crate::utils::configuration::*;
 use crate::core::data_structures::*;
 use crate::database::integration::*;
 use crate::features::extraction::*;
 use crate::pipeline::integrated::AbundanceProfile;
+use crate::utils::configuration::*;
 
 /// Enhanced Metagenomics Pipeline - Complete Integration
 ///
@@ -365,33 +365,81 @@ impl MetagenomicsPipeline {
         self.resource_monitor.start_monitoring()?;
 
         // Phase 1: Data preprocessing and error correction
-        multi_progress.update_line(preprocess_line, "📋 Preprocessing: Loading input files...".to_string());
-        let corrected_reads = self.preprocess_inputs_with_progress(inputs, multi_progress, preprocess_line).await?;
+        multi_progress.update_line(
+            preprocess_line,
+            "📋 Preprocessing: Loading input files...".to_string(),
+        );
+        let corrected_reads = self
+            .preprocess_inputs_with_progress(inputs, multi_progress, preprocess_line)
+            .await?;
         multi_progress.update_line(preprocess_line, "📋 Preprocessing: ✅ Complete".to_string());
 
         // Phase 2: Assembly with adaptive k-mer selection
-        multi_progress.update_line(assembly_line, "🧬 Assembly: Building contigs...".to_string());
-        let assembly_results = self.run_assembly_with_progress(&corrected_reads, multi_progress, assembly_line).await?;
+        multi_progress.update_line(
+            assembly_line,
+            "🧬 Assembly: Building contigs...".to_string(),
+        );
+        let assembly_results = self
+            .run_assembly_with_progress(&corrected_reads, multi_progress, assembly_line)
+            .await?;
         multi_progress.update_line(assembly_line, "🧬 Assembly: ✅ Complete".to_string());
 
         // Phase 3: Feature extraction
-        multi_progress.update_line(features_line, "🔍 Feature Extraction: Analyzing sequences...".to_string());
-        let features = self.extract_features_with_progress(&assembly_results, multi_progress, features_line).await?;
-        multi_progress.update_line(features_line, "🔍 Feature Extraction: ✅ Complete".to_string());
+        multi_progress.update_line(
+            features_line,
+            "🔍 Feature Extraction: Analyzing sequences...".to_string(),
+        );
+        let features = self
+            .extract_features_with_progress(&assembly_results, multi_progress, features_line)
+            .await?;
+        multi_progress.update_line(
+            features_line,
+            "🔍 Feature Extraction: ✅ Complete".to_string(),
+        );
 
         // Phase 4: Taxonomic classification
-        multi_progress.update_line(classification_line, "🏷️  Classification: Identifying species...".to_string());
-        let classifications = self.classify_sequences_with_progress(&assembly_results, &features, multi_progress, classification_line).await?;
-        multi_progress.update_line(classification_line, "🏷️  Classification: ✅ Complete".to_string());
+        multi_progress.update_line(
+            classification_line,
+            "🏷️  Classification: Identifying species...".to_string(),
+        );
+        let classifications = self
+            .classify_sequences_with_progress(
+                &assembly_results,
+                &features,
+                multi_progress,
+                classification_line,
+            )
+            .await?;
+        multi_progress.update_line(
+            classification_line,
+            "🏷️  Classification: ✅ Complete".to_string(),
+        );
 
         // Phase 5: Abundance estimation
-        multi_progress.update_line(abundance_line, "📊 Abundance: Calculating profiles...".to_string());
-        let abundance_profile = self.estimate_abundance_with_progress(&corrected_reads, multi_progress, abundance_line).await?;
+        multi_progress.update_line(
+            abundance_line,
+            "📊 Abundance: Calculating profiles...".to_string(),
+        );
+        let abundance_profile = self
+            .estimate_abundance_with_progress(&corrected_reads, multi_progress, abundance_line)
+            .await?;
         multi_progress.update_line(abundance_line, "📊 Abundance: ✅ Complete".to_string());
 
         // Phase 6: Generate comprehensive report
-        multi_progress.update_line(report_line, "📝 Report: Generating output files...".to_string());
-        let report = self.generate_report_with_progress(sample_name, &assembly_results, &classifications, &abundance_profile, multi_progress, report_line).await?;
+        multi_progress.update_line(
+            report_line,
+            "📝 Report: Generating output files...".to_string(),
+        );
+        let report = self
+            .generate_report_with_progress(
+                sample_name,
+                &assembly_results,
+                &classifications,
+                &abundance_profile,
+                multi_progress,
+                report_line,
+            )
+            .await?;
         multi_progress.update_line(report_line, "📝 Report: ✅ Complete".to_string());
 
         let total_time = start_time.elapsed();
@@ -518,16 +566,17 @@ impl MetagenomicsPipeline {
         );
 
         // Convert core CorrectedRead to assembly CorrectedRead for compatibility
-        let assembly_reads: Vec<_> = reads.iter().map(|r| {
-            crate::core::data_structures::CorrectedRead {
+        let assembly_reads: Vec<_> = reads
+            .iter()
+            .map(|r| crate::core::data_structures::CorrectedRead {
                 id: r.id,
                 original: r.original.clone(),
                 corrected: r.corrected.clone(),
                 corrections: r.corrections.clone(),
                 quality_scores: r.quality_scores.clone(),
                 correction_metadata: r.correction_metadata.clone(),
-            }
-        }).collect();
+            })
+            .collect();
         let assembly_graph = builder.build(&assembly_reads)?;
         // Note: Contigs are generated during the build process
 
@@ -832,46 +881,56 @@ impl MetagenomicsPipeline {
     }
 
     // Progress-enabled versions of pipeline methods
-    
+
     async fn preprocess_inputs_with_progress(
-        &self, 
-        inputs: &[PathBuf], 
+        &self,
+        inputs: &[PathBuf],
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<Vec<CorrectedRead>> {
         let mut all_reads = Vec::new();
-        
+
         for (i, input_file) in inputs.iter().enumerate() {
-            multi_progress.update_line(line_id, 
-                format!("📋 Preprocessing: Processing file {}/{} - {}", 
-                       i + 1, inputs.len(), input_file.file_name().unwrap_or_default().to_string_lossy()));
-            
+            multi_progress.update_line(
+                line_id,
+                format!(
+                    "📋 Preprocessing: Processing file {}/{} - {}",
+                    i + 1,
+                    inputs.len(),
+                    input_file.file_name().unwrap_or_default().to_string_lossy()
+                ),
+            );
+
             let format = self.detect_file_format(input_file)?;
             let reads = match format {
                 FileFormat::Fastq | FileFormat::FastqGz => {
-                    self.process_fastq_file_with_progress(input_file, multi_progress, line_id).await?
+                    self.process_fastq_file_with_progress(input_file, multi_progress, line_id)
+                        .await?
                 }
                 FileFormat::Fasta | FileFormat::FastaGz => {
                     self.process_fasta_file(input_file).await?
                 }
                 FileFormat::Unknown => {
-                    return Err(anyhow::anyhow!("Unsupported file format: {}", input_file.display()));
+                    return Err(anyhow::anyhow!(
+                        "Unsupported file format: {}",
+                        input_file.display()
+                    ));
                 }
             };
             all_reads.extend(reads);
         }
-        
+
         Ok(all_reads)
     }
 
     async fn process_fastq_file_with_progress(
-        &self, 
-        file_path: &Path, 
+        &self,
+        file_path: &Path,
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<Vec<CorrectedRead>> {
         use bio::io::fastq;
-        
+
         let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
         let mut corrected_reads = Vec::new();
         let mut pb = ProgressBar::new(0, "Reading sequences"); // Start as indeterminate
@@ -896,11 +955,13 @@ impl MetagenomicsPipeline {
             };
 
             corrected_reads.push(corrected_read);
-            
+
             if read_id % 1000 == 0 {
                 pb.update(read_id as u64);
-                multi_progress.update_line(line_id,
-                    format!("📋 Preprocessing: {read_id} reads processed"));
+                multi_progress.update_line(
+                    line_id,
+                    format!("📋 Preprocessing: {read_id} reads processed"),
+                );
             }
         }
 
@@ -909,22 +970,28 @@ impl MetagenomicsPipeline {
     }
 
     async fn run_assembly_with_progress(
-        &self, 
-        reads: &[CorrectedRead], 
+        &self,
+        reads: &[CorrectedRead],
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<AssemblyResults> {
-        multi_progress.update_line(line_id, "🧬 Assembly: Initializing graph builder...".to_string());
-        
+        multi_progress.update_line(
+            line_id,
+            "🧬 Assembly: Initializing graph builder...".to_string(),
+        );
+
         let builder = AssemblyGraphBuilder::new(
             self.config.assembly.k_min,
             self.config.assembly.k_max,
             self.config.assembly.min_coverage,
         );
 
-        multi_progress.update_line(line_id, "🧬 Assembly: Building assembly graph...".to_string());
+        multi_progress.update_line(
+            line_id,
+            "🧬 Assembly: Building assembly graph...".to_string(),
+        );
         let assembly_graph = builder.build(reads)?;
-        
+
         multi_progress.update_line(line_id, "🧬 Assembly: Generating contigs...".to_string());
         // Note: Contigs are generated during the build process
 
@@ -945,22 +1012,34 @@ impl MetagenomicsPipeline {
     }
 
     async fn extract_features_with_progress(
-        &self, 
-        assembly: &AssemblyResults, 
+        &self,
+        assembly: &AssemblyResults,
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<FeatureCollection> {
-        multi_progress.update_line(line_id, "🔍 Feature Extraction: Initializing extractors...".to_string());
-        
+        multi_progress.update_line(
+            line_id,
+            "🔍 Feature Extraction: Initializing extractors...".to_string(),
+        );
+
         let features = FeatureCollection::new();
 
-        multi_progress.update_line(line_id, "🔍 Feature Extraction: Processing contigs...".to_string());
-        
+        multi_progress.update_line(
+            line_id,
+            "🔍 Feature Extraction: Processing contigs...".to_string(),
+        );
+
         for (i, _contig) in assembly.contigs.iter().enumerate() {
             // Mock feature extraction - skipping actual feature extraction for progress demo
             if i % 100 == 0 && i > 0 {
-                multi_progress.update_line(line_id, 
-                    format!("🔍 Feature Extraction: Processed {}/{} contigs", i, assembly.contigs.len()));
+                multi_progress.update_line(
+                    line_id,
+                    format!(
+                        "🔍 Feature Extraction: Processed {}/{} contigs",
+                        i,
+                        assembly.contigs.len()
+                    ),
+                );
             }
         }
 
@@ -968,18 +1047,21 @@ impl MetagenomicsPipeline {
     }
 
     async fn classify_sequences_with_progress(
-        &self, 
-        assembly: &AssemblyResults, 
+        &self,
+        assembly: &AssemblyResults,
         _features: &FeatureCollection,
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<Vec<TaxonomicClassification>> {
         multi_progress.update_line(line_id, "🏷️  Classification: Loading models...".to_string());
-        
+
         let mut classifications = Vec::new();
-        
-        multi_progress.update_line(line_id, "🏷️  Classification: Analyzing sequences...".to_string());
-        
+
+        multi_progress.update_line(
+            line_id,
+            "🏷️  Classification: Analyzing sequences...".to_string(),
+        );
+
         for (i, _contig) in assembly.contigs.iter().enumerate() {
             // Mock classification - in real implementation would use ML models
             let classification = TaxonomicClassification {
@@ -991,10 +1073,16 @@ impl MetagenomicsPipeline {
                 method: "Mock".to_string(),
             };
             classifications.push(classification);
-            
+
             if i % 50 == 0 && i > 0 {
-                multi_progress.update_line(line_id,
-                    format!("🏷️  Classification: Classified {}/{} sequences", i, assembly.contigs.len()));
+                multi_progress.update_line(
+                    line_id,
+                    format!(
+                        "🏷️  Classification: Classified {}/{} sequences",
+                        i,
+                        assembly.contigs.len()
+                    ),
+                );
             }
         }
 
@@ -1002,24 +1090,27 @@ impl MetagenomicsPipeline {
     }
 
     async fn estimate_abundance_with_progress(
-        &self, 
-        reads: &[CorrectedRead], 
+        &self,
+        reads: &[CorrectedRead],
         multi_progress: &mut MultiProgress,
-        line_id: usize
+        line_id: usize,
     ) -> Result<AbundanceProfile> {
-        multi_progress.update_line(line_id, "📊 Abundance: Initializing estimator...".to_string());
-        
+        multi_progress.update_line(
+            line_id,
+            "📊 Abundance: Initializing estimator...".to_string(),
+        );
+
         // Mock abundance estimation
         let mut abundance_data = std::collections::HashMap::new();
-        
+
         multi_progress.update_line(line_id, "📊 Abundance: Processing k-mers...".to_string());
-        
+
         for i in 0..100 {
             abundance_data.insert(i as u64, fastrand::f64() * 100.0);
-            
+
             if i % 10 == 0 {
-                multi_progress.update_line(line_id,
-                    format!("📊 Abundance: Processed {i} k-mer groups"));
+                multi_progress
+                    .update_line(line_id, format!("📊 Abundance: Processed {i} k-mer groups"));
             }
         }
 
@@ -1039,8 +1130,11 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<AnalysisReport> {
-        multi_progress.update_line(line_id, "📝 Report: Generating analysis report...".to_string());
-        
+        multi_progress.update_line(
+            line_id,
+            "📝 Report: Generating analysis report...".to_string(),
+        );
+
         let report = AnalysisReport {
             sample_name: sample_name.to_string(),
             timestamp: chrono::Utc::now(),
@@ -1050,7 +1144,11 @@ impl MetagenomicsPipeline {
                 n50: assembly.assembly_stats.n50,
                 mean_coverage: assembly.assembly_stats.coverage_mean,
                 unique_species: classifications.len(),
-                diversity_index: classifications.iter().map(|c| c.confidence * c.confidence.ln()).sum::<f64>().abs(),
+                diversity_index: classifications
+                    .iter()
+                    .map(|c| c.confidence * c.confidence.ln())
+                    .sum::<f64>()
+                    .abs(),
             },
             quality_metrics: QualityMetrics {
                 assembly_completeness: 0.85,
@@ -1499,8 +1597,8 @@ pub fn print_usage_examples() {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use tempfile::tempdir;
     use std::io::Write;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_complete_pipeline() -> Result<()> {
@@ -1552,14 +1650,14 @@ mod integration_tests {
         // Create test FASTQ file
         let fastq_path = temp_dir.path().join("test_reads.fastq");
         let mut fastq_file = std::fs::File::create(&fastq_path)?;
-        
+
         for read in &test_reads {
             writeln!(fastq_file, "@read_{}", read.id)?;
             writeln!(fastq_file, "{}", read.corrected)?;
             writeln!(fastq_file, "+")?;
             writeln!(fastq_file, "I")?; // Simple quality scores
         }
-        
+
         let fastq_file = fastq_path;
 
         // Create minimal config
@@ -1578,11 +1676,7 @@ mod integration_tests {
 
         // Run analysis
         let results = pipeline
-            .run_analysis(
-                &[fastq_file.clone()],
-                "test_sample",
-                AnalysisMode::Fast,
-            )
+            .run_analysis(&[fastq_file.clone()], "test_sample", AnalysisMode::Fast)
             .await?;
 
         // Verify results

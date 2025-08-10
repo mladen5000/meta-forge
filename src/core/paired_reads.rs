@@ -1,13 +1,13 @@
-use anyhow::{Result, anyhow};
+use ahash::AHashMap;
+use anyhow::{anyhow, Result};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use rayon::prelude::*;
-use ahash::AHashMap;
 
-use crate::core::data_structures::{CorrectedRead, BaseCorrection, CorrectionMetadata};
+use crate::core::data_structures::{BaseCorrection, CorrectedRead, CorrectionMetadata};
 
 /// Enhanced paired-end read support for metagenomic assembly
-/// 
+///
 /// This module provides comprehensive paired-end read handling including:
 /// - Paired read data structures with mate relationship tracking
 /// - Support for both interleaved and separate R1/R2 FASTQ files
@@ -80,8 +80,8 @@ pub struct ReadInfo {
 /// Read orientation in the pair
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReadOrientation {
-    Forward,  // R1
-    Reverse,  // R2
+    Forward, // R1
+    Reverse, // R2
 }
 
 /// Library preparation type
@@ -184,13 +184,13 @@ impl ReadPair {
         // In a real implementation, this would use alignment information
         let forward_len = self.forward.read_info.length;
         let reverse_len = self.reverse.read_info.length;
-        
+
         // Estimate based on typical insert sizes for metagenomics
         let estimated_insert = (forward_len + reverse_len + 200).max(300);
-        
+
         self.pair_info.insert_size = Some(estimated_insert);
         self.pair_info.insert_confidence = 0.5; // Placeholder confidence
-        
+
         Ok(())
     }
 
@@ -199,7 +199,7 @@ impl ReadPair {
         // Check orientation
         let forward_is_forward = self.forward.orientation == ReadOrientation::Forward;
         let reverse_is_reverse = self.reverse.orientation == ReadOrientation::Reverse;
-        
+
         if !forward_is_forward || !reverse_is_reverse {
             return Ok(false);
         }
@@ -227,15 +227,22 @@ impl ReadPair {
         // For assembly, we might want to represent the pair as a combined sequence
         // with a gap representing the insert
         let gap_size = self.pair_info.insert_size.unwrap_or(300);
-        let gap = "N".repeat(gap_size.saturating_sub(self.forward.read_info.length + self.reverse.read_info.length));
-        
-        format!("{}{}{}", self.forward.corrected, gap, reverse_complement(&self.reverse.corrected))
+        let gap = "N".repeat(
+            gap_size.saturating_sub(self.forward.read_info.length + self.reverse.read_info.length),
+        );
+
+        format!(
+            "{}{}{}",
+            self.forward.corrected,
+            gap,
+            reverse_complement(&self.reverse.corrected)
+        )
     }
 
     /// Extract k-mers considering paired-end information
     pub fn extract_paired_kmers(&self, k: usize) -> Result<Vec<PairedKmer>> {
         let mut kmers = Vec::new();
-        
+
         // Extract k-mers from forward read
         for (i, window) in self.forward.corrected.as_bytes().windows(k).enumerate() {
             let kmer_str = std::str::from_utf8(window)?;
@@ -293,7 +300,8 @@ impl PairedRead {
     ) -> Self {
         let read_info = ReadInfo {
             length: sequence.len(),
-            avg_quality: quality_scores.iter().map(|&q| q as f64).sum::<f64>() / quality_scores.len() as f64,
+            avg_quality: quality_scores.iter().map(|&q| q as f64).sum::<f64>()
+                / quality_scores.len() as f64,
             gc_content: calculate_gc_content(&sequence),
             complexity: crate::core::data_structures::calculate_sequence_complexity(&sequence),
             passes_filter: true, // Initial assumption
@@ -313,9 +321,8 @@ impl PairedRead {
 
     /// Apply quality filtering
     pub fn apply_quality_filter(&mut self, min_quality: f64, min_length: usize) {
-        self.read_info.passes_filter = 
-            self.read_info.avg_quality >= min_quality && 
-            self.read_info.length >= min_length;
+        self.read_info.passes_filter =
+            self.read_info.avg_quality >= min_quality && self.read_info.length >= min_length;
     }
 
     /// Convert to regular CorrectedRead for backward compatibility
@@ -363,7 +370,7 @@ impl PairedReadCollection {
     /// Add a read pair to the collection
     pub fn add_pair(&mut self, pair: ReadPair) -> Result<()> {
         let pair_id = pair.forward.pair_id.clone();
-        
+
         if self.pair_index.contains_key(&pair_id) {
             return Err(anyhow!("Duplicate pair ID: {}", pair_id));
         }
@@ -371,7 +378,7 @@ impl PairedReadCollection {
         let index = self.pairs.len();
         self.pair_index.insert(pair_id, index);
         self.pairs.push(pair);
-        
+
         Ok(())
     }
 
@@ -402,14 +409,15 @@ impl PairedReadCollection {
         self.stats.singletons = self.singletons.len();
 
         // Calculate properly paired statistics
-        self.stats.properly_paired = self.pairs
+        self.stats.properly_paired = self
+            .pairs
             .iter()
             .filter(|pair| pair.validate_pair().unwrap_or(false))
             .count();
 
         // Calculate insert size statistics
         self.calculate_insert_size_stats();
-        
+
         // Calculate quality statistics
         self.calculate_quality_stats();
 
@@ -419,7 +427,8 @@ impl PairedReadCollection {
 
     /// Calculate insert size distribution
     fn calculate_insert_size_stats(&mut self) {
-        let insert_sizes: Vec<usize> = self.pairs
+        let insert_sizes: Vec<usize> = self
+            .pairs
             .iter()
             .filter_map(|pair| pair.pair_info.insert_size)
             .collect();
@@ -441,8 +450,9 @@ impl PairedReadCollection {
                 let diff = size as f64 - mean;
                 diff * diff
             })
-            .sum::<f64>() / insert_sizes.len() as f64;
-        
+            .sum::<f64>()
+            / insert_sizes.len() as f64;
+
         let std_dev = variance.sqrt();
 
         // Build distribution histogram
@@ -475,7 +485,7 @@ impl PairedReadCollection {
         for pair in &self.pairs {
             let r1_avg = pair.forward.read_info.avg_quality;
             let r2_avg = pair.reverse.read_info.avg_quality;
-            
+
             r1_qualities.push(r1_avg);
             r2_qualities.push(r2_avg);
 
@@ -537,15 +547,14 @@ impl PairedReadCollection {
     /// Filter collection by quality criteria
     pub fn filter_by_quality(&mut self, min_quality: f64, min_length: usize) {
         self.pairs.retain(|pair| {
-            pair.forward.read_info.avg_quality >= min_quality &&
-            pair.reverse.read_info.avg_quality >= min_quality &&
-            pair.forward.read_info.length >= min_length &&
-            pair.reverse.read_info.length >= min_length
+            pair.forward.read_info.avg_quality >= min_quality
+                && pair.reverse.read_info.avg_quality >= min_quality
+                && pair.forward.read_info.length >= min_length
+                && pair.reverse.read_info.length >= min_length
         });
 
         self.singletons.retain(|read| {
-            read.read_info.avg_quality >= min_quality &&
-            read.read_info.length >= min_length
+            read.read_info.avg_quality >= min_quality && read.read_info.length >= min_length
         });
 
         // Rebuild index
@@ -558,9 +567,10 @@ impl PairedReadCollection {
     /// Extract all k-mers with paired-end context
     pub fn extract_all_paired_kmers(&self, k: usize) -> Result<Vec<PairedKmer>> {
         let mut all_kmers = Vec::new();
-        
+
         // Process pairs in parallel for efficiency
-        let pair_kmers: Result<Vec<Vec<PairedKmer>>> = self.pairs
+        let pair_kmers: Result<Vec<Vec<PairedKmer>>> = self
+            .pairs
             .par_iter()
             .map(|pair| pair.extract_paired_kmers(k))
             .collect();
@@ -595,7 +605,6 @@ fn calculate_gc_content(sequence: &str) -> f64 {
     gc_count as f64 / sequence.len() as f64
 }
 
-
 /// Generate reverse complement of a DNA sequence
 fn reverse_complement(sequence: &str) -> String {
     sequence
@@ -603,12 +612,12 @@ fn reverse_complement(sequence: &str) -> String {
         .rev()
         .map(|c| match c {
             'A' => 'T',
-            'T' => 'A', 
+            'T' => 'A',
             'G' => 'C',
             'C' => 'G',
             'a' => 't',
             't' => 'a',
-            'g' => 'c', 
+            'g' => 'c',
             'c' => 'g',
             'N' | 'n' => 'N',
             _ => c,
@@ -620,12 +629,12 @@ fn reverse_complement(sequence: &str) -> String {
 pub fn extract_pair_id(header: &str) -> Result<(String, ReadOrientation)> {
     // Remove the '@' prefix if present
     let header = header.strip_prefix('@').unwrap_or(header);
-    
+
     // Handle Illumina format: @SRR123456.1 1:N:0:ACGT or @SRR123456.1/1
     if let Some(space_pos) = header.find(' ') {
         let base_id = header[..space_pos].to_string();
         let suffix = &header[space_pos + 1..];
-        
+
         // Check for /1 or /2 format
         if suffix.starts_with('1') {
             return Ok((base_id, ReadOrientation::Forward));
@@ -633,7 +642,7 @@ pub fn extract_pair_id(header: &str) -> Result<(String, ReadOrientation)> {
             return Ok((base_id, ReadOrientation::Reverse));
         }
     }
-    
+
     // Handle /1 and /2 suffix format
     if header.ends_with("/1") {
         let base_id = header[..header.len() - 2].to_string();
@@ -642,7 +651,7 @@ pub fn extract_pair_id(header: &str) -> Result<(String, ReadOrientation)> {
         let base_id = header[..header.len() - 2].to_string();
         return Ok((base_id, ReadOrientation::Reverse));
     }
-    
+
     // Handle .1 and .2 suffix format
     if header.ends_with(".1") {
         let base_id = header[..header.len() - 2].to_string();
@@ -727,7 +736,7 @@ mod tests {
 
         assert_eq!(collection.pairs.len(), 1);
         assert!(collection.get_pair("pair_1").is_some());
-        
+
         collection.calculate_stats();
         assert_eq!(collection.stats.total_pairs, 1);
     }
@@ -752,7 +761,7 @@ mod tests {
 
         let mut pair = ReadPair::new(forward, reverse).unwrap();
         pair.estimate_insert_size().unwrap();
-        
+
         assert!(pair.pair_info.insert_size.is_some());
         assert!(pair.pair_info.insert_size.unwrap() > 0);
     }
@@ -777,10 +786,14 @@ mod tests {
 
         let pair = ReadPair::new(forward, reverse).unwrap();
         let kmers = pair.extract_paired_kmers(4).unwrap();
-        
+
         assert!(!kmers.is_empty());
-        assert!(kmers.iter().any(|k| k.read_orientation == ReadOrientation::Forward));
-        assert!(kmers.iter().any(|k| k.read_orientation == ReadOrientation::Reverse));
+        assert!(kmers
+            .iter()
+            .any(|k| k.read_orientation == ReadOrientation::Forward));
+        assert!(kmers
+            .iter()
+            .any(|k| k.read_orientation == ReadOrientation::Reverse));
     }
 
     #[test]
@@ -821,8 +834,12 @@ mod tests {
             vec![15; 12],
         );
 
-        collection.add_pair(ReadPair::new(forward_hq, reverse_hq).unwrap()).unwrap();
-        collection.add_pair(ReadPair::new(forward_lq, reverse_lq).unwrap()).unwrap();
+        collection
+            .add_pair(ReadPair::new(forward_hq, reverse_hq).unwrap())
+            .unwrap();
+        collection
+            .add_pair(ReadPair::new(forward_lq, reverse_lq).unwrap())
+            .unwrap();
 
         assert_eq!(collection.pairs.len(), 2);
 

@@ -3,23 +3,43 @@ pub mod paired_reads;
 
 // Re-export key types for assembly integration
 pub use data_structures::{
-    // Core k-mer and graph structures
-    CanonicalKmer, GraphNode, GraphEdge, GraphFragment,
-    
-    // Assembly-specific types
-    AssemblyGraph, AssemblyStats, Contig, ContigType,
-    EdgeWeight, EulerianPathType,
-    
-    // Read and correction types
-    CorrectedRead, CorrectionMetadata, BaseCorrection, CorrectionType,
-    
-    // Graph analysis types
-    BubbleStructure, BubbleType, NodeType, EdgeType,
-    
     // Processing types
-    AssemblyChunk, ProcessingStats, GraphUpdate,
-    
+    AssemblyChunk,
+    // Assembly-specific types
+    AssemblyGraph,
+    AssemblyStats,
+    BaseCorrection,
+    // Graph analysis types
+    BubbleStructure,
+    BubbleType,
+    // Core k-mer and graph structures
+    CanonicalKmer,
+    Contig,
+    ContigType,
+    // Read and correction types
+    CorrectedRead,
+    CorrectionMetadata,
+    CorrectionType,
+
+    CoverageStats,
+    EdgeType,
+
+    EdgeUpdate,
+    EdgeWeight,
+    EulerianPathType,
+
+    GraphEdge,
+    GraphFragment,
+
+    GraphNode,
+    GraphUpdate,
+
     // Utility types
-    Minimizer, MinimizerExtractor, ReadPosition, Strand,
-    CoverageStats, NodeUpdate, EdgeUpdate,
+    Minimizer,
+    MinimizerExtractor,
+    NodeType,
+    NodeUpdate,
+    ProcessingStats,
+    ReadPosition,
+    Strand,
 };

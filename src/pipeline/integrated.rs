@@ -10,30 +10,30 @@ use seq_io::fastq::{Reader as SeqReader, Record};
 use hyperloglog::HyperLogLog as ExternalHLL;
 use ndarray::{Array1, Array2};
 use ort::{Session, SessionBuilder}; // ONNX Runtime
-// use sketchy::{BottomK, MinHash}; // Package not available
+                                    // use sketchy::{BottomK, MinHash}; // Package not available
 use smartcore::ensemble::random_forest_classifier::RandomForestClassifier; // For sketching algorithms
 
 // Graph processing
 use pathfinding::prelude::*;
 use petgraph::algo::connected_components;
-use petgraph::{Directed, Graph};
-use petgraph::graph::NodeIndex; // Graph algorithms
+use petgraph::graph::NodeIndex;
+use petgraph::{Directed, Graph}; // Graph algorithms
 
 // Core data structures
-use crate::core::data_structures::{GraphFragment, GraphNode, GraphEdge, CorrectionMetadata};
+use crate::core::data_structures::{CorrectionMetadata, GraphEdge, GraphFragment, GraphNode};
 
 // Performance & Utilities
 use ahash::AHashMap; // Faster hashing
- // Fast serialization
-use crossbeam_channel::{Receiver, Sender, bounded};
- // Concurrent HashMap
- // Compression
+                     // Fast serialization
+use crossbeam_channel::{bounded, Receiver, Sender};
+// Concurrent HashMap
+// Compression
 use memmap2::MmapOptions; // Memory-mapped files
 use mimalloc::MiMalloc;
-use std::sync::Arc;
 use parking_lot::Mutex; // Better locks than std
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize}; // Better allocator
+use serde::{Deserialize, Serialize};
+use std::sync::Arc; // Better allocator
 
 // Set global allocator for better performance
 #[global_allocator]
@@ -485,7 +485,7 @@ impl AdaptiveAssembler {
         let normalized = (complexity / 2.0).clamp(0.0, 1.0);
         self.min_k + (normalized * (self.max_k - self.min_k) as f64) as usize
     }
-    
+
     fn process_batch(&mut self, reads: &[CorrectedRead]) -> Result<AssemblyChunk> {
         // Create the local AssemblyChunk type
         let mut chunk = AssemblyChunk {
@@ -498,11 +498,11 @@ impl AdaptiveAssembler {
                 coverage_stats: crate::core::data_structures::CoverageStats::default(),
             },
         };
-        
+
         for read in reads {
             chunk.reads.push(read.clone());
         }
-        
+
         // Assembly chunk is ready
         Ok(chunk)
     }
@@ -584,10 +584,10 @@ impl StreamingCorrector {
 
         None
     }
-    
+
     fn correct_read_advanced(&mut self, raw_read: &RawRead) -> Result<CorrectedRead> {
         let corrected_sequence = self.correct_sequence(&raw_read.sequence)?;
-        
+
         Ok(CorrectedRead {
             id: raw_read.id,
             original: raw_read.sequence.clone(),
@@ -607,7 +607,14 @@ impl StreamingCorrector {
 /// Smart taxonomic filter using machine learning (simplified with smartcore)
 pub struct SmartTaxonomyFilter {
     // Using smartcore random forest instead of custom neural network
-    classifier: Option<RandomForestClassifier<f64, u32, smartcore::linalg::basic::matrix::DenseMatrix<f64>, Vec<u32>>>,
+    classifier: Option<
+        RandomForestClassifier<
+            f64,
+            u32,
+            smartcore::linalg::basic::matrix::DenseMatrix<f64>,
+            Vec<u32>,
+        >,
+    >,
     feature_extractor: FeatureExtractor,
     taxonomy_db: TaxonomyDatabase,
 }
@@ -655,7 +662,16 @@ impl SmartTaxonomyFilter {
         }
     }
 
-    fn train_classifier(db: &TaxonomyDatabase) -> Result<RandomForestClassifier<f64, u32, smartcore::linalg::basic::matrix::DenseMatrix<f64>, Vec<u32>>> {
+    fn train_classifier(
+        db: &TaxonomyDatabase,
+    ) -> Result<
+        RandomForestClassifier<
+            f64,
+            u32,
+            smartcore::linalg::basic::matrix::DenseMatrix<f64>,
+            Vec<u32>,
+        >,
+    > {
         // Simplified training data preparation
         let training_data = db.get_training_examples()?;
         let features: Array2<f64> = Array2::from_shape_vec(
@@ -679,10 +695,13 @@ impl SmartTaxonomyFilter {
         let nrows = features.nrows();
         let ncols = features.ncols();
         let features_data: Vec<f64> = features.into_raw_vec_and_offset().0;
-        let features_2d: Vec<Vec<f64>> = features_data.chunks(ncols).map(|chunk| chunk.to_vec()).collect();
+        let features_2d: Vec<Vec<f64>> = features_data
+            .chunks(ncols)
+            .map(|chunk| chunk.to_vec())
+            .collect();
         let features_matrix = DenseMatrix::from_2d_vec(&features_2d)?;
         let labels_vec: Vec<u32> = labels.to_vec();
-        
+
         let classifier = RandomForestClassifier::fit(&features_matrix, &labels_vec, params)?;
         Ok(classifier)
     }
@@ -747,7 +766,7 @@ impl AIRepeatResolver {
         graph.remove_high_degree_edges(10);
         Ok(())
     }
-    
+
     fn resolve_chunk(&mut self, chunk: &AssemblyChunk) -> Result<AssemblyChunk> {
         // Simplified: just return the original chunk for now
         // In a real implementation, this would analyze the graph fragment
@@ -907,7 +926,9 @@ impl ResolvedGraph {
     }
     fn to_tensor(&self) -> Result<ort::Value> {
         // Simplified placeholder that compiles
-        Err(anyhow::anyhow!("Resolved graph tensor conversion not implemented"))
+        Err(anyhow::anyhow!(
+            "Resolved graph tensor conversion not implemented"
+        ))
     }
 }
 

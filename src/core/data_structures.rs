@@ -1,10 +1,9 @@
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use ahash::{AHashMap, RandomState};
-use anyhow::{Result, anyhow};
-use petgraph::{Graph, Directed};
+use anyhow::{anyhow, Result};
+use petgraph::{Directed, Graph};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
-
 
 /// Core data structures for the enhanced metagenomics pipeline
 /// Implements proper k-mer handling, minimizer extraction, and graph structures
@@ -30,7 +29,7 @@ impl CanonicalKmer {
         {
             return Err(anyhow!("Invalid DNA sequence: {}", kmer));
         }
-        
+
         // Handle ambiguous bases based on configuration
         let processed_kmer = Self::handle_ambiguous_bases(kmer, config)?;
 
@@ -54,7 +53,7 @@ impl CanonicalKmer {
 
     fn handle_ambiguous_bases(kmer: &str, config: &AmbiguousBaseConfig) -> Result<String> {
         let n_count = kmer.chars().filter(|&c| matches!(c, 'N' | 'n')).count();
-        
+
         match config.strategy {
             AmbiguousBaseStrategy::Skip => {
                 if n_count > 0 {
@@ -62,28 +61,36 @@ impl CanonicalKmer {
                 }
                 Ok(kmer.to_string())
             }
-            
+
             AmbiguousBaseStrategy::Allow => {
                 if n_count > config.max_n_count {
                     return Err(anyhow!(
-                        "K-mer contains too many ambiguous bases ({} > {}): {}", 
-                        n_count, config.max_n_count, kmer
+                        "K-mer contains too many ambiguous bases ({} > {}): {}",
+                        n_count,
+                        config.max_n_count,
+                        kmer
                     ));
                 }
                 Ok(kmer.to_string())
             }
-            
-            AmbiguousBaseStrategy::Replace => {
-                Ok(kmer
-                    .chars()
-                    .map(|c| if matches!(c, 'N' | 'n') { config.replacement_base } else { c })
-                    .collect())
-            }
-            
+
+            AmbiguousBaseStrategy::Replace => Ok(kmer
+                .chars()
+                .map(|c| {
+                    if matches!(c, 'N' | 'n') {
+                        config.replacement_base
+                    } else {
+                        c
+                    }
+                })
+                .collect()),
+
             AmbiguousBaseStrategy::RandomReplace => {
                 let mut result = String::new();
-                let probs = config.random_probabilities.unwrap_or([0.25, 0.25, 0.25, 0.25]);
-                
+                let probs = config
+                    .random_probabilities
+                    .unwrap_or([0.25, 0.25, 0.25, 0.25]);
+
                 for c in kmer.chars() {
                     if matches!(c, 'N' | 'n') {
                         // Simple random selection based on probabilities
@@ -104,7 +111,7 @@ impl CanonicalKmer {
                 }
                 Ok(result)
             }
-            
+
             AmbiguousBaseStrategy::ContextReplace => {
                 // Simple context replacement: use most common base in k-mer
                 let mut counts = [0; 4]; // A, C, G, T
@@ -117,18 +124,25 @@ impl CanonicalKmer {
                         _ => {}
                     }
                 }
-                
-                let max_idx = counts.iter()
+
+                let max_idx = counts
+                    .iter()
                     .enumerate()
                     .max_by_key(|(_, &count)| count)
                     .map(|(idx, _)| idx)
                     .unwrap_or(0);
-                
+
                 let replacement = ['A', 'C', 'G', 'T'][max_idx];
-                
+
                 Ok(kmer
                     .chars()
-                    .map(|c| if matches!(c, 'N' | 'n') { replacement } else { c })
+                    .map(|c| {
+                        if matches!(c, 'N' | 'n') {
+                            replacement
+                        } else {
+                            c
+                        }
+                    })
                     .collect())
             }
         }
@@ -141,7 +155,7 @@ impl CanonicalKmer {
             .rev()
             .map(|c| match c {
                 'A' => 'T',
-                'T' => 'A', 
+                'T' => 'A',
                 'G' => 'C',
                 'C' => 'G',
                 'N' => 'N',
@@ -154,7 +168,7 @@ impl CanonicalKmer {
         // Use a deterministic hash function for consistent results
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         seq.hash(&mut hasher);
         hasher.finish()
@@ -396,7 +410,7 @@ impl GraphFragment {
         if path.is_empty() {
             return Ok(String::new());
         }
-        
+
         // For now, create a placeholder sequence based on path length
         // In a real implementation, this would reconstruct from k-mer overlaps
         let mut sequence = String::new();
@@ -418,19 +432,19 @@ impl GraphFragment {
         }
         Ok(sequence)
     }
-    
+
     /// Calculate coverage for a path based on node hashes
     pub fn calculate_path_coverage_from_hashes(&self, path: &[u64]) -> f64 {
         if path.is_empty() {
             return 0.0;
         }
-        
+
         let total_coverage: u32 = path
             .iter()
             .filter_map(|&hash| self.nodes.get(&hash))
             .map(|node| node.coverage)
             .sum();
-            
+
         total_coverage as f64 / path.len() as f64
     }
 
@@ -603,7 +617,11 @@ impl GraphFragment {
             }
         }
 
-        if path.len() > 1 { Some(path) } else { None }
+        if path.len() > 1 {
+            Some(path)
+        } else {
+            None
+        }
     }
 
     fn detect_reconvergence(&self, paths: &[Vec<u64>], start_node: u64) -> Option<BubbleStructure> {
@@ -712,7 +730,6 @@ pub struct AssemblyGraph {
     pub assembly_stats: AssemblyStats,
 }
 
-
 /// Assembly chunk representing a batch of reads and their graph contribution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssemblyChunk {
@@ -736,7 +753,6 @@ pub struct CorrectedRead {
     pub quality_scores: Vec<u8>,
     pub correction_metadata: CorrectionMetadata,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaseCorrection {
@@ -783,8 +799,12 @@ impl AssemblyChunk {
         // Simple k-mer extraction instead of minimizers for more reliable results
         let sequence = &read.corrected;
         if sequence.len() < self.k_size {
-            println!("   Warning: Read {} too short ({} bp) for k-mer size {}", 
-                     read.id, sequence.len(), self.k_size);
+            println!(
+                "   Warning: Read {} too short ({} bp) for k-mer size {}",
+                read.id,
+                sequence.len(),
+                self.k_size
+            );
             return Ok(());
         }
 
@@ -797,11 +817,11 @@ impl AssemblyChunk {
                     continue;
                 }
             };
-            
+
             match CanonicalKmer::new(kmer_str) {
                 Ok(canonical_kmer) => {
                     kmers.push((i, canonical_kmer));
-                },
+                }
                 Err(e) => {
                     println!("   Warning: Failed to create k-mer '{kmer_str}': {e}");
                     continue;
@@ -809,8 +829,12 @@ impl AssemblyChunk {
             }
         }
 
-        println!("   Read {}: extracted {} k-mers from {} bp sequence", 
-                 read.id, kmers.len(), sequence.len());
+        println!(
+            "   Read {}: extracted {} k-mers from {} bp sequence",
+            read.id,
+            kmers.len(),
+            sequence.len()
+        );
         self.processing_stats.minimizers_found += kmers.len();
 
         // Create nodes from k-mers
@@ -994,7 +1018,6 @@ pub fn validate_dna_sequence(sequence: &str) -> Result<()> {
     Ok(())
 }
 
-
 impl Default for AssemblyGraph {
     fn default() -> Self {
         Self::new()
@@ -1036,7 +1059,7 @@ impl AssemblyGraph {
         // Calculate N50 and N90
         let half_length = self.assembly_stats.total_length / 2;
         let ninety_percent = (self.assembly_stats.total_length as f64 * 0.1) as usize;
-        
+
         let mut cumulative = 0;
         for &length in &lengths {
             cumulative += length;
@@ -1049,13 +1072,24 @@ impl AssemblyGraph {
         }
 
         // Calculate average coverage
-        let total_coverage: f64 = self.contigs.iter().map(|c| c.coverage * c.length as f64).sum();
-        self.assembly_stats.coverage_mean = total_coverage / self.assembly_stats.total_length as f64;
+        let total_coverage: f64 = self
+            .contigs
+            .iter()
+            .map(|c| c.coverage * c.length as f64)
+            .sum();
+        self.assembly_stats.coverage_mean =
+            total_coverage / self.assembly_stats.total_length as f64;
 
         // Calculate GC content
-        let gc_count: usize = self.contigs
+        let gc_count: usize = self
+            .contigs
             .iter()
-            .map(|c| c.sequence.chars().filter(|&ch| ch == 'G' || ch == 'C').count())
+            .map(|c| {
+                c.sequence
+                    .chars()
+                    .filter(|&ch| ch == 'G' || ch == 'C')
+                    .count()
+            })
             .sum();
         self.assembly_stats.gc_content = gc_count as f64 / self.assembly_stats.total_length as f64;
     }
@@ -1066,17 +1100,22 @@ impl AssemblyGraph {
     pub fn write_contigs_fasta<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         use std::io::Write;
         let mut file = std::fs::File::create(path.as_ref())?;
-        
+
         for (i, contig) in self.contigs.iter().enumerate() {
-            writeln!(file, ">contig_{} length={} coverage={:.2}", 
-                i + 1, contig.length, contig.coverage)?;
-            
+            writeln!(
+                file,
+                ">contig_{} length={} coverage={:.2}",
+                i + 1,
+                contig.length,
+                contig.coverage
+            )?;
+
             // Write sequence in lines of 80 characters
             for line in contig.sequence.as_bytes().chunks(80) {
                 writeln!(file, "{}", std::str::from_utf8(line)?)?;
             }
         }
-        
+
         Ok(())
     }
 }

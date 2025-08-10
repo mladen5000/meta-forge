@@ -1,5 +1,4 @@
 /// Test-driven development for AssemblyGraph issues
-
 use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 
@@ -11,9 +10,9 @@ pub mod tests {
     fn test_assembly_graph_builder_constructor() {
         // Test the corrected constructor signature (3 parameters, not 4)
         let builder = AssemblyGraphBuilder::new(
-            11,  // base k-mer size
-            15,  // max k-mer size  
-            1    // minimum coverage
+            11, // base k-mer size
+            15, // max k-mer size
+            1,  // minimum coverage
         );
 
         // Constructor should not return Result, just the struct
@@ -24,7 +23,7 @@ pub mod tests {
     #[test]
     fn test_assembly_graph_field_access() {
         let builder = AssemblyGraphBuilder::new(11, 15, 1);
-        
+
         // Create test reads with proper CorrectionMetadata
         let reads = vec![
             CorrectedRead {
@@ -57,13 +56,13 @@ pub mod tests {
 
         let result = builder.build(&reads);
         assert!(result.is_ok());
-        
+
         let graph = result.unwrap();
-        
+
         // Test correct field access patterns for AssemblyGraph
         assert!(!graph.graph_fragment.nodes.is_empty());
         assert!(graph.contigs.len() >= 0); // May be 0 if no contigs generated yet
-        
+
         // Test that we can access graph statistics
         assert!(graph.assembly_stats.total_length >= 0);
         assert!(graph.assembly_stats.num_contigs >= 0);
@@ -99,10 +98,10 @@ pub mod tests {
     fn test_assembly_graph_empty_input() {
         let builder = AssemblyGraphBuilder::new(11, 15, 1);
         let empty_reads: Vec<CorrectedRead> = vec![];
-        
+
         let result = builder.build(&empty_reads);
         assert!(result.is_ok());
-        
+
         let graph = result.unwrap();
         assert_eq!(graph.graph_fragment.nodes.len(), 0);
         assert_eq!(graph.contigs.len(), 0);
@@ -111,27 +110,25 @@ pub mod tests {
     #[test]
     fn test_assembly_graph_short_reads() {
         let builder = AssemblyGraphBuilder::new(11, 15, 1);
-        
+
         // Create reads shorter than k-mer size
-        let short_reads = vec![
-            CorrectedRead {
-                id: 0,
-                original: "ATCG".to_string(), // Only 4 bp, less than k=11
-                corrected: "ATCG".to_string(),
-                corrections: vec![],
-                quality_scores: vec![40; 4],
-                correction_metadata: CorrectionMetadata {
-                    algorithm: "test".to_string(),
-                    confidence_threshold: 0.95,
-                    context_window: 5,
-                    correction_time_ms: 0,
-                },
+        let short_reads = vec![CorrectedRead {
+            id: 0,
+            original: "ATCG".to_string(), // Only 4 bp, less than k=11
+            corrected: "ATCG".to_string(),
+            corrections: vec![],
+            quality_scores: vec![40; 4],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.95,
+                context_window: 5,
+                correction_time_ms: 0,
             },
-        ];
-        
+        }];
+
         let result = builder.build(&short_reads);
         assert!(result.is_ok());
-        
+
         let graph = result.unwrap();
         // Should handle short reads gracefully - may have 0 nodes
         assert!(graph.graph_fragment.nodes.is_empty());

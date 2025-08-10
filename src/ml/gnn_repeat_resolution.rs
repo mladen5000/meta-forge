@@ -1,5 +1,5 @@
 use crate::core::data_structures::{GraphEdge, GraphFragment};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -961,13 +961,10 @@ mod tests {
         neighbors.insert(456, 3);
 
         let mut graph = GraphFragment::default();
-        
+
         // Create proper GraphEdge entries instead of using HashMap directly
-        let edges = vec![
-            GraphEdge::new(789, 123, 0),
-            GraphEdge::new(789, 456, 0)
-        ];
-        
+        let edges = vec![GraphEdge::new(789, 123, 0), GraphEdge::new(789, 456, 0)];
+
         for edge in edges {
             graph.edges.push(edge);
         }

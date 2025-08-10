@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct ErrorScreen {
     state: Arc<RwLock<AppState>>,
@@ -27,10 +27,10 @@ impl Screen for ErrorScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // Error message
-                Constraint::Length(3),  // Actions
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Error message
+                Constraint::Length(3), // Actions
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
@@ -42,11 +42,16 @@ impl Screen for ErrorScreen {
         f.render_widget(title, chunks[0]);
 
         // Error message - placeholder
-        let error_text = "An error occurred. Please try again or return to the main menu.".to_string();
+        let error_text =
+            "An error occurred. Please try again or return to the main menu.".to_string();
 
         let error_msg = Paragraph::new(error_text)
             .style(Style::default().fg(Color::Red))
-            .block(Block::default().title("Error Details").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Error Details")
+                    .borders(Borders::ALL),
+            )
             .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(error_msg, chunks[1]);

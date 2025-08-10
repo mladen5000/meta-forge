@@ -10,8 +10,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct HelpScreen {
     state: Arc<RwLock<AppState>>,
@@ -29,53 +29,62 @@ impl Screen for HelpScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // Help content
-                Constraint::Length(2),  // Navigation help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Help content
+                Constraint::Length(2), // Navigation help
             ])
             .split(area);
 
         let title = Paragraph::new("Help & Documentation")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
         // Help sections
         let help_items = vec![
-            ListItem::new(Line::from(vec![
-                Span::styled("General Navigation:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "General Navigation:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new("  ↑/↓ or j/k - Navigate up/down"),
             ListItem::new("  Enter - Select/confirm"),
             ListItem::new("  Esc - Go back/cancel"),
             ListItem::new("  Ctrl+Q - Quit application"),
             ListItem::new("  F1 - Show this help"),
             ListItem::new(""),
-            ListItem::new(Line::from(vec![
-                Span::styled("Main Menu:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "Main Menu:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new("  1-6 - Quick selection by number"),
             ListItem::new("  h - Show help"),
             ListItem::new("  q - Quit"),
             ListItem::new(""),
-            ListItem::new(Line::from(vec![
-                Span::styled("File Selection:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "File Selection:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new("  Space - Select/deselect file"),
             ListItem::new("  Ctrl+A - Select all files"),
             ListItem::new("  Ctrl+D - Deselect all files"),
             ListItem::new("  F5 - Refresh file list"),
             ListItem::new(""),
-            ListItem::new(Line::from(vec![
-                Span::styled("Analysis:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "Analysis:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new("  Space - Pause/resume operation"),
             ListItem::new("  Ctrl+C - Cancel current operation"),
             ListItem::new("  R - Restart analysis"),
             ListItem::new(""),
-            ListItem::new(Line::from(vec![
-                Span::styled("About Meta-Forge:", Style::default().add_modifier(Modifier::BOLD)),
-            ])),
+            ListItem::new(Line::from(vec![Span::styled(
+                "About Meta-Forge:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )])),
             ListItem::new("  A comprehensive metagenomic analysis toolkit"),
             ListItem::new("  with integrated machine learning capabilities"),
             ListItem::new("  Version: 0.1.0"),

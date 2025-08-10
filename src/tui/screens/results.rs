@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct ResultsScreen {
     state: Arc<RwLock<AppState>>,
@@ -27,21 +27,29 @@ impl Screen for ResultsScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // Results
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Results
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         let title = Paragraph::new("Analysis Results")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        let results_text = "No results available.\n\nRun an analysis to view results here.".to_string();
+        let results_text =
+            "No results available.\n\nRun an analysis to view results here.".to_string();
 
-        let results = Paragraph::new(results_text)
-            .block(Block::default().title("Results Summary").borders(Borders::ALL));
+        let results = Paragraph::new(results_text).block(
+            Block::default()
+                .title("Results Summary")
+                .borders(Borders::ALL),
+        );
         f.render_widget(results, chunks[1]);
 
         let help = Paragraph::new("E: Export, S: Save report, V: Visualize, Esc: Back");

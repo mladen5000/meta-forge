@@ -7,7 +7,7 @@ use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 /// Test the assembly graph builder with corrected reads
 fn main() -> anyhow::Result<()> {
     println!("🧬 Testing Optimized Assembly Graph Construction");
-    
+
     // Create test reads with overlapping sequences - longer sequences for proper k-mer extraction
     let test_reads = vec![
         CorrectedRead {
@@ -55,9 +55,9 @@ fn main() -> anyhow::Result<()> {
 
     // Build the assembly graph
     let builder = AssemblyGraphBuilder::new(
-        11,  // base k-mer size
-        15,  // max k-mer size  
-        1    // minimum coverage
+        11, // base k-mer size
+        15, // max k-mer size
+        1,  // minimum coverage
     );
 
     println!("🔧 Building assembly graph...");

@@ -6,7 +6,7 @@ use meta_forge::core::data_structures::CorrectedRead;
 
 fn main() -> anyhow::Result<()> {
     println!("🧬 Testing Optimized Assembly Graph Construction");
-    
+
     // Create test reads with overlapping sequences - longer sequences for proper k-mer extraction
     let test_reads = vec![
         CorrectedRead {
@@ -88,82 +88,106 @@ fn main() -> anyhow::Result<()> {
             },
         },
     ];
-    
+
     println!("📊 Test data: {} reads", test_reads.len());
-    
+
     // Create assembly graph builder with smaller k-mer sizes
     let builder = AssemblyGraphBuilder::new(
-        11,  // base k-mer size
-        15,  // max k-mer size  
-        1    // minimum coverage
+        11, // base k-mer size
+        15, // max k-mer size
+        1,  // minimum coverage
     );
-    
+
     println!("🏗️  Building assembly graph...");
     let mut graph = builder.build(&test_reads)?;
-    
+
     println!("📈 Graph statistics:");
     println!("   Nodes: {}", graph.graph_fragment.nodes.len());
     println!("   Edges: {}", graph.graph_fragment.edges.len());
-    
+
     if graph.graph_fragment.nodes.is_empty() {
         println!("❌ No nodes in graph - check k-mer extraction!");
         return Ok(());
     }
-    
+
     if graph.graph_fragment.edges.is_empty() {
         println!("⚠️  No edges in graph - will create singleton contigs");
     }
-    
+
     println!("🧬 Generating contigs...");
     graph.generate_contigs()?;
-    
+
     println!("📊 Assembly results:");
     println!("   Contigs generated: {}", graph.contigs.len());
-    
+
     if graph.contigs.is_empty() {
         println!("❌ NO CONTIGS GENERATED - This indicates the bug is still present!");
-        
+
         // Debug information
         println!("\n🔍 Debug information:");
-        println!("   Graph fragment nodes: {}", graph.graph_fragment.nodes.len());
-        println!("   Graph fragment edges: {}", graph.graph_fragment.edges.len());
+        println!(
+            "   Graph fragment nodes: {}",
+            graph.graph_fragment.nodes.len()
+        );
+        println!(
+            "   Graph fragment edges: {}",
+            graph.graph_fragment.edges.len()
+        );
         println!("   Petgraph nodes: {}", graph.petgraph.node_count());
         println!("   Petgraph edges: {}", graph.petgraph.edge_count());
-        
+
         // Print sample node information
         if !graph.graph_fragment.nodes.is_empty() {
             println!("   Sample nodes:");
             for (i, (hash, node)) in graph.graph_fragment.nodes.iter().take(5).enumerate() {
-                println!("     {}. Hash: {}, Sequence: {}, Coverage: {}", 
-                         i + 1, hash, node.kmer.sequence, node.coverage);
+                println!(
+                    "     {}. Hash: {}, Sequence: {}, Coverage: {}",
+                    i + 1,
+                    hash,
+                    node.kmer.sequence,
+                    node.coverage
+                );
             }
         }
-        
+
         return Ok(());
     }
-    
+
     println!("✅ SUCCESS! Contigs generated:");
     for (i, contig) in graph.contigs.iter().enumerate() {
-        println!("   Contig {}: {} bp, coverage: {:.2}, type: {:?}", 
-                 i + 1, contig.length, contig.coverage, contig.contig_type);
+        println!(
+            "   Contig {}: {} bp, coverage: {:.2}, type: {:?}",
+            i + 1,
+            contig.length,
+            contig.coverage,
+            contig.contig_type
+        );
         if contig.sequence.len() <= 100 {
             println!("     Sequence: {}", contig.sequence);
         } else {
-            println!("     Sequence: {}...{} (truncated)", 
-                     &contig.sequence[..50], 
-                     &contig.sequence[contig.sequence.len()-50..]);
+            println!(
+                "     Sequence: {}...{} (truncated)",
+                &contig.sequence[..50],
+                &contig.sequence[contig.sequence.len() - 50..]
+            );
         }
     }
-    
+
     println!("📊 Assembly statistics:");
     println!("   Total contigs: {}", graph.assembly_stats.num_contigs);
     println!("   Total length: {} bp", graph.assembly_stats.total_length);
-    println!("   Longest contig: {} bp", graph.assembly_stats.largest_contig);
+    println!(
+        "   Longest contig: {} bp",
+        graph.assembly_stats.largest_contig
+    );
     println!("   N50: {} bp", graph.assembly_stats.n50);
-    println!("   Mean coverage: {:.2}", graph.assembly_stats.coverage_mean);
+    println!(
+        "   Mean coverage: {:.2}",
+        graph.assembly_stats.coverage_mean
+    );
     println!("   GC content: {:.3}", graph.assembly_stats.gc_content);
-    
+
     println!("\n🎉 Assembler test completed successfully!");
-    
+
     Ok(())
 }

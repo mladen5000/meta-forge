@@ -1,5 +1,5 @@
 /// Progress display utilities for metagenomic pipeline
-/// 
+///
 /// Provides clean terminal progress indicators that overwrite the same line
 /// instead of creating new lines for better user experience
 use std::io::{self, Write};
@@ -37,7 +37,7 @@ impl ProgressBar {
     /// Update progress with current count
     pub fn update(&mut self, current: u64) {
         self.current = current;
-        
+
         // Only update display if enough time has passed
         let now = Instant::now();
         if now.duration_since(self.last_update) >= self.update_interval {
@@ -71,10 +71,7 @@ impl ProgressBar {
         let filled = (self.width as f64 * percentage / 100.0) as usize;
         let empty = self.width - filled;
 
-        let bar = format!("{}{}",
-            "█".repeat(filled),
-            "░".repeat(empty)
-        );
+        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
 
         let elapsed = self.start_time.elapsed();
         let rate = if elapsed.as_secs() > 0 {
@@ -92,9 +89,10 @@ impl ProgressBar {
 
         // Clear line and move cursor to beginning
         print!("\r\x1b[2K");
-        
+
         if self.total > 0 {
-            print!("{} [{}] {:.1}% ({}/{}) {} - {:?}",
+            print!(
+                "{} [{}] {:.1}% ({}/{}) {} - {:?}",
                 self.message,
                 bar,
                 percentage,
@@ -107,7 +105,8 @@ impl ProgressBar {
             // Spinner for indeterminate progress
             let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
             let spinner_idx = (self.current % spinner_chars.len() as u64) as usize;
-            print!("{} {} {} {} - {:?}",
+            print!(
+                "{} {} {} {} - {:?}",
                 self.message,
                 spinner_chars[spinner_idx],
                 format_number(self.current),
@@ -115,17 +114,17 @@ impl ProgressBar {
                 elapsed
             );
         }
-        
+
         io::stdout().flush().unwrap();
     }
 
     /// Finish the progress bar and move to next line
     pub fn finish(&mut self) {
         self.finished.store(true, Ordering::Relaxed);
-        
+
         // Display final state
         self.display();
-        
+
         // Move to next line
         println!();
         io::stdout().flush().unwrap();
@@ -134,20 +133,21 @@ impl ProgressBar {
     /// Finish with a custom message
     pub fn finish_with_message(&mut self, message: &str) {
         self.finished.store(true, Ordering::Relaxed);
-        
+
         // Clear line and print final message
         print!("\r\x1b[2K");
         let elapsed = self.start_time.elapsed();
-        println!("{} ✅ {} reads processed in {:?}", 
-            self.message, 
+        println!(
+            "{} ✅ {} reads processed in {:?}",
+            self.message,
             format_number(self.current),
             elapsed
         );
-        
+
         if !message.is_empty() {
             println!("{message}");
         }
-        
+
         io::stdout().flush().unwrap();
     }
 }
@@ -176,7 +176,7 @@ impl ProgressCounter {
     /// Update the counter
     pub fn update(&mut self, count: u64) {
         self.count = count;
-        
+
         let now = Instant::now();
         if now.duration_since(self.last_update) >= self.update_interval {
             self.display();
@@ -211,13 +211,14 @@ impl ProgressCounter {
 
         // Clear line and update
         print!("\r\x1b[2K");
-        print!("{} {} {} - {:?}", 
+        print!(
+            "{} {} {} - {:?}",
             self.message,
             format_number(self.count),
             rate_str,
             elapsed
         );
-        
+
         io::stdout().flush().unwrap();
     }
 
@@ -232,16 +233,17 @@ impl ProgressCounter {
     pub fn finish_with_message(&mut self, message: &str) {
         print!("\r\x1b[2K");
         let elapsed = self.start_time.elapsed();
-        println!("{} ✅ {} processed in {:?}", 
+        println!(
+            "{} ✅ {} processed in {:?}",
             self.message,
             format_number(self.count),
             elapsed
         );
-        
+
         if !message.is_empty() {
             println!("{message}");
         }
-        
+
         io::stdout().flush().unwrap();
     }
 }
@@ -307,12 +309,12 @@ impl MultiProgress {
         if !self.bars.is_empty() {
             print!("\x1b[{}A", self.bars.len());
         }
-        
+
         // Clear and redraw each line
         for bar in &self.bars {
             print!("\r\x1b[2K{bar}\n");
         }
-        
+
         io::stdout().flush().unwrap();
     }
 
@@ -338,26 +340,26 @@ mod tests {
     #[test]
     fn test_progress_bar() {
         let mut pb = ProgressBar::new(100, "Testing");
-        
+
         for i in 0..=100 {
             pb.update(i);
             thread::sleep(Duration::from_millis(10));
         }
-        
+
         pb.finish_with_message("Test completed successfully");
     }
 
     #[test]
     fn test_progress_counter() {
         let mut counter = ProgressCounter::new("Processing reads");
-        
+
         for i in 0..1000 {
             counter.tick();
             if i % 100 == 0 {
                 thread::sleep(Duration::from_millis(1));
             }
         }
-        
+
         counter.finish_with_message("All reads processed");
     }
 

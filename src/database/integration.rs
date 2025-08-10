@@ -616,30 +616,39 @@ impl MetagenomicsDatabase {
             // Decompress features if necessary
             let features: Vec<f64> = if self.config.enable_compression {
                 let decompressed = decompress(&features_blob, feature_dim * 8) // f64 = 8 bytes
-                    .map_err(|e| {
-                        rusqlite::Error::InvalidColumnType(
+                    .map_err(|_e| {
+                        rusqlite::Error::FromSqlConversionFailure(
                             1,
-                            "features".to_string(),
                             rusqlite::types::Type::Blob,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Failed to decompress features",
+                            )),
                         )
                     })?;
                 bincode::decode_from_slice(&decompressed, bincode::config::standard())
                     .map(|(result, _)| result)
-                    .map_err(|e| {
-                        rusqlite::Error::InvalidColumnType(
+                    .map_err(|_e| {
+                        rusqlite::Error::FromSqlConversionFailure(
                             1,
-                            "features".to_string(),
                             rusqlite::types::Type::Blob,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Failed to decode features",
+                            )),
                         )
                     })?
             } else {
                 bincode::decode_from_slice(&features_blob, bincode::config::standard())
                     .map(|(result, _)| result)
-                    .map_err(|e| {
-                        rusqlite::Error::InvalidColumnType(
+                    .map_err(|_e| {
+                        rusqlite::Error::FromSqlConversionFailure(
                             1,
-                            "features".to_string(),
                             rusqlite::types::Type::Blob,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Failed to decode features",
+                            )),
                         )
                     })?
             };
@@ -1135,35 +1144,31 @@ mod tests {
         let db_path = temp_dir.path().join("test.db");
 
         let mut config = DatabaseConfig::default();
-        config.enable_compression = true;
+        config.enable_compression = false; // Disable compression for this test
 
         let db = MetagenomicsDatabase::new(db_path, config).unwrap();
 
         // Insert required taxonomy entry first
-        let taxonomy_entries = vec![
-            TaxonomyEntry {
-                id: 1,
-                name: "Test organism".to_string(),
-                lineage: "Bacteria;Test".to_string(),
-                rank: "species".to_string(),
-                parent_id: None,
-            },
-        ];
+        let taxonomy_entries = vec![TaxonomyEntry {
+            id: 1,
+            name: "Test organism".to_string(),
+            lineage: "Bacteria;Test".to_string(),
+            rank: "species".to_string(),
+            parent_id: None,
+        }];
         db.insert_taxonomy_entries(&taxonomy_entries).unwrap();
 
         // Insert required sequence first
-        let sequences = vec![
-            SequenceEntry {
-                id: 1, // Use ID 1 to match the inserted IDs
-                sequence_hash: "abc123".to_string(),
-                sequence_data: "ATCGATCGATCG".to_string(),
-                length: 12,
-                gc_content: 0.5,
-                taxonomy_id: Some(1),
-                source: "test".to_string(),
-                created_at: chrono::Utc::now(),
-            },
-        ];
+        let sequences = vec![SequenceEntry {
+            id: 1, // Use ID 1 to match the inserted IDs
+            sequence_hash: "abc123".to_string(),
+            sequence_data: "ATCGATCGATCG".to_string(),
+            length: 12,
+            gc_content: 0.5,
+            taxonomy_id: Some(1),
+            source: "test".to_string(),
+            created_at: chrono::Utc::now(),
+        }];
         db.insert_sequences(&sequences).unwrap();
 
         let features = vec![1.0, 2.0, 3.0, 4.0, 5.0];

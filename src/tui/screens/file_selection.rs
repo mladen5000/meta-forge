@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct FileSelectionScreen {
     state: Arc<RwLock<AppState>>,
@@ -31,35 +31,46 @@ impl Screen for FileSelectionScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // File list
-                Constraint::Length(3),  // Selected files
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // File list
+                Constraint::Length(3), // Selected files
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         // Title
         let title = Paragraph::new("File Selection")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
         // File list (placeholder)
         let files = vec![
             ListItem::new("sample_1.fastq"),
-            ListItem::new("sample_2.fastq"), 
+            ListItem::new("sample_2.fastq"),
             ListItem::new("reads.fasta"),
         ];
 
         let file_list = List::new(files)
-            .block(Block::default().title("Available Files").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title("Available Files")
+                    .borders(Borders::ALL),
+            )
             .highlight_style(Style::default().bg(Color::DarkGray));
 
         f.render_widget(file_list, chunks[1]);
 
         // Selected files
-        let selected = Paragraph::new("No files selected")
-            .block(Block::default().title("Selected Files").borders(Borders::ALL));
+        let selected = Paragraph::new("No files selected").block(
+            Block::default()
+                .title("Selected Files")
+                .borders(Borders::ALL),
+        );
         f.render_widget(selected, chunks[2]);
 
         // Help

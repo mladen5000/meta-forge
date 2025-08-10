@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct DatabaseScreen {
     state: Arc<RwLock<AppState>>,
@@ -27,21 +27,29 @@ impl Screen for DatabaseScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // Database info
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Database info
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         let title = Paragraph::new("Database Management")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
-        let db_info = "Database Status: Not initialized\n\nPress '1' to initialize the database".to_string();
+        let db_info =
+            "Database Status: Not initialized\n\nPress '1' to initialize the database".to_string();
 
-        let db_panel = Paragraph::new(db_info)
-            .block(Block::default().title("Database Information").borders(Borders::ALL));
+        let db_panel = Paragraph::new(db_info).block(
+            Block::default()
+                .title("Database Information")
+                .borders(Borders::ALL),
+        );
         f.render_widget(db_panel, chunks[1]);
 
         let help = Paragraph::new("1: Initialize, 2: Backup, 3: Restore, Esc: Back");

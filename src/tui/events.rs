@@ -10,13 +10,13 @@ use tokio::sync::mpsc as tokio_mpsc;
 pub enum AppEvent {
     /// Terminal input event
     Input(KeyEvent),
-    
+
     /// Timer tick for updates
     Tick,
-    
+
     /// Analysis started
     AnalysisStarted(String),
-    
+
     /// Analysis progress update
     AnalysisProgress {
         operation: String,
@@ -24,25 +24,25 @@ pub enum AppEvent {
         total: Option<u64>,
         message: String,
     },
-    
+
     /// Analysis completed
     AnalysisCompleted(String),
-    
+
     /// Analysis failed
     AnalysisError(String, String),
-    
+
     /// Database status update
     DatabaseUpdate(crate::tui::state::DatabaseInfo),
-    
+
     /// File list updated
     FileListUpdated(Vec<std::path::PathBuf>),
-    
+
     /// Results available
     ResultsAvailable(crate::tui::state::ResultsData),
-    
+
     /// Status message
     StatusMessage(String),
-    
+
     /// Quit application
     Quit,
 }
@@ -51,16 +51,16 @@ pub enum AppEvent {
 pub struct EventHandler {
     /// Receiver for input events
     receiver: mpsc::Receiver<AppEvent>,
-    
+
     /// Sender for input events
     _sender: mpsc::Sender<AppEvent>,
-    
+
     /// Async event sender
     async_sender: tokio_mpsc::UnboundedSender<AppEvent>,
-    
+
     /// Async event receiver
     pub async_receiver: tokio_mpsc::UnboundedReceiver<AppEvent>,
-    
+
     /// Handler thread handle
     _handle: thread::JoinHandle<()>,
 }
@@ -69,16 +69,16 @@ impl EventHandler {
     pub fn new(tick_rate: Duration) -> Self {
         let (sender, receiver) = mpsc::channel();
         let (async_sender, async_receiver) = tokio_mpsc::unbounded_channel();
-        
+
         let event_sender = sender.clone();
         let handle = thread::spawn(move || {
             let mut last_tick = Instant::now();
-            
+
             loop {
                 let timeout = tick_rate
                     .checked_sub(last_tick.elapsed())
                     .unwrap_or_else(|| Duration::from_secs(0));
-                
+
                 if event::poll(timeout).unwrap_or(false) {
                     match event::read() {
                         Ok(Event::Key(key)) => {
@@ -90,7 +90,7 @@ impl EventHandler {
                         Err(_) => break,
                     }
                 }
-                
+
                 if last_tick.elapsed() >= tick_rate {
                     if event_sender.send(AppEvent::Tick).is_err() {
                         break;
@@ -99,7 +99,7 @@ impl EventHandler {
                 }
             }
         });
-        
+
         Self {
             receiver,
             _sender: sender,
@@ -108,12 +108,12 @@ impl EventHandler {
             _handle: handle,
         }
     }
-    
+
     /// Get the next event
     pub fn next(&self) -> Result<AppEvent> {
         Ok(self.receiver.recv()?)
     }
-    
+
     /// Try to get an event without blocking
     pub fn try_next(&self) -> Result<Option<AppEvent>> {
         match self.receiver.try_recv() {
@@ -124,7 +124,7 @@ impl EventHandler {
             }
         }
     }
-    
+
     /// Get async event sender for background tasks
     pub fn async_sender(&self) -> tokio_mpsc::UnboundedSender<AppEvent> {
         self.async_sender.clone()
@@ -132,10 +132,13 @@ impl EventHandler {
 }
 
 /// Handle key events and return appropriate application events
-pub fn handle_key_event(key: KeyEvent, current_screen: &crate::tui::state::Screen) -> Option<AppEvent> {
+pub fn handle_key_event(
+    key: KeyEvent,
+    current_screen: &crate::tui::state::Screen,
+) -> Option<AppEvent> {
     use crate::tui::state::Screen;
     use KeyCode::*;
-    
+
     match key.code {
         // Global key bindings
         Char('q') | Char('Q') => {
@@ -145,19 +148,19 @@ pub fn handle_key_event(key: KeyEvent, current_screen: &crate::tui::state::Scree
                 None
             }
         }
-        
+
         // Escape - go back or quit from main menu
         Esc => match current_screen {
             Screen::MainMenu => Some(AppEvent::Quit),
             _ => None, // Let the screen handle going back
         },
-        
+
         // Screen-specific navigation
         Char('h') | F(1) => match current_screen {
             Screen::Help => None,
             _ => None, // Navigate to help - handled by screens
         },
-        
+
         _ => None,
     }
 }
@@ -180,13 +183,13 @@ impl KeyBinding {
 /// Get key bindings for the current screen
 pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
     use crate::tui::state::Screen;
-    
+
     let mut bindings = vec![
         KeyBinding::new("Ctrl+Q", "Quit application"),
         KeyBinding::new("Esc", "Go back / Exit"),
         KeyBinding::new("F1", "Help"),
     ];
-    
+
     match screen {
         Screen::MainMenu => {
             bindings.extend(vec![
@@ -199,7 +202,7 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("Enter", "Select item"),
             ]);
         }
-        
+
         Screen::FileSelection => {
             bindings.extend(vec![
                 KeyBinding::new("↑/↓", "Navigate files"),
@@ -211,7 +214,7 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("Ctrl+D", "Deselect all"),
             ]);
         }
-        
+
         Screen::Configuration => {
             bindings.extend(vec![
                 KeyBinding::new("↑/↓", "Navigate fields"),
@@ -222,7 +225,7 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("F3", "Load defaults"),
             ]);
         }
-        
+
         Screen::Analysis => {
             bindings.extend(vec![
                 KeyBinding::new("↑/↓", "Navigate operations"),
@@ -232,7 +235,7 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("Enter", "View details"),
             ]);
         }
-        
+
         Screen::Database => {
             bindings.extend(vec![
                 KeyBinding::new("1", "Initialize database"),
@@ -242,7 +245,7 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("F5", "Refresh status"),
             ]);
         }
-        
+
         Screen::Results => {
             bindings.extend(vec![
                 KeyBinding::new("↑/↓", "Navigate results"),
@@ -252,14 +255,14 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
                 KeyBinding::new("S", "Save report"),
             ]);
         }
-        
+
         Screen::Help => {
             bindings.extend(vec![
                 KeyBinding::new("↑/↓", "Scroll help"),
                 KeyBinding::new("Page Up/Down", "Page scroll"),
             ]);
         }
-        
+
         Screen::Error(_) => {
             bindings.extend(vec![
                 KeyBinding::new("Enter", "Acknowledge error"),
@@ -267,6 +270,6 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
             ]);
         }
     }
-    
+
     bindings
 }

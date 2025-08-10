@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Current screen in the TUI application
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Screen {
     #[default]
     MainMenu,
@@ -16,7 +15,6 @@ pub enum Screen {
     Help,
     Error(String),
 }
-
 
 /// Analysis configuration state
 #[derive(Debug, Clone)]
@@ -115,8 +113,7 @@ impl OperationProgress {
 }
 
 /// Database status information
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DatabaseInfo {
     pub path: Option<PathBuf>,
     pub initialized: bool,
@@ -124,7 +121,6 @@ pub struct DatabaseInfo {
     pub tables: Vec<String>,
     pub last_updated: Option<String>,
 }
-
 
 /// File browser state
 #[derive(Debug, Clone)]
@@ -164,49 +160,47 @@ pub struct ResultsData {
 }
 
 /// Main application state
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AppState {
     /// Current screen being displayed
     pub current_screen: Screen,
-    
+
     /// Previous screen for navigation
     pub previous_screen: Option<Screen>,
-    
+
     /// Whether the application should quit
     pub should_quit: bool,
-    
+
     /// Analysis configuration
     pub analysis_config: AnalysisConfig,
-    
+
     /// Active operations and their progress
     pub operations: HashMap<String, OperationProgress>,
-    
+
     /// Database status
     pub database_info: DatabaseInfo,
-    
+
     /// File browser state
     pub file_browser: FileBrowserState,
-    
+
     /// Analysis results
     pub results: ResultsData,
-    
+
     /// Current error message if any
     pub error_message: Option<String>,
-    
+
     /// Input state for forms
     pub input_mode: bool,
-    
+
     /// Current input field name
     pub input_field: String,
-    
+
     /// Temporary input buffer
     pub input_buffer: String,
-    
+
     /// Status messages
     pub status_messages: Vec<String>,
 }
-
 
 impl AppState {
     pub fn new() -> Self {
@@ -295,7 +289,10 @@ impl AppState {
     /// Remove completed or errored operations
     pub fn cleanup_operations(&mut self) {
         self.operations.retain(|_, op| {
-            !matches!(op.status, OperationStatus::Completed | OperationStatus::Error(_))
+            !matches!(
+                op.status,
+                OperationStatus::Completed | OperationStatus::Error(_)
+            )
         });
     }
 }

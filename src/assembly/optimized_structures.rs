@@ -1,7 +1,7 @@
 //! Memory-Optimized Data Structures for Metagenomic Assembly
 //! =========================================================
 //!
-//! This module provides ultra-memory-efficient data structures optimized for large-scale 
+//! This module provides ultra-memory-efficient data structures optimized for large-scale
 //! metagenomic assembly, achieving 70-85% memory reduction compared to standard implementations.
 //!
 //! **Key Optimizations:**
@@ -50,7 +50,7 @@ impl CompactKmer {
 
         let sequence_upper = sequence.to_uppercase();
         let rc = Self::reverse_complement(&sequence_upper)?;
-        
+
         // Use canonical representation (lexicographically smaller)
         let canonical = if sequence_upper <= rc {
             sequence_upper
@@ -74,7 +74,7 @@ impl CompactKmer {
         let nucleotides_per_u64 = 32;
         let num_u64s = (sequence.len() + nucleotides_per_u64 - 1) / nucleotides_per_u64;
         let mut data = vec![0u64; num_u64s];
-        
+
         for (i, nucleotide) in sequence.chars().enumerate() {
             let bits = match nucleotide {
                 'A' => 0b00,
@@ -83,12 +83,12 @@ impl CompactKmer {
                 'T' => 0b11,
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
-            
+
             let u64_index = i / nucleotides_per_u64;
             let bit_index = (i % nucleotides_per_u64) * 2;
             data[u64_index] |= bits << (62 - bit_index);
         }
-        
+
         Ok(data.into_boxed_slice())
     }
 
@@ -96,12 +96,12 @@ impl CompactKmer {
     pub fn unpack(&self) -> String {
         let mut sequence = String::with_capacity(self.k as usize);
         let nucleotides_per_u64 = 32;
-        
+
         for i in 0..self.k as usize {
             let u64_index = i / nucleotides_per_u64;
             let bit_index = (i % nucleotides_per_u64) * 2;
             let bits = (self.data[u64_index] >> (62 - bit_index)) & 0b11;
-            
+
             let nucleotide = match bits {
                 0b00 => 'A',
                 0b01 => 'C',
@@ -111,47 +111,150 @@ impl CompactKmer {
             };
             sequence.push(nucleotide);
         }
-        
+
         sequence
     }
 
     /// Compute reverse complement of DNA sequence
     fn reverse_complement(sequence: &str) -> Result<String> {
-        sequence
-            .chars()
-            .rev()
-            .map(|c| match c {
-                'A' => Ok('T'),
-                'T' => Ok('A'),
-                'G' => Ok('C'),
-                'C' => Ok('G'),
-                _ => Err(anyhow!("Invalid nucleotide: {}", c)),
-            })
-            .collect()
+        let mut result = String::with_capacity(sequence.len());
+        for nucleotide in sequence.chars().rev() {
+            let complement = match nucleotide {
+                'A' => 'T',
+                'T' => 'A',
+                'C' => 'G',
+                'G' => 'C',
+                _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
+            };
+            result.push(complement);
+        }
+        Ok(result)
     }
 
-    /// Fast hash computation for k-mer lookups
+    /// Fast hash computation for bit-packed data
     fn compute_hash(data: &[u64], k: usize) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         data.hash(&mut hasher);
         k.hash(&mut hasher);
         hasher.finish()
     }
 
-    /// Memory usage in bytes (significantly reduced vs string representation)
-    pub fn memory_footprint(&self) -> usize {
-        self.data.len() * 8 + std::mem::size_of::<Self>()
-    }
-
+    /// Get the k-mer length
     pub fn len(&self) -> usize {
         self.k as usize
     }
 
+    /// Check if k-mer is empty
+    pub fn is_empty(&self) -> bool {
+        self.k == 0
+    }
+
+    /// Get precomputed hash
     pub fn hash(&self) -> u64 {
         self.hash
+    }
+
+    /// Memory usage in bytes
+    pub fn memory_usage(&self) -> usize {
+        std::mem::size_of::<Self>() + (self.data.len() * std::mem::size_of::<u64>())
+    }
+
+    /// SIMD-optimized nucleotide comparison
+    /// Uses bit operations for fast equality checks
+    pub fn equals_simd(&self, other: &CompactKmer) -> bool {
+        if self.k != other.k {
+            return false;
+        }
+
+        // Use SIMD-friendly comparison
+        self.data
+            .par_iter()
+            .zip(other.data.par_iter())
+            .all(|(a, b)| a == b)
+    }
+
+    /// Extract suffix k-mer by removing first nucleotide
+    pub fn suffix(&self) -> Result<CompactKmer> {
+        if self.k <= 1 {
+            return Err(anyhow!("Cannot get suffix of k-mer with length <= 1"));
+        }
+
+        let new_k = self.k - 1;
+        let nucleotides_per_u64 = 32;
+        let num_u64s = (new_k as usize + nucleotides_per_u64 - 1) / nucleotides_per_u64;
+        let mut new_data = vec![0u64; num_u64s];
+
+        for i in 1..self.k as usize {
+            let src_u64_idx = i / nucleotides_per_u64;
+            let src_bit_idx = (i % nucleotides_per_u64) * 2;
+            let bits = (self.data[src_u64_idx] >> (62 - src_bit_idx)) & 0b11;
+
+            let dst_pos = i - 1;
+            let dst_u64_idx = dst_pos / nucleotides_per_u64;
+            let dst_bit_idx = (dst_pos % nucleotides_per_u64) * 2;
+            new_data[dst_u64_idx] |= bits << (62 - dst_bit_idx);
+        }
+
+        let hash = Self::compute_hash(&new_data, new_k as usize);
+
+        Ok(CompactKmer {
+            data: new_data.into_boxed_slice(),
+            k: new_k,
+            hash,
+        })
+    }
+
+    /// Extract prefix k-mer by removing last nucleotide
+    pub fn prefix(&self) -> Result<CompactKmer> {
+        if self.k <= 1 {
+            return Err(anyhow!("Cannot get prefix of k-mer with length <= 1"));
+        }
+
+        let new_k = self.k - 1;
+        let nucleotides_per_u64 = 32;
+        let num_u64s = (new_k as usize + nucleotides_per_u64 - 1) / nucleotides_per_u64;
+        let mut new_data = vec![0u64; num_u64s];
+
+        for i in 0..(new_k as usize) {
+            let u64_idx = i / nucleotides_per_u64;
+            let bit_idx = (i % nucleotides_per_u64) * 2;
+            let bits = (self.data[u64_idx] >> (62 - bit_idx)) & 0b11;
+            new_data[u64_idx] |= bits << (62 - bit_idx);
+        }
+
+        let hash = Self::compute_hash(&new_data, new_k as usize);
+
+        Ok(CompactKmer {
+            data: new_data.into_boxed_slice(),
+            k: new_k,
+            hash,
+        })
+    }
+
+    /// Convert k-mer to string representation
+    pub fn to_string(&self) -> String {
+        let nucleotides_per_u64 = 32;
+        let mut sequence = String::with_capacity(self.k as usize);
+
+        for i in 0..(self.k as usize) {
+            let u64_index = i / nucleotides_per_u64;
+            let bit_index = (i % nucleotides_per_u64) * 2;
+            let bits = (self.data[u64_index] >> (62 - bit_index)) & 0b11;
+
+            let nucleotide = match bits {
+                0b00 => 'A',
+                0b01 => 'C',
+                0b10 => 'G',
+                0b11 => 'T',
+                _ => unreachable!(),
+            };
+            sequence.push(nucleotide);
+        }
+
+        sequence
     }
 }
 
@@ -182,7 +285,7 @@ impl RollingHasher {
     fn new(k: usize) -> Self {
         let base = 4u64;
         let base_power = base.pow(k as u32 - 1);
-        
+
         Self {
             k,
             hash: 0,
@@ -206,7 +309,7 @@ impl RollingHasher {
             // Building initial window
             self.window.push_back(encoded);
             self.hash = self.hash * self.base + encoded as u64;
-            
+
             if self.window.len() == self.k {
                 Ok(Some(self.hash))
             } else {
@@ -236,7 +339,7 @@ impl StreamingKmerProcessor {
         // Estimate max unique k-mers based on memory budget
         let bytes_per_entry = 8 + 4; // u64 hash + u32 count
         let max_unique_kmers = (max_memory_mb * 1024 * 1024) / bytes_per_entry;
-        
+
         Self {
             k,
             max_unique_kmers,
@@ -250,25 +353,32 @@ impl StreamingKmerProcessor {
     pub fn process_sequence(&mut self, sequence: &str) -> Result<()> {
         self.rolling_hasher = RollingHasher::new(self.k);
         let mut kmers_in_sequence = 0;
-        
+
         for nucleotide in sequence.chars() {
             if let Some(hash) = self.rolling_hasher.push(nucleotide)? {
                 kmers_in_sequence += 1;
-                
+
                 // Memory-bounded insertion
-                if self.kmer_counts.len() < self.max_unique_kmers || 
-                   self.kmer_counts.contains_key(&hash) {
+                if self.kmer_counts.len() < self.max_unique_kmers
+                    || self.kmer_counts.contains_key(&hash)
+                {
                     *self.kmer_counts.entry(hash).or_insert(0) += 1;
                 }
             }
         }
-        
+
         // Update statistics
         self.stats.total_sequences.fetch_add(1, Ordering::Relaxed);
-        self.stats.total_kmers.fetch_add(kmers_in_sequence, Ordering::Relaxed);
-        self.stats.unique_kmers.store(self.kmer_counts.len(), Ordering::Relaxed);
-        self.stats.memory_bytes.store(self.estimate_memory_usage(), Ordering::Relaxed);
-        
+        self.stats
+            .total_kmers
+            .fetch_add(kmers_in_sequence, Ordering::Relaxed);
+        self.stats
+            .unique_kmers
+            .store(self.kmer_counts.len(), Ordering::Relaxed);
+        self.stats
+            .memory_bytes
+            .store(self.estimate_memory_usage(), Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -365,7 +475,7 @@ impl UnifiedAssemblyGraph {
     /// Add node to graph, returns node index
     pub fn add_node(&mut self, kmer: CompactKmer, coverage: u32) -> Result<u32> {
         let hash = kmer.hash();
-        
+
         // Check if node already exists
         if let Some(&index) = self.node_index.get(&hash) {
             // Update existing node coverage
@@ -397,13 +507,21 @@ impl UnifiedAssemblyGraph {
 
     /// Add edge between nodes
     pub fn add_edge(&mut self, from_hash: u64, to_hash: u64, weight: u32) -> Result<()> {
-        let from_idx = self.node_index.get(&from_hash)
+        let from_idx = self
+            .node_index
+            .get(&from_hash)
             .ok_or_else(|| anyhow!("Source node not found: {}", from_hash))?;
-        let to_idx = self.node_index.get(&to_hash)
+        let to_idx = self
+            .node_index
+            .get(&to_hash)
             .ok_or_else(|| anyhow!("Target node not found: {}", to_hash))?;
 
         // Check for duplicate edge
-        if self.edges.iter().any(|e| e.from == *from_idx && e.to == *to_idx) {
+        if self
+            .edges
+            .iter()
+            .any(|e| e.from == *from_idx && e.to == *to_idx)
+        {
             return Ok(());
         }
 
@@ -415,7 +533,7 @@ impl UnifiedAssemblyGraph {
         };
 
         self.edges.push(edge);
-        
+
         // Update degree information
         self.update_node_degrees(*from_idx, *to_idx)?;
         self.stats.total_edges += 1;
@@ -432,7 +550,7 @@ impl UnifiedAssemblyGraph {
             from_node.degree_info = (from_node.degree_info & 0xF0) | out_degree;
         }
 
-        // Update in-degree for target node  
+        // Update in-degree for target node
         let to_node = &mut self.nodes[to_idx as usize];
         let in_degree = ((to_node.degree_info & 0xF0) >> 4) + 1;
         if in_degree <= 15 {
@@ -450,7 +568,7 @@ impl UnifiedAssemblyGraph {
 
         let n = self.nodes.len();
         let mut reachability = vec![vec![false; n]; n];
-        
+
         // Initialize direct connections
         for edge in &self.edges {
             reachability[edge.from as usize][edge.to as usize] = true;
@@ -472,7 +590,7 @@ impl UnifiedAssemblyGraph {
         for (idx, edge) in self.edges.iter().enumerate() {
             let i = edge.from as usize;
             let j = edge.to as usize;
-            
+
             // Check if there's an alternative path
             for k in 0..n {
                 if k != i && k != j && reachability[i][k] && reachability[k][j] {
@@ -495,7 +613,8 @@ impl UnifiedAssemblyGraph {
     /// Streaming transitive reduction for large graphs
     fn streaming_transitive_reduction(&mut self) -> Result<()> {
         // Use parallel processing for large graphs
-        let edges_to_remove: Vec<usize> = self.edges
+        let edges_to_remove: Vec<usize> = self
+            .edges
             .par_iter()
             .enumerate()
             .filter_map(|(idx, edge)| {
@@ -521,7 +640,7 @@ impl UnifiedAssemblyGraph {
         let mut queue = VecDeque::new();
         let mut visited = HashSet::new();
         let max_depth = 5; // Limit search depth for performance
-        
+
         // Find direct neighbors of start (excluding end)
         for edge in &self.edges {
             if edge.from == start && edge.to != end {
@@ -534,7 +653,7 @@ impl UnifiedAssemblyGraph {
             if node == end {
                 return true; // Found alternative path
             }
-            
+
             if depth < max_depth {
                 for edge in &self.edges {
                     if edge.from == node && !visited.contains(&edge.to) {
@@ -586,7 +705,11 @@ impl UnifiedAssemblyGraph {
         in_degree == 0 || out_degree == 0 || (in_degree == 1 && out_degree == 1)
     }
 
-    fn trace_contig(&self, start_idx: usize, visited: &mut HashSet<usize>) -> Result<Option<OptimizedContig>> {
+    fn trace_contig(
+        &self,
+        start_idx: usize,
+        visited: &mut HashSet<usize>,
+    ) -> Result<Option<OptimizedContig>> {
         if visited.contains(&start_idx) {
             return Ok(None);
         }
@@ -623,11 +746,11 @@ impl UnifiedAssemblyGraph {
         // Build contig from path
         let mut sequence = String::new();
         let mut total_coverage = 0u32;
-        
+
         for (i, &node_idx) in path.iter().enumerate() {
             let node = &self.nodes[node_idx];
             total_coverage += node.coverage as u32;
-            
+
             if i == 0 {
                 sequence.push_str(&node.kmer.unpack());
             } else {
@@ -651,12 +774,13 @@ impl UnifiedAssemblyGraph {
     }
 
     fn get_unique_successor(&self, node_idx: usize) -> Option<usize> {
-        let successors: Vec<_> = self.edges
+        let successors: Vec<_> = self
+            .edges
             .iter()
             .filter(|e| e.from == node_idx as u32)
             .map(|e| e.to as usize)
             .collect();
-        
+
         if successors.len() == 1 {
             Some(successors[0])
         } else {
@@ -665,12 +789,13 @@ impl UnifiedAssemblyGraph {
     }
 
     fn get_unique_predecessor(&self, node_idx: usize) -> Option<usize> {
-        let predecessors: Vec<_> = self.edges
+        let predecessors: Vec<_> = self
+            .edges
             .iter()
             .filter(|e| e.to == node_idx as u32)
             .map(|e| e.from as usize)
             .collect();
-        
+
         if predecessors.len() == 1 {
             Some(predecessors[0])
         } else {
@@ -680,11 +805,15 @@ impl UnifiedAssemblyGraph {
 
     /// Calculate memory footprint of the graph
     pub fn memory_footprint(&self) -> MemoryFootprint {
-        let nodes_size = self.nodes.len() * std::mem::size_of::<CompactNode>() +
-                        self.nodes.iter().map(|n| n.kmer.memory_footprint()).sum::<usize>();
+        let nodes_size = self.nodes.len() * std::mem::size_of::<CompactNode>()
+            + self
+                .nodes
+                .iter()
+                .map(|n| n.kmer.memory_footprint())
+                .sum::<usize>();
         let edges_size = self.edges.capacity() * std::mem::size_of::<CompactEdge>();
         let index_size = self.node_index.capacity() * (8 + 4 + 8); // hash + index + overhead
-        
+
         MemoryFootprint {
             total_bytes: nodes_size + edges_size + index_size,
             nodes_bytes: nodes_size,
@@ -722,18 +851,24 @@ impl MemoryFootprint {
     pub fn total_mb(&self) -> f64 {
         self.total_bytes as f64 / (1024.0 * 1024.0)
     }
-    
+
     pub fn print_breakdown(&self) {
         println!("Memory Usage Breakdown:");
-        println!("  Nodes:    {:.2} MB ({:.1}%)", 
-                 self.nodes_bytes as f64 / (1024.0 * 1024.0),
-                 (self.nodes_bytes as f64 / self.total_bytes as f64) * 100.0);
-        println!("  Edges:    {:.2} MB ({:.1}%)", 
-                 self.edges_bytes as f64 / (1024.0 * 1024.0),
-                 (self.edges_bytes as f64 / self.total_bytes as f64) * 100.0);
-        println!("  Index:    {:.2} MB ({:.1}%)", 
-                 self.index_bytes as f64 / (1024.0 * 1024.0),
-                 (self.index_bytes as f64 / self.total_bytes as f64) * 100.0);
+        println!(
+            "  Nodes:    {:.2} MB ({:.1}%)",
+            self.nodes_bytes as f64 / (1024.0 * 1024.0),
+            (self.nodes_bytes as f64 / self.total_bytes as f64) * 100.0
+        );
+        println!(
+            "  Edges:    {:.2} MB ({:.1}%)",
+            self.edges_bytes as f64 / (1024.0 * 1024.0),
+            (self.edges_bytes as f64 / self.total_bytes as f64) * 100.0
+        );
+        println!(
+            "  Index:    {:.2} MB ({:.1}%)",
+            self.index_bytes as f64 / (1024.0 * 1024.0),
+            (self.index_bytes as f64 / self.total_bytes as f64) * 100.0
+        );
         println!("  Total:    {:.2} MB", self.total_mb());
     }
 }
@@ -777,10 +912,16 @@ impl MemoryBenchmark {
         };
 
         println!("\n🧬 Memory Optimization Results: {}", self.name);
-        println!("  Baseline:   {:.2} MB", self.baseline_memory as f64 / (1024.0 * 1024.0));
-        println!("  Optimized:  {:.2} MB", self.optimized_memory as f64 / (1024.0 * 1024.0));
+        println!(
+            "  Baseline:   {:.2} MB",
+            self.baseline_memory as f64 / (1024.0 * 1024.0)
+        );
+        println!(
+            "  Optimized:  {:.2} MB",
+            self.optimized_memory as f64 / (1024.0 * 1024.0)
+        );
         println!("  Reduction:  {:.1}%", reduction);
-        
+
         if reduction >= 70.0 {
             println!("  Status:     ✅ TARGET ACHIEVED");
         } else if reduction >= 50.0 {
@@ -829,7 +970,7 @@ mod tests {
             // Just check that unpack works and produces valid DNA sequence
             assert!(!unpacked.is_empty());
             assert!(unpacked.chars().all(|c| matches!(c, 'A' | 'C' | 'G' | 'T')));
-            
+
             // Memory should be smaller than string representation for longer sequences
             let string_size = seq.len() + std::mem::size_of::<String>() + 32; // String overhead
             if seq.len() > 8 {
@@ -841,9 +982,11 @@ mod tests {
     #[test]
     fn test_streaming_kmer_processor() {
         let mut processor = StreamingKmerProcessor::new(4, 10); // 10MB limit
-        
-        processor.process_sequence("ATCGATCGATCGATCG").expect("Valid sequence");
-        
+
+        processor
+            .process_sequence("ATCGATCGATCGATCG")
+            .expect("Valid sequence");
+
         let (total_seqs, total_kmers, unique_kmers, memory) = processor.get_stats();
         assert_eq!(total_seqs, 1);
         assert_eq!(total_kmers, 13); // 16 - 4 + 1
@@ -854,21 +997,21 @@ mod tests {
     #[test]
     fn test_unified_graph_basic_operations() {
         let mut graph = UnifiedAssemblyGraph::new(100, 200);
-        
+
         let kmer1 = CompactKmer::new("ATCG").unwrap();
         let kmer2 = CompactKmer::new("TCGA").unwrap();
-        
+
         let _idx1 = graph.add_node(kmer1.clone(), 5).unwrap();
         let _idx2 = graph.add_node(kmer2.clone(), 3).unwrap();
-        
+
         graph.add_edge(kmer1.hash(), kmer2.hash(), 2).unwrap();
-        
+
         assert_eq!(graph.stats.total_nodes, 2);
         assert_eq!(graph.stats.total_edges, 1);
-        
+
         let footprint = graph.memory_footprint();
         assert!(footprint.total_bytes > 0);
-        
+
         // Generate contigs
         let contigs = graph.generate_contigs().unwrap();
         assert!(!contigs.is_empty());
@@ -878,8 +1021,8 @@ mod tests {
     fn test_memory_benchmark() {
         let mut benchmark = MemoryBenchmark::new("Test");
         benchmark.record_baseline(1000000); // 1MB baseline
-        benchmark.record_optimized(200000);  // 200KB optimized
-        
+        benchmark.record_optimized(200000); // 200KB optimized
+
         let reduction = benchmark.reduction_percentage();
         assert!((reduction - 80.0).abs() < 0.1); // Should be 80% reduction
     }
@@ -887,25 +1030,25 @@ mod tests {
     #[test]
     fn test_transitive_reduction() {
         let mut graph = UnifiedAssemblyGraph::new(10, 20);
-        
+
         // Create test graph: A -> B -> C and A -> C (transitive)
         // Use sequences that are NOT reverse complements to avoid canonical collisions
-        let kmer_a = CompactKmer::new("AAACCCGG").unwrap(); 
-        let kmer_b = CompactKmer::new("CCCGGGTT").unwrap();   
+        let kmer_a = CompactKmer::new("AAACCCGG").unwrap();
+        let kmer_b = CompactKmer::new("CCCGGGTT").unwrap();
         let kmer_c = CompactKmer::new("GGGTTAAA").unwrap();
-        
+
         graph.add_node(kmer_a.clone(), 5).unwrap();
         graph.add_node(kmer_b.clone(), 5).unwrap();
         graph.add_node(kmer_c.clone(), 5).unwrap();
-        
+
         graph.add_edge(kmer_a.hash(), kmer_b.hash(), 1).unwrap();
         graph.add_edge(kmer_b.hash(), kmer_c.hash(), 1).unwrap();
         graph.add_edge(kmer_a.hash(), kmer_c.hash(), 1).unwrap(); // Transitive
-        
+
         assert_eq!(graph.stats.total_edges, 3);
-        
+
         graph.transitive_reduction().unwrap();
-        
+
         // Transitive reduction should remove at least one edge
         // The actual result may vary based on implementation details
         assert!(graph.stats.total_edges <= 3);

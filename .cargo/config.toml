@@ -1,0 +1,10 @@
+[build]
+incremental = true
+
+[profile.dev]
+debug = 2
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

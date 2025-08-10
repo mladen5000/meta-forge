@@ -10,8 +10,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 /// Main menu screen
 pub struct MainMenuScreen {
@@ -82,16 +82,20 @@ impl Screen for MainMenuScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(10),    // Menu
-                Constraint::Length(3),  // Status
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(10),   // Menu
+                Constraint::Length(3), // Status
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         // Title
         let title = Paragraph::new("Meta-Forge - Metagenomic Analysis Suite")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
@@ -106,13 +110,16 @@ impl Screen for MainMenuScreen {
             .split(chunks[1]);
 
         // Create menu items
-        let items: Vec<ListItem> = self.menu_items
+        let items: Vec<ListItem> = self
+            .menu_items
             .iter()
             .enumerate()
             .map(|(i, item)| {
                 let style = if item.enabled {
                     if i == self.selected_item {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     }
@@ -120,7 +127,11 @@ impl Screen for MainMenuScreen {
                     Style::default().fg(Color::DarkGray)
                 };
 
-                let prefix = if i == self.selected_item { "► " } else { "  " };
+                let prefix = if i == self.selected_item {
+                    "► "
+                } else {
+                    "  "
+                };
                 ListItem::new(Line::from(vec![
                     Span::styled(prefix, style),
                     Span::styled(format!("{}. {}", i + 1, item.title), style),
@@ -191,7 +202,7 @@ impl Screen for MainMenuScreen {
                     self.selected_item = self.menu_items.len() - 1;
                 }
             }
-            
+
             KeyCode::Down => {
                 if self.selected_item < self.menu_items.len() - 1 {
                     self.selected_item += 1;
@@ -199,14 +210,14 @@ impl Screen for MainMenuScreen {
                     self.selected_item = 0;
                 }
             }
-            
+
             KeyCode::Enter => {
                 let selected = &self.menu_items[self.selected_item];
                 if selected.enabled {
                     return Ok(Some(selected.screen.clone()));
                 }
             }
-            
+
             KeyCode::Char(c) => {
                 if let Some(digit) = c.to_digit(10) {
                     let index = (digit as usize).saturating_sub(1);
@@ -218,7 +229,7 @@ impl Screen for MainMenuScreen {
                         }
                     }
                 }
-                
+
                 match c {
                     'q' | 'Q' => {
                         // Quit from main menu
@@ -227,12 +238,12 @@ impl Screen for MainMenuScreen {
                     _ => {}
                 }
             }
-            
+
             KeyCode::F(1) => return Ok(Some(ScreenEnum::Help)),
             KeyCode::Esc => {
                 // Quit from main menu
             }
-            
+
             _ => {}
         }
 

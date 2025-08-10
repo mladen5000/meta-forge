@@ -39,23 +39,41 @@ async fn main() -> Result<()> {
             println!("Mode: {mode:?}\n");
 
             let mut multi_progress = MultiProgress::new();
-            let init_line = multi_progress.add_line("🔧 Initialization: Loading configuration...".to_string());
-            let preprocess_line = multi_progress.add_line("📋 Preprocessing: Waiting...".to_string());
+            let init_line =
+                multi_progress.add_line("🔧 Initialization: Loading configuration...".to_string());
+            let preprocess_line =
+                multi_progress.add_line("📋 Preprocessing: Waiting...".to_string());
             let assembly_line = multi_progress.add_line("🧬 Assembly: Waiting...".to_string());
-            let features_line = multi_progress.add_line("🔍 Feature Extraction: Waiting...".to_string());
-            let classification_line = multi_progress.add_line("🏷️  Classification: Waiting...".to_string());
+            let features_line =
+                multi_progress.add_line("🔍 Feature Extraction: Waiting...".to_string());
+            let classification_line =
+                multi_progress.add_line("🏷️  Classification: Waiting...".to_string());
             let abundance_line = multi_progress.add_line("📊 Abundance: Waiting...".to_string());
             let report_line = multi_progress.add_line("📝 Report: Waiting...".to_string());
 
-            multi_progress.update_line(init_line, "🔧 Initialization: Creating pipeline...".to_string());
+            multi_progress.update_line(
+                init_line,
+                "🔧 Initialization: Creating pipeline...".to_string(),
+            );
             let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
 
             multi_progress.update_line(init_line, "🔧 Initialization: ✅ Ready".to_string());
-            
+
             // Run analysis with progress tracking
-            let results = pipeline.run_analysis_with_progress(&input, &sample_name, mode, &mut multi_progress, 
-                                                              preprocess_line, assembly_line, features_line, 
-                                                              classification_line, abundance_line, report_line).await?;
+            let results = pipeline
+                .run_analysis_with_progress(
+                    &input,
+                    &sample_name,
+                    mode,
+                    &mut multi_progress,
+                    preprocess_line,
+                    assembly_line,
+                    features_line,
+                    classification_line,
+                    abundance_line,
+                    report_line,
+                )
+                .await?;
 
             multi_progress.finish();
 
@@ -64,14 +82,26 @@ async fn main() -> Result<()> {
             println!("====================");
             println!("📊 Results Summary:");
             println!("   Sample: {}", results.sample_name);
-            println!("   Contigs assembled: {}", results.assembly_results.contigs.len());
-            println!("   Total sequence length: {} bp", results.assembly_results.assembly_stats.total_length);
-            println!("   Assembly N50: {} bp", results.assembly_results.assembly_stats.n50);
+            println!(
+                "   Contigs assembled: {}",
+                results.assembly_results.contigs.len()
+            );
+            println!(
+                "   Total sequence length: {} bp",
+                results.assembly_results.assembly_stats.total_length
+            );
+            println!(
+                "   Assembly N50: {} bp",
+                results.assembly_results.assembly_stats.n50
+            );
             println!("   Species identified: {}", results.classifications.len());
-            println!("   Processing time: {:.2} seconds", results.processing_time.as_secs_f64());
-            
+            println!(
+                "   Processing time: {:.2} seconds",
+                results.processing_time.as_secs_f64()
+            );
+
             println!("   📄 Full report generated successfully");
-            
+
             println!("\n✨ Analysis completed successfully! ✨");
         }
         Commands::Database { operation } => {

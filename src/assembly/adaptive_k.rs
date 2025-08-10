@@ -22,18 +22,20 @@
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use petgraph::{graph::NodeIndex, Graph, Directed};
+use petgraph::{graph::NodeIndex, Directed, Graph};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::core::data_structures::{AssemblyStats, Contig, ContigType, GraphFragment, GraphNode, GraphEdge, CanonicalKmer};
+use crate::core::data_structures::{
+    AssemblyStats, CanonicalKmer, Contig, ContigType, GraphEdge, GraphFragment, GraphNode,
+};
 
 /* ------------------------------------------------------------------------- */
 /*                                 READ TYPE                                 */
 /* ------------------------------------------------------------------------- */
 
-// Using CorrectedRead from core::data_structures to avoid type conflicts  
+// Using CorrectedRead from core::data_structures to avoid type conflicts
 pub use crate::core::data_structures::CorrectedRead;
 
 /* ------------------------------------------------------------------------- */
@@ -218,7 +220,11 @@ impl AssemblyGraphBuilder {
                 continue;
             }
             let kmers: Vec<u64> = (0..=read.corrected.len() - k)
-                .filter_map(|i| BitPackedKmer::new(&read.corrected[i..i + k]).ok().map(|kmer| kmer.hash))
+                .filter_map(|i| {
+                    BitPackedKmer::new(&read.corrected[i..i + k])
+                        .ok()
+                        .map(|kmer| kmer.hash)
+                })
                 .collect();
             for win in kmers.windows(2) {
                 frag.insert_edge(win[0], win[1]);
@@ -279,7 +285,7 @@ impl AssemblyGraphBuilder {
                 frag.nodes.remove(&t);
             }
         }
-        // transitive reduction (parallel over edges)  
+        // transitive reduction (parallel over edges)
         let adj = frag.get_adjacency_list();
         let to_remove: Vec<GraphEdge> = frag
             .edges
@@ -295,8 +301,11 @@ impl AssemblyGraphBuilder {
                     .map(|_| e.clone())
             })
             .collect();
-        frag.edges.retain(|e| !to_remove.iter().any(|remove_e| 
-            e.from_hash == remove_e.from_hash && e.to_hash == remove_e.to_hash));
+        frag.edges.retain(|e| {
+            !to_remove
+                .iter()
+                .any(|remove_e| e.from_hash == remove_e.from_hash && e.to_hash == remove_e.to_hash)
+        });
         frag
     }
 

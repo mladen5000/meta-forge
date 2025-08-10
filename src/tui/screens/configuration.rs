@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct ConfigurationScreen {
     state: Arc<RwLock<AppState>>,
@@ -27,20 +27,27 @@ impl Screen for ConfigurationScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(5),     // Config options
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // Config options
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         let title = Paragraph::new("Analysis Configuration")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
         let config_text = "Sample Name: [sample_1]\nK-mer Range: [21-127]\nMin Coverage: [2]\nThreads: [auto]\nMemory Limit: [8GB]";
-        let config = Paragraph::new(config_text)
-            .block(Block::default().title("Configuration").borders(Borders::ALL));
+        let config = Paragraph::new(config_text).block(
+            Block::default()
+                .title("Configuration")
+                .borders(Borders::ALL),
+        );
         f.render_widget(config, chunks[1]);
 
         let help = Paragraph::new("↑/↓: Navigate, Enter: Edit, Tab: Next field, Esc: Back");

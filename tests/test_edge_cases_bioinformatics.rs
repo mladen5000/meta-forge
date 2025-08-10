@@ -1,8 +1,8 @@
 //! Edge case tests for bioinformatics functionality
 //! Tests ambiguous bases, short sequences, invalid DNA, empty inputs, and boundary conditions
 
-use meta_forge::core::data_structures::*;
 use meta_forge::assembly::adaptive_k::*;
+use meta_forge::core::data_structures::*;
 use meta_forge::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 
 #[cfg(test)]
@@ -37,10 +37,13 @@ mod ambiguous_base_tests {
         for config in &configs {
             for sequence in &test_sequences {
                 let result = CanonicalKmer::new_with_config(sequence, config);
-                
+
                 match config.strategy {
                     AmbiguousBaseStrategy::Skip => {
-                        assert!(result.is_err(), "Skip strategy should reject sequences with N");
+                        assert!(
+                            result.is_err(),
+                            "Skip strategy should reject sequences with N"
+                        );
                     }
                     AmbiguousBaseStrategy::Allow => {
                         assert!(result.is_ok(), "Allow strategy should accept single N");
@@ -94,13 +97,13 @@ mod ambiguous_base_tests {
         };
 
         let sequence_with_n = "NNNNATCGNNN";
-        
+
         // Test multiple times to ensure randomness works
         let mut replacement_results = Vec::new();
         for _ in 0..10 {
             let result = CanonicalKmer::new_with_config(sequence_with_n, &config);
             assert!(result.is_ok());
-            
+
             let kmer = result.unwrap();
             assert!(!kmer.sequence.contains('N'), "All Ns should be replaced");
             replacement_results.push(kmer.sequence.clone());
@@ -108,7 +111,8 @@ mod ambiguous_base_tests {
 
         // Should get some variation in replacements (probabilistic test)
         // Not guaranteed to be different due to randomness, but likely
-        let unique_results: std::collections::HashSet<_> = replacement_results.into_iter().collect();
+        let unique_results: std::collections::HashSet<_> =
+            replacement_results.into_iter().collect();
         // With many Ns and randomness, we should get some variation
         // (This is a probabilistic test that might rarely fail)
     }
@@ -144,17 +148,12 @@ mod ambiguous_base_tests {
             random_probabilities: None,
         };
 
-        let mixed_sequences = vec![
-            "atcgN",
-            "ATCGn", 
-            "AtCgN",
-            "nAtCg",
-        ];
+        let mixed_sequences = vec!["atcgN", "ATCGn", "AtCgN", "nAtCg"];
 
         for sequence in mixed_sequences {
             let result = CanonicalKmer::new_with_config(sequence, &config);
             assert!(result.is_ok());
-            
+
             let kmer = result.unwrap();
             assert!(!kmer.sequence.contains('N'));
             assert!(!kmer.sequence.contains('n'));
@@ -172,7 +171,7 @@ mod short_sequence_tests {
         assert!(CanonicalKmer::new("").is_err());
         assert!(BitPackedKmer::new("").is_err());
         assert!(validate_dna_sequence("").is_ok()); // Empty sequence is valid DNA
-        
+
         let extractor = MinimizerExtractor::new(3, 5);
         let minimizers = extractor.extract_minimizers("").unwrap();
         assert!(minimizers.is_empty());
@@ -181,11 +180,11 @@ mod short_sequence_tests {
     #[test]
     fn test_single_base_sequence() {
         let single_bases = vec!["A", "T", "C", "G"];
-        
+
         for base in single_bases {
             // Too short for k-mer
             assert!(CanonicalKmer::new(base).is_ok()); // Single base is valid k-mer
-            
+
             let extractor = MinimizerExtractor::new(3, 5);
             let minimizers = extractor.extract_minimizers(base).unwrap();
             assert!(minimizers.is_empty()); // Too short for k=3
@@ -195,10 +194,10 @@ mod short_sequence_tests {
     #[test]
     fn test_two_base_sequence() {
         let two_bases = vec!["AT", "GC", "TA", "CG"];
-        
+
         for bases in two_bases {
             assert!(CanonicalKmer::new(bases).is_ok()); // Valid 2-mer
-            
+
             let extractor = MinimizerExtractor::new(3, 5);
             let minimizers = extractor.extract_minimizers(bases).unwrap();
             assert!(minimizers.is_empty()); // Too short for k=3
@@ -209,9 +208,9 @@ mod short_sequence_tests {
     fn test_exact_k_mer_size_sequence() {
         let k = 4;
         let sequence = "ATCG"; // Exactly k bases
-        
+
         assert!(CanonicalKmer::new(sequence).is_ok());
-        
+
         let extractor = MinimizerExtractor::new(k, 5);
         let minimizers = extractor.extract_minimizers(sequence).unwrap();
         assert_eq!(minimizers.len(), 1); // Should have exactly one minimizer
@@ -222,11 +221,11 @@ mod short_sequence_tests {
     fn test_k_plus_one_sequence() {
         let k = 4;
         let sequence = "ATCGA"; // k+1 bases
-        
+
         let extractor = MinimizerExtractor::new(k, 3);
         let minimizers = extractor.extract_minimizers(sequence).unwrap();
         assert!(minimizers.len() >= 1); // Should have at least one minimizer
-        
+
         // Check that all minimizers have correct k-mer size
         for minimizer in &minimizers {
             assert_eq!(minimizer.kmer.len(), k);
@@ -236,7 +235,7 @@ mod short_sequence_tests {
     #[test]
     fn test_assembly_chunk_with_very_short_reads() {
         let mut chunk = AssemblyChunk::new(0, 6);
-        
+
         let short_reads = vec![
             CorrectedRead {
                 id: 0,
@@ -295,30 +294,45 @@ mod invalid_dna_tests {
         ];
 
         for sequence in invalid_sequences {
-            assert!(CanonicalKmer::new(sequence).is_err(), 
-                   "Sequence '{}' should be invalid", sequence);
-            assert!(BitPackedKmer::new(sequence).is_err(),
-                   "BitPackedKmer with '{}' should be invalid", sequence);
-            assert!(validate_dna_sequence(sequence).is_err(),
-                   "DNA validation for '{}' should fail", sequence);
+            assert!(
+                CanonicalKmer::new(sequence).is_err(),
+                "Sequence '{}' should be invalid",
+                sequence
+            );
+            assert!(
+                BitPackedKmer::new(sequence).is_err(),
+                "BitPackedKmer with '{}' should be invalid",
+                sequence
+            );
+            assert!(
+                validate_dna_sequence(sequence).is_err(),
+                "DNA validation for '{}' should fail",
+                sequence
+            );
         }
     }
 
     #[test]
     fn test_unicode_characters() {
         let unicode_sequences = vec![
-            "ATCG∅",     // Mathematical symbol
-            "ATCG®",     // Registered trademark
-            "ATCG™",     // Trademark
-            "ATCGα",     // Greek letter
-            "ATCG中",    // Chinese character
+            "ATCG∅",  // Mathematical symbol
+            "ATCG®",  // Registered trademark
+            "ATCG™",  // Trademark
+            "ATCGα",  // Greek letter
+            "ATCG中", // Chinese character
         ];
 
         for sequence in unicode_sequences {
-            assert!(CanonicalKmer::new(sequence).is_err(),
-                   "Unicode sequence '{}' should be invalid", sequence);
-            assert!(validate_dna_sequence(sequence).is_err(),
-                   "DNA validation for '{}' should fail", sequence);
+            assert!(
+                CanonicalKmer::new(sequence).is_err(),
+                "Unicode sequence '{}' should be invalid",
+                sequence
+            );
+            assert!(
+                validate_dna_sequence(sequence).is_err(),
+                "DNA validation for '{}' should fail",
+                sequence
+            );
         }
     }
 
@@ -332,8 +346,11 @@ mod invalid_dna_tests {
         ];
 
         for sequence in mixed_sequences {
-            assert!(CanonicalKmer::new(sequence).is_err(),
-                   "Mixed sequence '{}' should be invalid", sequence);
+            assert!(
+                CanonicalKmer::new(sequence).is_err(),
+                "Mixed sequence '{}' should be invalid",
+                sequence
+            );
         }
     }
 
@@ -341,15 +358,18 @@ mod invalid_dna_tests {
     fn test_boundary_valid_characters() {
         // Test characters that are almost valid
         let boundary_sequences = vec![
-            "ATCGH",  // H is not valid DNA
-            "ATCGI",  // I is not valid DNA  
-            "ATCGJ",  // J is not valid DNA
-            "ATCGU",  // U is RNA, not DNA (though some systems accept it)
+            "ATCGH", // H is not valid DNA
+            "ATCGI", // I is not valid DNA
+            "ATCGJ", // J is not valid DNA
+            "ATCGU", // U is RNA, not DNA (though some systems accept it)
         ];
 
         for sequence in boundary_sequences {
-            assert!(CanonicalKmer::new(sequence).is_err(),
-                   "Boundary sequence '{}' should be invalid", sequence);
+            assert!(
+                CanonicalKmer::new(sequence).is_err(),
+                "Boundary sequence '{}' should be invalid",
+                sequence
+            );
         }
     }
 }
@@ -363,10 +383,10 @@ mod boundary_condition_tests {
         // Test very long k-mers
         let long_sequence = "A".repeat(1000);
         assert!(CanonicalKmer::new(&long_sequence).is_ok()); // Should handle long sequences
-        
+
         let very_long_sequence = "A".repeat(10000);
         assert!(CanonicalKmer::new(&very_long_sequence).is_ok()); // Should still work
-        
+
         // BitPackedKmer has a limit
         let too_long_for_bitpacked = "A".repeat(2000);
         assert!(BitPackedKmer::new(&too_long_for_bitpacked).is_err());
@@ -378,7 +398,7 @@ mod boundary_condition_tests {
         let extractor = MinimizerExtractor::new(3, 1);
         let sequence = "ATCGATCG";
         let minimizers = extractor.extract_minimizers(sequence).unwrap();
-        
+
         assert!(!minimizers.is_empty());
         // With window size 1, each k-mer position should be a potential minimizer
     }
@@ -387,10 +407,10 @@ mod boundary_condition_tests {
     fn test_k_equal_to_sequence_length() {
         let sequence = "ATCGATCG";
         let k = sequence.len();
-        
+
         let extractor = MinimizerExtractor::new(k, 3);
         let minimizers = extractor.extract_minimizers(sequence).unwrap();
-        
+
         assert_eq!(minimizers.len(), 1); // Only one possible k-mer
         assert_eq!(minimizers[0].kmer.len(), k);
     }
@@ -398,12 +418,12 @@ mod boundary_condition_tests {
     #[test]
     fn test_very_large_coverage_values() {
         let mut node = GraphNode::new(CanonicalKmer::new("ATCG").unwrap(), 4);
-        
+
         // Simulate very high coverage
         for i in 0..1000 {
             node.add_read_position(i, i, Strand::Forward);
         }
-        
+
         assert!(node.coverage > 1000);
         node.update_node_type();
         assert_eq!(node.node_type, NodeType::Repetitive);
@@ -414,11 +434,11 @@ mod boundary_condition_tests {
         // All AT (0% GC)
         let at_only = "AAAATTTTAAAATTTT";
         assert_eq!(calculate_gc_content(at_only), 0.0);
-        
+
         // All GC (100% GC)
         let gc_only = "GGGGCCCCGGGGCCCC";
         assert_eq!(calculate_gc_content(gc_only), 1.0);
-        
+
         // These should still create valid k-mers despite extreme composition
         assert!(CanonicalKmer::new("AAAA").is_ok());
         assert!(CanonicalKmer::new("GGGG").is_ok());
@@ -445,21 +465,21 @@ mod boundary_condition_tests {
         let homopolymers = vec![
             "AAAAAAAAAA", // A homopolymer
             "TTTTTTTTTT", // T homopolymer
-            "GGGGGGGGGG", // G homopolymer  
+            "GGGGGGGGGG", // G homopolymer
             "CCCCCCCCCC", // C homopolymer
         ];
 
         for homopolymer in homopolymers {
             // Should handle homopolymers
             assert!(CanonicalKmer::new(homopolymer).is_ok());
-            
+
             // Complexity should be very low
             let complexity = calculate_sequence_complexity(homopolymer);
             assert!(complexity < 0.1, "Homopolymer should have low complexity");
-            
+
             let extractor = MinimizerExtractor::new(4, 5);
             let minimizers = extractor.extract_minimizers(homopolymer).unwrap();
-            
+
             // All k-mers are identical in homopolymer, so should deduplicate
             assert!(minimizers.len() <= homopolymer.len() - 4 + 1);
         }
@@ -468,7 +488,7 @@ mod boundary_condition_tests {
     #[test]
     fn test_assembly_with_no_overlaps() {
         let builder = AssemblyGraphBuilder::new(4, 6, 1);
-        
+
         // Create reads with no overlaps
         let non_overlapping_reads = vec![
             CorrectedRead {
@@ -501,7 +521,7 @@ mod boundary_condition_tests {
 
         let result = builder.build(&non_overlapping_reads);
         assert!(result.is_ok());
-        
+
         let graph = result.unwrap();
         // Should create separate contigs for non-overlapping reads
         assert!(graph.contigs.len() >= 1);

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use bio::io::fastq;
 use serde::{Deserialize, Serialize};
 
@@ -396,7 +396,7 @@ mod tests {
     }
 
     use proptest::proptest;
-    
+
     proptest! {
         #[test]
         fn fuzz_no_panic(seq in "[ACGTN]{0,200}") {

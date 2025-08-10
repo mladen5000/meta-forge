@@ -9,8 +9,8 @@ use ratatui::{
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::tui::state::{AppState, Screen as ScreenEnum};
 use super::Screen;
+use crate::tui::state::{AppState, Screen as ScreenEnum};
 
 pub struct AnalysisScreen {
     state: Arc<RwLock<AppState>>,
@@ -27,22 +27,28 @@ impl Screen for AnalysisScreen {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Title
-                Constraint::Min(8),     // Progress
-                Constraint::Length(3),  // Status
-                Constraint::Length(2),  // Help
+                Constraint::Length(3), // Title
+                Constraint::Min(8),    // Progress
+                Constraint::Length(3), // Status
+                Constraint::Length(2), // Help
             ])
             .split(area);
 
         let title = Paragraph::new("Analysis Progress")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
         // Progress display - placeholder for now
-        let no_analysis = Paragraph::new("No analysis running.\n\nUse 'Start Analysis' to begin processing your data.")
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().title("Status").borders(Borders::ALL));
+        let no_analysis = Paragraph::new(
+            "No analysis running.\n\nUse 'Start Analysis' to begin processing your data.",
+        )
+        .style(Style::default().fg(Color::Yellow))
+        .block(Block::default().title("Status").borders(Borders::ALL));
         f.render_widget(no_analysis, chunks[1]);
 
         // Status

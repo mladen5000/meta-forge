@@ -7,5 +7,5 @@ pub mod widgets;
 
 pub use app::TuiApp;
 pub use events::{AppEvent, EventHandler};
-pub use state::{AppState, Screen};
 pub use screens::ScreenManager;
+pub use state::{AppState, Screen};
