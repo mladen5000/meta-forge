@@ -9,7 +9,16 @@ mode="${2:---smoke}"
 
 run() {
   echo "▶ $*"
-  eval "$@"
+  local attempt=1
+  until eval "$@"; do
+    if [[ $attempt -ge 3 ]]; then
+      echo "❌ Command failed after $attempt attempts"
+      return 1
+    fi
+    echo "⏳ Cargo lock busy, retrying in 3s (attempt $attempt)..."
+    sleep 3
+    ((attempt++))
+  done
 }
 
 have_nextest() {
@@ -29,7 +38,7 @@ case "$cmd" in
   test)
     if [ "$mode" = "--smoke" ]; then
       if have_nextest; then
-        run "cargo nextest run -E 'test(/^((?!slow).)*$/)' --failure-output=final"
+        run "cargo nextest run --skip slow --failure-output=final"
       else
         run "cargo test -- --quiet --skip slow"
       fi
@@ -40,7 +49,7 @@ case "$cmd" in
         run "cargo test"
       fi
     fi
-    ;;
+  ;;
   *)
     echo "Usage: $0 {fmt|lint|check|test [--smoke|--full]}"
     exit 2

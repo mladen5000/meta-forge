@@ -162,6 +162,11 @@ impl CompactKmer {
         std::mem::size_of::<Self>() + (self.data.len() * std::mem::size_of::<u64>())
     }
 
+    /// Memory footprint in bytes (alias for memory_usage for compatibility)
+    pub fn memory_footprint(&self) -> usize {
+        self.memory_usage()
+    }
+
     /// SIMD-optimized nucleotide comparison
     /// Uses bit operations for fast equality checks
     pub fn equals_simd(&self, other: &CompactKmer) -> bool {
