@@ -14,7 +14,7 @@ use ort::{Session, SessionBuilder}; // ONNX Runtime
 use smartcore::ensemble::random_forest_classifier::RandomForestClassifier; // For sketching algorithms
 
 // Graph processing
-use pathfinding::prelude::*;
+// use pathfinding::prelude::*; // TODO: Enable when pathfinding is implemented
 use petgraph::algo::connected_components;
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph}; // Graph algorithms
@@ -336,7 +336,7 @@ impl EnhancedMetaPipeline {
         }
 
         // Find connected components and generate contigs
-        let num_components = connected_components(&merged_graph);
+        let _num_components = connected_components(&merged_graph);
         let mut contigs = Vec::new();
 
         // For now, create a simple contig from the entire graph
@@ -692,7 +692,7 @@ impl SmartTaxonomyFilter {
 
         // Convert ndarray to smartcore compatible format
         use smartcore::linalg::basic::matrix::DenseMatrix;
-        let nrows = features.nrows();
+        let _nrows = features.nrows();
         let ncols = features.ncols();
         let features_data: Vec<f64> = features.into_raw_vec_and_offset().0;
         let features_2d: Vec<Vec<f64>> = features_data
@@ -719,7 +719,7 @@ pub struct AIRepeatResolver {
 }
 
 impl AIRepeatResolver {
-    fn new(use_gpu: bool) -> Result<Self> {
+    fn new(_use_gpu: bool) -> Result<Self> {
         // Load pre-trained ONNX model for repeat classification
         let session = if std::path::Path::new("repeat_model.onnx").exists() {
             use ort::Environment;

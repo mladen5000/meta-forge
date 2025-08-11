@@ -273,3 +273,279 @@ pub fn get_key_bindings(screen: &crate::tui::state::Screen) -> Vec<KeyBinding> {
 
     bindings
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::state::Screen;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use std::time::Duration;
+
+    #[test]
+    fn test_app_event_creation() {
+        let key_event = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
+        let app_event = AppEvent::Input(key_event);
+
+        if let AppEvent::Input(key) = app_event {
+            assert_eq!(key.code, KeyCode::Enter);
+            assert!(key.modifiers.is_empty());
+        } else {
+            panic!("Expected Input event");
+        }
+    }
+
+    #[test]
+    fn test_analysis_progress_event() {
+        let progress_event = AppEvent::AnalysisProgress {
+            operation: "assembly".to_string(),
+            current: 50,
+            total: Some(100),
+            message: "Halfway done".to_string(),
+        };
+
+        if let AppEvent::AnalysisProgress {
+            operation,
+            current,
+            total,
+            message,
+        } = progress_event
+        {
+            assert_eq!(operation, "assembly");
+            assert_eq!(current, 50);
+            assert_eq!(total, Some(100));
+            assert_eq!(message, "Halfway done");
+        } else {
+            panic!("Expected AnalysisProgress event");
+        }
+    }
+
+    #[test]
+    fn test_event_handler_creation() {
+        let handler = EventHandler::new(Duration::from_millis(100));
+
+        // Test that we can get an async sender
+        let _sender = handler.async_sender();
+
+        // Test try_next doesn't block when no events
+        let result = handler.try_next();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_handle_key_event_global_quit() {
+        let key_event = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        let result = handle_key_event(key_event, &Screen::MainMenu);
+
+        assert!(result.is_some());
+        if let Some(AppEvent::Quit) = result {
+            // Test passes
+        } else {
+            panic!("Expected Quit event for Ctrl+Q");
+        }
+    }
+
+    #[test]
+    fn test_handle_key_event_escape_main_menu() {
+        let key_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        let result = handle_key_event(key_event, &Screen::MainMenu);
+
+        assert!(result.is_some());
+        if let Some(AppEvent::Quit) = result {
+            // Test passes - Esc in main menu should quit
+        } else {
+            panic!("Expected Quit event for Esc in MainMenu");
+        }
+    }
+
+    #[test]
+    fn test_handle_key_event_escape_other_screens() {
+        let key_event = KeyEvent::new(KeyCode::Esc, KeyModifiers::empty());
+        let result = handle_key_event(key_event, &Screen::FileSelection);
+
+        // Should return None for other screens - they handle their own navigation
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_handle_key_event_regular_char() {
+        let key_event = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
+        let result = handle_key_event(key_event, &Screen::MainMenu);
+
+        // Regular chars without modifiers should not produce global events
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_handle_key_event_help_key() {
+        let key_event = KeyEvent::new(KeyCode::F(1), KeyModifiers::empty());
+        let result = handle_key_event(key_event, &Screen::MainMenu);
+
+        // F1 should not produce a global event in this implementation
+        // (it's handled by individual screens)
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_key_binding_creation() {
+        let binding = KeyBinding::new("Ctrl+Q", "Quit application");
+
+        assert_eq!(binding.key, "Ctrl+Q");
+        assert_eq!(binding.description, "Quit application");
+    }
+
+    #[test]
+    fn test_get_key_bindings_main_menu() {
+        let bindings = get_key_bindings(&Screen::MainMenu);
+
+        // Should have global bindings plus main menu specific ones
+        assert!(bindings.len() >= 10); // At least 3 global + 7 menu specific
+
+        // Check for global bindings
+        assert!(bindings.iter().any(|b| b.key == "Ctrl+Q"));
+        assert!(bindings.iter().any(|b| b.key == "Esc"));
+        assert!(bindings.iter().any(|b| b.key == "F1"));
+
+        // Check for main menu specific bindings
+        assert!(bindings.iter().any(|b| b.key == "1"));
+        assert!(bindings.iter().any(|b| b.key == "Enter"));
+        assert!(bindings.iter().any(|b| b.key == "↑/↓"));
+    }
+
+    #[test]
+    fn test_get_key_bindings_file_selection() {
+        let bindings = get_key_bindings(&Screen::FileSelection);
+
+        // Check for file selection specific bindings
+        assert!(bindings.iter().any(|b| b.key == "Space"));
+        assert!(bindings.iter().any(|b| b.key == "Tab"));
+        assert!(bindings.iter().any(|b| b.key == "F5"));
+        assert!(bindings.iter().any(|b| b.key == "Ctrl+A"));
+        assert!(bindings.iter().any(|b| b.key == "Ctrl+D"));
+    }
+
+    #[test]
+    fn test_get_key_bindings_analysis() {
+        let bindings = get_key_bindings(&Screen::Analysis);
+
+        // Check for analysis specific bindings
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "Space" && b.description.contains("Pause")));
+        assert!(bindings.iter().any(|b| b.key == "Ctrl+C"));
+        assert!(bindings.iter().any(|b| b.key == "F5"));
+    }
+
+    #[test]
+    fn test_get_key_bindings_database() {
+        let bindings = get_key_bindings(&Screen::Database);
+
+        // Check for database specific bindings
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "1" && b.description.contains("Initialize")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "2" && b.description.contains("status")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "3" && b.description.contains("Backup")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "4" && b.description.contains("Restore")));
+    }
+
+    #[test]
+    fn test_get_key_bindings_results() {
+        let bindings = get_key_bindings(&Screen::Results);
+
+        // Check for results specific bindings
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "E" && b.description.contains("Export")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "V" && b.description.contains("Visualize")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "S" && b.description.contains("Save")));
+    }
+
+    #[test]
+    fn test_get_key_bindings_error_screen() {
+        let error_screen = Screen::Error("Test error".to_string());
+        let bindings = get_key_bindings(&error_screen);
+
+        // Check for error screen specific bindings
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "Enter" && b.description.contains("Acknowledge")));
+        assert!(bindings
+            .iter()
+            .any(|b| b.key == "R" && b.description.contains("Retry")));
+    }
+
+    #[test]
+    fn test_app_event_analysis_started() {
+        let event = AppEvent::AnalysisStarted("genome_assembly".to_string());
+
+        if let AppEvent::AnalysisStarted(name) = event {
+            assert_eq!(name, "genome_assembly");
+        } else {
+            panic!("Expected AnalysisStarted event");
+        }
+    }
+
+    #[test]
+    fn test_app_event_analysis_error() {
+        let event = AppEvent::AnalysisError("assembly".to_string(), "Out of memory".to_string());
+
+        if let AppEvent::AnalysisError(operation, error) = event {
+            assert_eq!(operation, "assembly");
+            assert_eq!(error, "Out of memory");
+        } else {
+            panic!("Expected AnalysisError event");
+        }
+    }
+
+    #[test]
+    fn test_app_event_status_message() {
+        let event = AppEvent::StatusMessage("Analysis complete".to_string());
+
+        if let AppEvent::StatusMessage(message) = event {
+            assert_eq!(message, "Analysis complete");
+        } else {
+            panic!("Expected StatusMessage event");
+        }
+    }
+
+    #[test]
+    fn test_all_key_codes_handled() {
+        // Test various key codes that should not cause panics
+        let test_keys = vec![
+            KeyCode::Enter,
+            KeyCode::Tab,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::F(1),
+            KeyCode::F(12),
+            KeyCode::Char(' '),
+            KeyCode::Char('z'),
+        ];
+
+        for key_code in test_keys {
+            let key_event = KeyEvent::new(key_code, KeyModifiers::empty());
+            let result = handle_key_event(key_event, &Screen::MainMenu);
+            // Should not panic - result can be Some or None
+            let _handled = result.is_some();
+        }
+    }
+}

@@ -457,7 +457,7 @@ struct CompactEdge {
 }
 
 #[derive(Debug, Default)]
-struct AssemblyStats {
+pub struct AssemblyStats {
     total_nodes: usize,
     total_edges: usize,
     total_sequence_length: usize,

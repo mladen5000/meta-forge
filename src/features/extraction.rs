@@ -1,10 +1,13 @@
 use ahash::{AHashMap, AHashSet};
 use anyhow::Result;
 use ndarray::Array1;
-use rayon::prelude::*;
+// use rayon::prelude::*; // TODO: Enable when parallel processing is implemented
 use serde::{Deserialize, Serialize};
 
 use crate::core::data_structures::*;
+
+#[cfg(test)]
+use crate::core::data_structures::calculate_gc_content;
 
 /// Comprehensive feature extraction for sequences and assembly graphs
 pub struct AdvancedFeatureExtractor {
@@ -932,7 +935,7 @@ pub struct KmerSignatures {
 }
 
 impl KmerSignatures {
-    fn new(kmer_sizes: &[usize]) -> Result<Self> {
+    fn new(_kmer_sizes: &[usize]) -> Result<Self> {
         let mut hash_functions = Vec::new();
 
         for _ in 0..16 {
@@ -1218,5 +1221,116 @@ mod tests {
         assert_eq!(features.len(), 5);
         assert_eq!(features[3], 0.0); // Padded with zeros
         assert_eq!(features[4], 0.0);
+    }
+
+    /// Test feature vector dimensions match configuration settings
+    #[test]
+    fn test_feature_vector_dimensions() {
+        let config = FeatureConfig {
+            sequence_feature_dim: 50,
+            graph_feature_dim: 25,
+            kmer_feature_dim: 32,
+            ..Default::default()
+        };
+        let extractor = AdvancedFeatureExtractor::new(config.clone()).unwrap();
+
+        // Test sequence feature extraction
+        let test_sequence = "ATCGATCGATCGATCG";
+        let feature_vector = extractor.extract_sequence_features(test_sequence).unwrap();
+
+        // Verify dimensions match configuration
+        assert_eq!(
+            feature_vector.sequence_features.len(),
+            config.sequence_feature_dim,
+            "Sequence feature dimension mismatch: expected {}, got {}",
+            config.sequence_feature_dim,
+            feature_vector.sequence_features.len()
+        );
+
+        assert_eq!(
+            feature_vector.kmer_features.len(),
+            config.kmer_feature_dim,
+            "K-mer feature dimension mismatch: expected {}, got {}",
+            config.kmer_feature_dim,
+            feature_vector.kmer_features.len()
+        );
+
+        // Verify combined features match total expected dimension
+        let expected_combined_dim =
+            config.sequence_feature_dim + config.graph_feature_dim + config.kmer_feature_dim;
+        assert_eq!(
+            feature_vector.combined_features.len(),
+            expected_combined_dim,
+            "Combined feature dimension mismatch: expected {}, got {}",
+            expected_combined_dim,
+            feature_vector.combined_features.len()
+        );
+
+        // Verify metadata contains basic information
+        assert!(feature_vector.metadata.sequence_length > 0);
+        assert!(
+            feature_vector.metadata.gc_content >= 0.0 && feature_vector.metadata.gc_content <= 1.0
+        );
+    }
+
+    /// Test GC content calculation accuracy for biological correctness
+    #[test]
+    fn test_gc_content_calculation() {
+        // Test known GC content sequences
+        assert!(
+            (calculate_gc_content("ATCG") - 0.5).abs() < f64::EPSILON,
+            "GC content of ATCG should be 0.5"
+        );
+
+        assert!(
+            (calculate_gc_content("AAAA") - 0.0).abs() < f64::EPSILON,
+            "GC content of AAAA should be 0.0"
+        );
+
+        assert!(
+            (calculate_gc_content("CCGG") - 1.0).abs() < f64::EPSILON,
+            "GC content of CCGG should be 1.0"
+        );
+
+        // Test case insensitive
+        assert!(
+            (calculate_gc_content("atcg") - 0.5).abs() < f64::EPSILON,
+            "GC content should be case insensitive"
+        );
+
+        assert!(
+            (calculate_gc_content("gcGC") - 1.0).abs() < f64::EPSILON,
+            "Mixed case GC content should be 1.0"
+        );
+
+        // Test empty string edge case
+        assert_eq!(
+            calculate_gc_content(""),
+            0.0,
+            "Empty string should return 0.0 GC content"
+        );
+
+        // Test realistic genomic sequence
+        let genomic_seq = "ATCGATCGATCGATCGCCGGCCGGTTAACCGGAA"; // 16G+16C out of 34 = ~0.47
+        let gc_content = calculate_gc_content(genomic_seq);
+        assert!(
+            gc_content > 0.4 && gc_content < 0.6,
+            "Realistic genomic sequence GC content {} should be reasonable",
+            gc_content
+        );
+
+        // Integration test with feature extractor
+        let config = FeatureConfig::default();
+        let extractor = AdvancedFeatureExtractor::new(config).unwrap();
+        let features = extractor.extract_sequence_features("ATCGATCG").unwrap();
+
+        // Verify GC content in metadata matches direct calculation
+        let direct_gc = calculate_gc_content("ATCGATCG");
+        assert!(
+            (features.metadata.gc_content - direct_gc).abs() < f64::EPSILON,
+            "Feature extractor GC content {} should match direct calculation {}",
+            features.metadata.gc_content,
+            direct_gc
+        );
     }
 }

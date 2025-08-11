@@ -296,3 +296,249 @@ impl AppState {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_screen_enum_transitions() {
+        let mut state = AppState::new();
+
+        // Test initial state
+        assert_eq!(state.current_screen, Screen::MainMenu);
+        assert!(state.previous_screen.is_none());
+
+        // Test navigation
+        state.navigate_to(Screen::FileSelection);
+        assert_eq!(state.current_screen, Screen::FileSelection);
+        assert_eq!(state.previous_screen, Some(Screen::MainMenu));
+
+        // Test going back
+        state.go_back();
+        assert_eq!(state.current_screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn test_analysis_config_default() {
+        let config = AnalysisConfig::default();
+
+        assert!(config.sample_name.is_empty());
+        assert!(config.input_files.is_empty());
+        assert_eq!(config.analysis_mode, "Standard");
+        assert_eq!(config.k_mer_range, (21, 127));
+        assert_eq!(config.min_coverage, 2);
+        assert!(config.threads.is_none());
+        assert!(config.memory_limit.is_none());
+        assert!(config.output_dir.is_none());
+    }
+
+    #[test]
+    fn test_operation_progress_new() {
+        let progress = OperationProgress::new("test_operation", Some(100));
+
+        assert_eq!(progress.name, "test_operation");
+        assert_eq!(progress.current, 0);
+        assert_eq!(progress.total, Some(100));
+        assert!(progress.message.is_empty());
+        assert_eq!(progress.status, OperationStatus::Pending);
+        assert!(progress.rate.is_none());
+        assert!(progress.eta.is_none());
+    }
+
+    #[test]
+    fn test_operation_progress_update() {
+        let mut progress = OperationProgress::new("test", Some(100));
+
+        // Update progress
+        progress.update(50, Some("Halfway done"));
+
+        assert_eq!(progress.current, 50);
+        assert_eq!(progress.message, "Halfway done");
+        assert!(progress.rate.is_some());
+
+        // Test percentage calculation
+        let percentage = progress.percentage().unwrap();
+        assert_eq!(percentage, 50.0);
+    }
+
+    #[test]
+    fn test_operation_progress_without_total() {
+        let mut progress = OperationProgress::new("indefinite", None);
+        progress.update(42, Some("Processing..."));
+
+        assert_eq!(progress.current, 42);
+        assert!(progress.percentage().is_none());
+    }
+
+    #[test]
+    fn test_database_info_default() {
+        let db_info = DatabaseInfo::default();
+
+        assert!(db_info.path.is_none());
+        assert!(!db_info.initialized);
+        assert!(db_info.size.is_none());
+        assert!(db_info.tables.is_empty());
+        assert!(db_info.last_updated.is_none());
+    }
+
+    #[test]
+    fn test_file_browser_state_default() {
+        let browser = FileBrowserState::default();
+
+        assert!(browser.files.is_empty());
+        assert_eq!(browser.selected_index, 0);
+        assert!(browser.selected_files.is_empty());
+        assert!(browser.filter.is_empty());
+        assert!(!browser.show_hidden);
+    }
+
+    #[test]
+    fn test_app_state_navigation() {
+        let mut state = AppState::new();
+
+        // Test navigation chain
+        state.navigate_to(Screen::Configuration);
+        state.navigate_to(Screen::Analysis);
+
+        assert_eq!(state.current_screen, Screen::Analysis);
+        assert_eq!(state.previous_screen, Some(Screen::Configuration));
+
+        // Go back should return to Configuration, not MainMenu
+        state.go_back();
+        assert_eq!(state.current_screen, Screen::Configuration);
+    }
+
+    #[test]
+    fn test_app_state_error_handling() {
+        let mut state = AppState::new();
+
+        state.set_error("Test error message".to_string());
+
+        assert!(state.error_message.is_some());
+        assert_eq!(state.error_message.as_ref().unwrap(), "Test error message");
+        assert!(matches!(state.current_screen, Screen::Error(_)));
+
+        // Clear error should restore previous screen
+        state.previous_screen = Some(Screen::Configuration);
+        state.clear_error();
+
+        assert!(state.error_message.is_none());
+        assert_eq!(state.current_screen, Screen::Configuration);
+    }
+
+    #[test]
+    fn test_app_state_input_mode() {
+        let mut state = AppState::new();
+
+        assert!(!state.input_mode);
+        assert!(state.input_field.is_empty());
+        assert!(state.input_buffer.is_empty());
+
+        // Start input
+        state.start_input("sample_name");
+        assert!(state.input_mode);
+        assert_eq!(state.input_field, "sample_name");
+
+        // Simulate typing
+        state.input_buffer = "my_sample".to_string();
+
+        // End input
+        let input = state.end_input();
+        assert!(!state.input_mode);
+        assert!(state.input_field.is_empty());
+        assert!(state.input_buffer.is_empty());
+        assert_eq!(input, "my_sample");
+    }
+
+    #[test]
+    fn test_status_messages() {
+        let mut state = AppState::new();
+
+        assert!(state.status_messages.is_empty());
+
+        // Add some messages
+        state.add_status_message("Started analysis".to_string());
+        state.add_status_message("Processing reads".to_string());
+
+        assert_eq!(state.status_messages.len(), 2);
+        assert_eq!(state.status_messages[0], "Started analysis");
+        assert_eq!(state.status_messages[1], "Processing reads");
+    }
+
+    #[test]
+    fn test_status_messages_overflow() {
+        let mut state = AppState::new();
+
+        // Add more than 100 messages to test overflow behavior
+        for i in 0..105 {
+            state.add_status_message(format!("Message {}", i));
+        }
+
+        // Should keep only last 100 messages
+        assert_eq!(state.status_messages.len(), 100);
+        assert_eq!(state.status_messages[0], "Message 5"); // First 5 should be removed
+        assert_eq!(state.status_messages[99], "Message 104");
+    }
+
+    #[test]
+    fn test_operation_management() {
+        let mut state = AppState::new();
+
+        // Add operation
+        state.add_operation("assembly", Some(1000));
+        assert!(state.operations.contains_key("assembly"));
+
+        // Update operation
+        state.update_operation("assembly", 500, Some("Halfway"));
+        let op = state.operations.get("assembly").unwrap();
+        assert_eq!(op.current, 500);
+        assert_eq!(op.message, "Halfway");
+
+        // Complete operation
+        state.complete_operation("assembly");
+        let op = state.operations.get("assembly").unwrap();
+        assert_eq!(op.status, OperationStatus::Completed);
+
+        // Add error operation
+        state.add_operation("failed_op", None);
+        state.error_operation("failed_op", "Something went wrong");
+        let op = state.operations.get("failed_op").unwrap();
+        assert!(matches!(op.status, OperationStatus::Error(_)));
+
+        // Cleanup should remove completed and errored operations
+        let initial_count = state.operations.len();
+        state.cleanup_operations();
+        assert!(state.operations.len() < initial_count);
+    }
+
+    #[test]
+    fn test_results_data_default() {
+        let results = ResultsData::default();
+
+        assert!(results.sample_name.is_empty());
+        assert_eq!(results.contigs_count, 0);
+        assert_eq!(results.total_length, 0);
+        assert_eq!(results.n50, 0);
+        assert_eq!(results.processing_time, Duration::ZERO);
+        assert!(results.assembly_stats.is_empty());
+        assert!(results.taxonomic_results.is_empty());
+        assert!(results.export_formats.is_empty());
+    }
+
+    #[test]
+    fn test_operation_status_equality() {
+        assert_eq!(OperationStatus::Pending, OperationStatus::Pending);
+        assert_eq!(OperationStatus::Running, OperationStatus::Running);
+        assert_eq!(OperationStatus::Completed, OperationStatus::Completed);
+        assert_eq!(
+            OperationStatus::Error("test".to_string()),
+            OperationStatus::Error("test".to_string())
+        );
+        assert_ne!(
+            OperationStatus::Error("test1".to_string()),
+            OperationStatus::Error("test2".to_string())
+        );
+    }
+}

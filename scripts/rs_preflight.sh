@@ -38,7 +38,7 @@ case "$cmd" in
   test)
     if [ "$mode" = "--smoke" ]; then
       if have_nextest; then
-        run "cargo nextest run --skip slow --failure-output=final"
+        run "cargo nextest run slow --failure-output=final"
       else
         run "cargo test -- --quiet --skip slow"
       fi

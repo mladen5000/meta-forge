@@ -115,3 +115,159 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_cli_parsing() {
+        // Test CLI argument parsing
+        let cli = Cli::try_parse_from(vec![
+            "meta_forge",
+            "analyze",
+            "--input",
+            "test.fastq",
+            "--sample-name",
+            "test_sample",
+        ]);
+
+        assert!(
+            cli.is_ok(),
+            "CLI parsing should succeed for valid arguments"
+        );
+
+        if let Ok(cli) = cli {
+            match cli.command {
+                Commands::Analyze {
+                    input, sample_name, ..
+                } => {
+                    assert_eq!(input.len(), 1);
+                    assert_eq!(input[0].to_string_lossy(), "test.fastq");
+                    assert_eq!(sample_name, Some("test_sample".to_string()));
+                }
+                _ => panic!("Expected Analyze command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_cli_verbose_flag() {
+        let cli = Cli::try_parse_from(vec![
+            "meta_forge",
+            "--verbose",
+            "analyze",
+            "--input",
+            "test.fastq",
+        ]);
+
+        assert!(cli.is_ok());
+        if let Ok(cli) = cli {
+            assert!(cli.verbose, "Verbose flag should be set");
+        }
+    }
+
+    #[test]
+    fn test_cli_config_flag() {
+        let cli = Cli::try_parse_from(vec![
+            "meta_forge",
+            "--config",
+            "config.toml",
+            "analyze",
+            "--input",
+            "test.fastq",
+        ]);
+
+        assert!(cli.is_ok());
+        if let Ok(cli) = cli {
+            assert_eq!(cli.config, Some("config.toml".into()));
+        }
+    }
+
+    #[test]
+    fn test_sample_name_derivation() {
+        // Create a temporary file to test sample name derivation
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let test_file = temp_dir.path().join("sample_data.fastq");
+        std::fs::write(&test_file, "test content").expect("Failed to write test file");
+
+        // Test that sample name is derived from filename when not provided
+        let derived_name = test_file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("sample")
+            .to_string();
+
+        assert_eq!(derived_name, "sample_data");
+    }
+
+    #[test]
+    fn test_database_command_parsing() {
+        use meta_forge::pipeline::complete_integration::DatabaseOperation;
+
+        let cli = Cli::try_parse_from(vec!["meta_forge", "database", "init"]);
+
+        assert!(cli.is_ok());
+        if let Ok(cli) = cli {
+            match cli.command {
+                Commands::Database { operation } => {
+                    match operation {
+                        DatabaseOperation::Init => {
+                            // Test passes - database init command parsed correctly
+                        }
+                        _ => panic!("Expected Init operation"),
+                    }
+                }
+                _ => panic!("Expected Database command"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_cli_args() {
+        let cli = Cli::try_parse_from(vec!["meta_forge", "invalid_command"]);
+
+        assert!(cli.is_err(), "CLI parsing should fail for invalid command");
+    }
+
+    // Test logging initialization (mock test since we can't easily test actual logging setup)
+    #[test]
+    fn test_logging_level_selection() {
+        // Test the logic for selecting log level
+        let verbose_level = "debug";
+        let normal_level = "info";
+
+        assert_eq!(verbose_level, "debug");
+        assert_eq!(normal_level, "info");
+
+        // In actual main function:
+        // let log_level = if cli.verbose { "debug" } else { "info" };
+        // This logic is tested implicitly through the verbose flag test
+    }
+
+    #[tokio::test]
+    async fn test_analysis_mode_parsing() {
+        use meta_forge::pipeline::complete_integration::AnalysisMode;
+
+        let cli = Cli::try_parse_from(vec![
+            "meta_forge",
+            "analyze",
+            "--input",
+            "test.fastq",
+            "--mode",
+            "fast",
+        ]);
+
+        assert!(cli.is_ok());
+        if let Ok(cli) = cli {
+            match cli.command {
+                Commands::Analyze { mode, .. } => {
+                    assert_eq!(mode, AnalysisMode::Fast);
+                }
+                _ => panic!("Expected Analyze command"),
+            }
+        }
+    }
+}

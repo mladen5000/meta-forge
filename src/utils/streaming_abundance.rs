@@ -2,6 +2,9 @@ use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
+#[cfg(test)]
+use fastrand;
+
 /// Hybrid streaming sketch combining HyperLogLog (F₀) with L₀ sampling
 #[derive(Clone)]
 pub struct HybridAbundanceEstimator {
@@ -421,6 +424,11 @@ impl HyperLogLog {
     fn memory_usage(&self) -> usize {
         self.buckets.len() + std::mem::size_of::<Self>()
     }
+
+    /// Alias for estimate() method for compatibility
+    fn estimate_cardinality(&self) -> u64 {
+        self.estimate()
+    }
 }
 
 impl L0Sampler {
@@ -780,5 +788,80 @@ mod tests {
             "Error rate: {:.4}, Memory per k-mer: {:.2} bytes",
             recommendations.current_error_rate, recommendations.memory_per_kmer
         );
+    }
+
+    /// Test HyperLogLog cardinality estimation accuracy within theoretical bounds
+    #[test]
+    fn test_hyperloglog_cardinality_estimation() {
+        let mut hll = HyperLogLog::new(12); // precision=12 gives ~1.04/sqrt(4096) ≈ 1.6% error
+
+        // Add exactly 10,000 unique items
+        let true_cardinality = 10000;
+        for i in 0..true_cardinality {
+            hll.add(i as u64);
+        }
+
+        let estimated = hll.estimate_cardinality();
+        let relative_error =
+            ((estimated as f64 - true_cardinality as f64) / true_cardinality as f64).abs();
+
+        // HyperLogLog should be within ~3% for precision=12 (3 standard deviations)
+        assert!(
+            relative_error < 0.03,
+            "HyperLogLog estimation error {:.3}% exceeds 3% threshold. Estimated: {}, True: {}",
+            relative_error * 100.0,
+            estimated,
+            true_cardinality
+        );
+
+        // Verify estimate is reasonable (not zero or way off)
+        assert!(estimated > true_cardinality as u64 / 2);
+        assert!(estimated < true_cardinality as u64 * 2);
+    }
+
+    /// Test L0 sampler respects memory limits and maintains sample quality
+    #[test]
+    fn test_l0_sampler_memory_bounds() {
+        let max_samples = 500;
+        let mut sampler = L0Sampler::new(max_samples);
+
+        // Add many more items than max_samples to test memory bounds
+        let total_items = 5000;
+        for i in 0..total_items {
+            sampler.add(i);
+        }
+
+        // Verify memory bounds are respected
+        assert!(
+            sampler.samples.len() <= max_samples,
+            "L0Sampler exceeded memory limit: {} samples > {} max",
+            sampler.samples.len(),
+            max_samples
+        );
+
+        // Verify sampler maintained some samples
+        assert!(
+            sampler.samples.len() > 0,
+            "L0Sampler should retain some samples"
+        );
+
+        // Test threshold updates - should increase as more items are added
+        let initial_threshold = sampler.threshold;
+
+        // Add more items
+        for i in total_items..(total_items + 1000) {
+            sampler.add(i);
+        }
+
+        // Threshold should increase (become more selective)
+        assert!(
+            sampler.threshold >= initial_threshold,
+            "L0Sampler threshold should increase with more items: {} >= {}",
+            sampler.threshold,
+            initial_threshold
+        );
+
+        // Still respect memory bounds
+        assert!(sampler.samples.len() <= max_samples);
     }
 }
