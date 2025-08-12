@@ -928,10 +928,47 @@ impl MetagenomicsPipeline {
 
     /// Preprocess input files with error correction
     async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<Vec<CorrectedRead>> {
+        info!("📋 Starting preprocessing of {} input files", inputs.len());
         let mut all_reads = Vec::new();
 
-        for input_file in inputs {
-            info!("📖 Processing input file: {}", input_file.display());
+        // Save preprocessing initialization status immediately
+        let preprocessing_init = serde_json::json!({
+            "status": "started",
+            "input_files": inputs.len(),
+            "file_paths": inputs.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        });
+
+        self.output_manager.save_intermediate(
+            crate::utils::intermediate_output::PipelineSection::Preprocessing,
+            "initialization_status",
+            &preprocessing_init,
+            serde_json::json!({"phase": "initialization"}),
+        )?;
+        info!("💾 Saved preprocessing initialization status");
+
+        for (file_idx, input_file) in inputs.iter().enumerate() {
+            info!(
+                "📖 Processing input file {}/{}: {}",
+                file_idx + 1,
+                inputs.len(),
+                input_file.display()
+            );
+
+            // Save per-file processing status
+            let file_status = serde_json::json!({
+                "file_path": input_file.to_string_lossy(),
+                "file_index": file_idx,
+                "status": "processing",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            });
+
+            self.output_manager.save_intermediate(
+                crate::utils::intermediate_output::PipelineSection::Preprocessing,
+                &format!("file_{}_processing", file_idx),
+                &file_status,
+                serde_json::json!({"file_processing": true}),
+            )?;
 
             // Determine file format
             let format = self.detect_file_format(input_file)?;
@@ -952,10 +989,55 @@ impl MetagenomicsPipeline {
                 }
             };
 
-            all_reads.extend(reads);
+            all_reads.extend(reads.clone());
+
+            // Save completed file processing status
+            let file_complete = serde_json::json!({
+                "file_path": input_file.to_string_lossy(),
+                "file_index": file_idx,
+                "status": "completed",
+                "reads_processed": reads.len(),
+                "total_reads_so_far": all_reads.len(),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            });
+
+            self.output_manager.save_intermediate(
+                crate::utils::intermediate_output::PipelineSection::Preprocessing,
+                &format!("file_{}_completed", file_idx),
+                &file_complete,
+                serde_json::json!({"file_completed": true}),
+            )?;
+
+            info!(
+                "✅ Completed processing file {}: {} reads",
+                input_file.display(),
+                reads.len()
+            );
         }
 
-        info!("📊 Processed {} reads total", all_reads.len());
+        // Save preprocessing completion summary
+        let preprocessing_summary = serde_json::json!({
+            "status": "completed",
+            "total_files_processed": inputs.len(),
+            "total_reads_processed": all_reads.len(),
+            "average_read_length": all_reads.iter().map(|r| r.corrected.len()).sum::<usize>() as f64 / all_reads.len() as f64,
+            "total_corrections": all_reads.iter().map(|r| r.corrections.len()).sum::<usize>(),
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        });
+
+        self.output_manager.save_intermediate(
+            crate::utils::intermediate_output::PipelineSection::Preprocessing,
+            "final_summary",
+            &preprocessing_summary,
+            serde_json::json!({"final_summary": true}),
+        )?;
+        info!("💾 Saved preprocessing final summary");
+
+        info!(
+            "📊 Preprocessing completed: {} reads from {} files",
+            all_reads.len(),
+            inputs.len()
+        );
         Ok(all_reads)
     }
 

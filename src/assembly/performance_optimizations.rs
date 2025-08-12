@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /* ========================================================================= */
 /*                      SIMD-OPTIMIZED NUCLEOTIDE OPERATIONS               */
@@ -279,6 +279,83 @@ impl<'a> Iterator for ZeroCopyKmerIterator<'a> {
 /* ========================================================================= */
 /*                      CACHE-OPTIMIZED DATA STRUCTURES                    */
 /* ========================================================================= */
+
+/// Performance modes for different system configurations
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PerformanceMode {
+    /// Maximum performance - uses all available resources
+    HighPerformance,
+    /// Balanced mode - good performance with reasonable memory usage
+    Balanced,
+    /// Low memory mode - optimizes for memory-constrained systems
+    LowMemory,
+    /// Low CPU mode - uses fewer threads and smaller batch sizes
+    LowCPU,
+}
+
+/// Configuration for performance-optimized assembly
+#[derive(Debug, Clone)]
+pub struct OptimizationConfig {
+    pub mode: PerformanceMode,
+    pub max_threads: usize,
+    pub chunk_size: usize,
+    pub memory_limit_gb: Option<f64>,
+    pub enable_simd: bool,
+    pub enable_streaming: bool,
+    pub batch_size: usize,
+}
+
+impl Default for OptimizationConfig {
+    fn default() -> Self {
+        Self {
+            mode: PerformanceMode::Balanced,
+            max_threads: num_cpus::get(),
+            chunk_size: 10_000,
+            memory_limit_gb: None,
+            enable_simd: true,
+            enable_streaming: false,
+            batch_size: 1000,
+        }
+    }
+}
+
+impl OptimizationConfig {
+    pub fn low_memory() -> Self {
+        Self {
+            mode: PerformanceMode::LowMemory,
+            max_threads: num_cpus::get().min(4),
+            chunk_size: 1_000,
+            memory_limit_gb: Some(2.0),
+            enable_simd: false,
+            enable_streaming: true,
+            batch_size: 100,
+        }
+    }
+
+    pub fn low_cpu() -> Self {
+        Self {
+            mode: PerformanceMode::LowCPU,
+            max_threads: 2,
+            chunk_size: 5_000,
+            memory_limit_gb: None,
+            enable_simd: false,
+            enable_streaming: false,
+            batch_size: 500,
+        }
+    }
+
+    pub fn high_performance() -> Self {
+        Self {
+            mode: PerformanceMode::HighPerformance,
+            max_threads: num_cpus::get() * 2,
+            chunk_size: 50_000,
+            memory_limit_gb: None,
+            enable_simd: true,
+            enable_streaming: false,
+            batch_size: 10_000,
+        }
+    }
+}
 
 /// Cache-friendly graph node with optimal memory layout
 #[repr(C, packed)]
@@ -1054,5 +1131,180 @@ mod tests {
         node.update_degree(255, 255); // Maximum values
         assert_eq!(node.in_degree(), 255);
         assert_eq!(node.out_degree(), 255);
+    }
+
+    #[test]
+    fn test_streaming_graph_builder_config() {
+        let low_mem_config = OptimizationConfig::low_memory();
+        assert_eq!(low_mem_config.mode, PerformanceMode::LowMemory);
+        assert!(low_mem_config.enable_streaming);
+        assert!(low_mem_config.memory_limit_gb.is_some());
+
+        let high_perf_config = OptimizationConfig::high_performance();
+        assert_eq!(high_perf_config.mode, PerformanceMode::HighPerformance);
+        assert!(high_perf_config.enable_simd);
+        assert!(high_perf_config.chunk_size > 10000);
+    }
+
+    #[test]
+    fn test_memory_monitor() {
+        let monitor = MemoryMonitor::new(Some(1.0)); // 1GB limit
+
+        // Test initial state
+        assert!(!monitor.is_memory_pressure());
+
+        // Test memory pressure detection
+        monitor.update_usage(900 * 1024 * 1024); // 900MB
+        assert!(monitor.is_memory_pressure()); // Should be > 80% of 1GB
+
+        let (current, peak, limit) = monitor.get_stats();
+        assert_eq!(current, 900);
+        assert_eq!(peak, 900);
+        assert_eq!(limit, Some(1024));
+    }
+
+    #[test]
+    fn test_performance_mode_configurations() {
+        let balanced = OptimizationConfig::default();
+        assert_eq!(balanced.mode, PerformanceMode::Balanced);
+
+        let low_cpu = OptimizationConfig::low_cpu();
+        assert_eq!(low_cpu.max_threads, 2);
+        assert!(!low_cpu.enable_simd);
+
+        let low_mem = OptimizationConfig::low_memory();
+        assert!(low_mem.memory_limit_gb.is_some());
+        assert!(low_mem.enable_streaming);
+    }
+
+    /// **Comprehensive Performance Benchmark Suite**
+    ///
+    /// This benchmark compares all optimization modes across different scenarios:
+    /// - Memory-constrained environments (< 4GB RAM)
+    /// - CPU-limited systems (2 cores)  
+    /// - High-performance systems (8+ cores, 16GB+ RAM)
+    /// - Large datasets (100K+ reads)
+    #[test]
+    #[ignore] // Run with: cargo test --release -- --ignored benchmark_all_optimization_modes
+    fn benchmark_all_optimization_modes() {
+        use crate::core::data_structures::CorrectedRead;
+        use std::time::Instant;
+
+        println!("\n🚀 COMPREHENSIVE OPTIMIZATION BENCHMARK");
+        println!("==========================================");
+
+        // Create test dataset of various sizes
+        let test_sizes = vec![1_000, 10_000, 50_000];
+        let modes = vec![
+            PerformanceMode::LowMemory,
+            PerformanceMode::LowCPU,
+            PerformanceMode::Balanced,
+            PerformanceMode::HighPerformance,
+        ];
+
+        for &size in &test_sizes {
+            println!("\n📊 Testing with {} reads", size);
+            println!("-".repeat(40));
+
+            let test_reads = create_synthetic_reads(size);
+
+            for &mode in &modes {
+                let config = match mode {
+                    PerformanceMode::HighPerformance => OptimizationConfig::high_performance(),
+                    PerformanceMode::LowMemory => OptimizationConfig::low_memory(),
+                    PerformanceMode::LowCPU => OptimizationConfig::low_cpu(),
+                    _ => OptimizationConfig::default(),
+                };
+
+                println!("\n⚙️  Mode: {:?}", mode);
+                println!(
+                    "   Threads: {}, Chunk size: {}, SIMD: {}",
+                    config.max_threads, config.chunk_size, config.enable_simd
+                );
+
+                let start = Instant::now();
+                let streaming_builder = StreamingGraphBuilder::new(config);
+
+                // Run the benchmark
+                let result = streaming_builder.build_streaming_graph(&test_reads);
+                let elapsed = start.elapsed();
+
+                match result {
+                    Ok(graph) => {
+                        let (nodes, edges, memory_mb, cache_rate) = graph.get_statistics();
+                        println!("   ✅ Success: {:.2}s", elapsed.as_secs_f64());
+                        println!(
+                            "   📈 Nodes: {}, Edges: {}, Memory: {}MB",
+                            nodes,
+                            edges,
+                            memory_mb / (1024 * 1024)
+                        );
+                        println!("   🎯 Cache hit rate: {:.1}%", cache_rate * 100.0);
+
+                        // Calculate throughput
+                        let reads_per_second = size as f64 / elapsed.as_secs_f64();
+                        println!("   ⚡ Throughput: {:.0} reads/sec", reads_per_second);
+                    }
+                    Err(e) => {
+                        println!("   ❌ Failed: {} (after {:.2}s)", e, elapsed.as_secs_f64());
+                    }
+                }
+            }
+        }
+
+        println!("\n✅ Benchmark suite completed!");
+        println!("\nRECOMMENDATIONS:");
+        println!("- Use HighPerformance mode on systems with 8+ cores and 16GB+ RAM");
+        println!("- Use LowMemory mode on systems with < 4GB RAM");
+        println!("- Use LowCPU mode on systems with 2-4 cores");
+        println!("- Use Balanced mode as a safe default for most systems");
+    }
+
+    /// Create synthetic test reads for benchmarking
+    fn create_synthetic_reads(count: usize) -> Vec<crate::core::data_structures::CorrectedRead> {
+        use crate::core::data_structures::{CorrectedRead, CorrectionMetadata};
+
+        (0..count)
+            .map(|i| {
+                // Create realistic sequence with some variation
+                let base_seq = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG"; // 40 bp base
+                let seq = if i % 4 == 0 {
+                    format!("{}AAAA{}", base_seq, base_seq) // 84 bp
+                } else if i % 4 == 1 {
+                    format!("{}CCCC{}", base_seq, base_seq) // 84 bp
+                } else if i % 4 == 2 {
+                    format!("{}GGGG{}", base_seq, base_seq) // 84 bp
+                } else {
+                    format!("{}TTTT{}", base_seq, base_seq) // 84 bp
+                };
+
+                CorrectedRead {
+                    id: i,
+                    original: seq.clone(),
+                    corrected: seq.clone(),
+                    corrections: Vec::new(),
+                    quality_scores: vec![30; seq.len()],
+                    correction_metadata: CorrectionMetadata {
+                        algorithm: "benchmark".to_string(),
+                        confidence_threshold: 0.95,
+                        context_window: 5,
+                        correction_time_ms: 0,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_kmer_statistics() {
+        let stats = KmerStatistics {
+            unique_kmers: 1000,
+            total_kmers: 5000,
+            memory_usage_bytes: 50000,
+        };
+
+        assert_eq!(stats.unique_kmers, 1000);
+        assert_eq!(stats.total_kmers, 5000);
+        assert_eq!(stats.memory_usage_bytes, 50000);
     }
 }
