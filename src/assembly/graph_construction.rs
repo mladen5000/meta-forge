@@ -20,6 +20,7 @@
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
+use crossbeam::channel::{bounded, Receiver, Sender};
 use petgraph::algo::tarjan_scc;
 use petgraph::{graph::NodeIndex, Graph};
 use rayon::prelude::*;
@@ -27,6 +28,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use std::thread;
 
 // Import from the existing core module
 use crate::core::data_structures::*;
@@ -216,6 +218,105 @@ impl AdvancedAssemblyGraphBuilder {
         Ok(final_graph)
     }
 
+    // In AdvancedAssemblyGraphBuilder
+    pub fn build_streaming_graph(
+        &self,
+        reads_iter: impl Iterator<Item = CorrectedRead> + Send + 'static,
+    ) -> Result<AssemblyGraph> {
+        let (tx, rx): (Sender<AssemblyChunk>, Receiver<AssemblyChunk>) =
+            bounded(self.merge_threshold * 2);
+
+        // Spawn producer thread
+        let base_k = self.base_k;
+        let max_k = self.max_k;
+        let complexity_threshold = self.complexity_threshold;
+        let metrics = self.metrics.clone();
+        thread::spawn(move || {
+            let mut buffer = Vec::with_capacity(1024);
+            let mut chunk_id = 0;
+            for read in reads_iter {
+                buffer.push(read);
+                if buffer.len() >= 1024 {
+                    let chunk = Self::make_chunk(
+                        chunk_id,
+                        &buffer,
+                        base_k,
+                        max_k,
+                        complexity_threshold,
+                        &metrics,
+                    );
+                    tx.send(chunk).unwrap();
+                    chunk_id += 1;
+                    buffer.clear();
+                }
+            }
+            if !buffer.is_empty() {
+                let chunk = Self::make_chunk(
+                    chunk_id,
+                    &buffer,
+                    base_k,
+                    max_k,
+                    complexity_threshold,
+                    &metrics,
+                );
+                tx.send(chunk).unwrap();
+            }
+        });
+
+        // Consumer: process chunks as they arrive
+        let mut fragments = Vec::new();
+        rx.into_iter().for_each(|chunk| {
+            let mut fragment = chunk.graph_fragment.clone();
+            self.parallel_local_optimization(&mut fragment).unwrap();
+            fragments.push(fragment);
+            if fragments.len() >= self.merge_threshold {
+                fragments = vec![self.hierarchical_merge(fragments.clone()).unwrap()];
+            }
+        });
+
+        // Final merge
+        let merged = self.hierarchical_merge(fragments)?;
+        let mut assembly_graph = AssemblyGraph::new();
+        assembly_graph.graph_fragment = merged;
+        Ok(self.advanced_simplify_graph(assembly_graph)?)
+    }
+
+    fn make_chunk(
+        id: usize,
+        batch: &[CorrectedRead],
+        base_k: usize,
+        max_k: usize,
+        complexity_threshold: f64,
+        metrics: &Arc<Mutex<ParallelMetrics>>,
+    ) -> AssemblyChunk {
+        let complexities: Vec<f64> = batch
+            .iter()
+            .map(|r| calculate_sequence_complexity(&r.corrected))
+            .collect();
+        let mean_complexity = complexities.iter().sum::<f64>() / complexities.len() as f64;
+        let std_dev = (complexities
+            .iter()
+            .map(|c| (c - mean_complexity).powi(2))
+            .sum::<f64>()
+            / complexities.len() as f64)
+            .sqrt();
+        let adjusted_complexity = (mean_complexity + std_dev * 0.3).clamp(0.0, 1.0);
+        let k_range = max_k - base_k;
+        let k = base_k + (adjusted_complexity * k_range as f64).round() as usize;
+
+        {
+            let mut m = metrics.lock().unwrap();
+            *m.adaptive_k_selections.entry(k).or_insert(0) += 1;
+        }
+
+        let mut chunk = AssemblyChunk::new(id, k);
+        for read in batch {
+            chunk.add_read(read.clone()).unwrap();
+        }
+        chunk.finalize();
+        chunk
+    }
+
     /// **NEW: High-Performance Graph Construction with Multiple Optimization Modes**
     ///
     /// **Performance Improvements:**
@@ -228,9 +329,7 @@ impl AdvancedAssemblyGraphBuilder {
         reads: &[CorrectedRead],
         mode: crate::assembly::performance_optimizations::PerformanceMode,
     ) -> Result<AssemblyGraph> {
-        use crate::assembly::performance_optimizations::{
-            OptimizationConfig, StreamingGraphBuilder,
-        };
+        use crate::assembly::performance_optimizations::OptimizationConfig;
 
         println!(
             "🚀 Starting optimized graph construction with mode: {:?}",
@@ -257,8 +356,8 @@ impl AdvancedAssemblyGraphBuilder {
             config.chunk_size, config.max_threads, config.memory_limit_gb
         );
 
-        // Build graph using streaming approach
-        let streaming_builder = StreamingGraphBuilder::new(config);
+        let streaming_builder =
+            crate::assembly::bioinformatics_optimizations::StreamingGraphBuilder::new(config);
         let optimized_graph = streaming_builder.build_streaming_graph(reads)?;
 
         // Convert optimized graph back to AssemblyGraph format

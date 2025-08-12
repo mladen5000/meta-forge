@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_database_command_parsing() {
-        use meta_forge::pipeline::complete_integration::DatabaseOperation;
+        use meta_forge::pipeline::complete_integration::DatabaseOps;
 
         let cli = Cli::try_parse_from(vec!["meta_forge", "database", "init"]);
 
@@ -214,7 +214,7 @@ mod tests {
             match cli.command {
                 Commands::Database { operation } => {
                     match operation {
-                        DatabaseOperation::Init => {
+                        DatabaseOps::Init { path: output } => {
                             // Test passes - database init command parsed correctly
                         }
                         _ => panic!("Expected Init operation"),

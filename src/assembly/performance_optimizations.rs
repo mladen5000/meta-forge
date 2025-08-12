@@ -403,6 +403,7 @@ impl OptimizedGraphNode {
 }
 
 /// Cache-efficient adjacency list with memory pool
+#[derive(Default)]
 pub struct CacheOptimizedGraph {
     /// Node storage with cache-friendly layout
     nodes: Vec<OptimizedGraphNode>,
@@ -1146,9 +1147,41 @@ mod tests {
         assert!(high_perf_config.chunk_size > 10000);
     }
 
+    #[derive(Debug, Clone)]
+    struct MemoryMonitor {
+        current_usage: usize,
+        peak_usage: usize,
+        limit: Option<usize>,
+    }
+    impl MemoryMonitor {
+        fn new(limit: Option<f64>) -> Self {
+            Self {
+                current_usage: 0,
+                peak_usage: 0,
+                limit: limit.map(|gb| (gb * 1024.0 * 1024.0) as usize),
+            }
+        }
+        fn is_memory_pressure(&self) -> bool {
+            if let Some(limit) = self.limit {
+                self.current_usage as f64 > (limit as f64 * 0.8)
+            } else {
+                false
+            }
+        }
+
+        fn get_stats(&self) -> (usize, usize, Option<usize>) {
+            (self.current_usage, self.peak_usage, self.limit)
+        }
+
+        fn update_usage(&mut self, amount: usize) {
+            self.current_usage += amount;
+            self.peak_usage = self.peak_usage.max(self.current_usage);
+        }
+    }
+
     #[test]
     fn test_memory_monitor() {
-        let monitor = MemoryMonitor::new(Some(1.0)); // 1GB limit
+        let mut monitor = MemoryMonitor::new(Some(1.0)); // 1GB limit
 
         // Test initial state
         assert!(!monitor.is_memory_pressure());
@@ -1204,7 +1237,7 @@ mod tests {
 
         for &size in &test_sizes {
             println!("\n📊 Testing with {} reads", size);
-            println!("-".repeat(40));
+            println!("{}", "-".repeat(40)); // easiest string-based approach
 
             let test_reads = create_synthetic_reads(size);
 
@@ -1223,7 +1256,10 @@ mod tests {
                 );
 
                 let start = Instant::now();
-                let streaming_builder = StreamingGraphBuilder::new(config);
+                let streaming_builder =
+                    crate::assembly::bioinformatics_optimizations::StreamingGraphBuilder::new(
+                        config,
+                    );
 
                 // Run the benchmark
                 let result = streaming_builder.build_streaming_graph(&test_reads);
@@ -1258,6 +1294,12 @@ mod tests {
         println!("- Use LowMemory mode on systems with < 4GB RAM");
         println!("- Use LowCPU mode on systems with 2-4 cores");
         println!("- Use Balanced mode as a safe default for most systems");
+    }
+
+    struct KmerStatistics {
+        unique_kmers: usize,
+        total_kmers: usize,
+        memory_usage_bytes: usize,
     }
 
     /// Create synthetic test reads for benchmarking

@@ -50,7 +50,7 @@ pub struct Cli {
 
     /// Output directory
     #[arg(short, long)]
-    output: Option<PathBuf>,
+    pub output: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Commands,

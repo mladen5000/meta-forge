@@ -13,11 +13,14 @@
 //! sizing, classic graph‑cleaning passes (tip removal & bubble popping) and a lock‑free mindset using
 //! AHash* structures.
 
+use crate::assembly::performance_optimizations::{CacheOptimizedGraph, OptimizationConfig};
+use crate::CorrectedRead;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::io::repeat;
 use std::sync::Arc;
 
 /* ------------------------------------------------------------------------- */
@@ -466,6 +469,21 @@ impl ParallelGraphUtils {
         }
         path.reverse();
         path
+    }
+}
+
+pub struct StreamingGraphBuilder {
+    config: OptimizationConfig,
+}
+
+impl StreamingGraphBuilder {
+    pub fn new(config: OptimizationConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn build_streaming_graph(&self, _reads: &[CorrectedRead]) -> Result<CacheOptimizedGraph> {
+        // TODO: implement actual streaming graph build
+        Ok(CacheOptimizedGraph::default())
     }
 }
 
