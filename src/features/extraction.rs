@@ -1256,14 +1256,21 @@ mod tests {
         );
 
         // Verify combined features match total expected dimension
-        let expected_combined_dim =
-            config.sequence_feature_dim + config.graph_feature_dim + config.kmer_feature_dim;
+        // When extracting sequence features only, graph features are not included (they're zeros(0))
+        let expected_combined_dim = config.sequence_feature_dim + config.kmer_feature_dim;
         assert_eq!(
             feature_vector.combined_features.len(),
             expected_combined_dim,
             "Combined feature dimension mismatch: expected {}, got {}",
             expected_combined_dim,
             feature_vector.combined_features.len()
+        );
+
+        // Verify that graph features are empty when extracting sequence features only
+        assert_eq!(
+            feature_vector.graph_features.len(),
+            0,
+            "Graph features should be empty when extracting sequence features only"
         );
 
         // Verify metadata contains basic information

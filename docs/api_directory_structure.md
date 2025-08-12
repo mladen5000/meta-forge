@@ -3,269 +3,117 @@
 ## Complete Directory Structure
 
 ```
-src/
-├── api/                          # API layer - HTTP handling
-│   ├── mod.rs                    # API module exports
-│   ├── server.rs                 # Server setup and routing
-│   ├── routes/                   # Route definitions
-│   │   ├── mod.rs
-│   │   ├── analysis.rs           # Analysis pipeline routes
-│   │   ├── samples.rs            # Sample management routes
-│   │   ├── assemblies.rs         # Assembly operation routes
-│   │   ├── annotations.rs        # Taxonomic classification routes
-│   │   ├── jobs.rs               # Background job routes
-│   │   ├── users.rs              # User management routes
-│   │   ├── admin.rs              # Admin operation routes
-│   │   └── health.rs             # Health check routes
-│   ├── handlers/                 # Request handlers
-│   │   ├── mod.rs
-│   │   ├── analysis_handlers.rs
-│   │   ├── sample_handlers.rs
-│   │   ├── assembly_handlers.rs
-│   │   ├── annotation_handlers.rs
-│   │   ├── job_handlers.rs
-│   │   ├── user_handlers.rs
-│   │   ├── admin_handlers.rs
-│   │   └── health_handlers.rs
-│   ├── middleware/               # HTTP middleware
-│   │   ├── mod.rs
-│   │   ├── auth.rs               # JWT authentication
-│   │   ├── cors.rs               # CORS handling
-│   │   ├── logging.rs            # Request/response logging
-│   │   ├── rate_limiting.rs      # Rate limiting
-│   │   ├── validation.rs         # Input validation
-│   │   ├── error_handling.rs     # Error handling middleware
-│   │   └── metrics.rs            # Metrics collection
-│   ├── extractors/               # Custom axum extractors
-│   │   ├── mod.rs
-│   │   ├── auth.rs               # Authentication extractor
-│   │   ├── pagination.rs         # Pagination extractor
-│   │   └── validation.rs         # Validation extractor
-│   └── responses/                # Response utilities
-│       ├── mod.rs
-│       ├── api_response.rs       # Standard response wrapper
-│       ├── error_response.rs     # Error response formatting
-│       └── pagination.rs         # Pagination response helper
-│
-├── services/                     # Business logic layer
-│   ├── mod.rs
-│   ├── analysis_service.rs       # Analysis orchestration
-│   ├── sample_service.rs         # Sample lifecycle management
-│   ├── assembly_service.rs       # Assembly operations
-│   ├── annotation_service.rs     # Taxonomic classification
-│   ├── job_service.rs            # Background job management
-│   ├── user_service.rs           # User management
-│   ├── file_service.rs           # File handling
-│   ├── notification_service.rs   # Notifications (email, webhooks)
-│   └── traits/                   # Service traits for testing
-│       ├── mod.rs
-│       ├── analysis_service_trait.rs
-│       ├── sample_service_trait.rs
-│       └── user_service_trait.rs
-│
-├── data/                         # Data access layer
-│   ├── mod.rs
-│   ├── database.rs               # Database connection management
-│   ├── repositories/             # Repository implementations
-│   │   ├── mod.rs
-│   │   ├── analysis_repository.rs
-│   │   ├── sample_repository.rs
-│   │   ├── assembly_repository.rs
-│   │   ├── annotation_repository.rs
-│   │   ├── job_repository.rs
-│   │   └── user_repository.rs
-│   ├── models/                   # Database models
-│   │   ├── mod.rs
-│   │   ├── analysis.rs
-│   │   ├── sample.rs
-│   │   ├── assembly.rs
-│   │   ├── annotation.rs
-│   │   ├── job.rs
-│   │   └── user.rs
-│   ├── migrations/               # Database migrations
-│   │   ├── 001_initial_schema.sql
-│   │   ├── 002_add_jobs_table.sql
-│   │   └── 003_add_indexes.sql
-│   └── schema.sql                # Complete schema definition
-│
-├── dto/                          # Data Transfer Objects
-│   ├── mod.rs
-│   ├── requests/                 # API request DTOs
-│   │   ├── mod.rs
-│   │   ├── analysis_requests.rs
-│   │   ├── sample_requests.rs
-│   │   ├── assembly_requests.rs
-│   │   ├── annotation_requests.rs
-│   │   ├── job_requests.rs
-│   │   └── user_requests.rs
-│   ├── responses/                # API response DTOs
-│   │   ├── mod.rs
-│   │   ├── analysis_responses.rs
-│   │   ├── sample_responses.rs
-│   │   ├── assembly_responses.rs
-│   │   ├── annotation_responses.rs
-│   │   ├── job_responses.rs
-│   │   └── user_responses.rs
-│   └── internal/                 # Internal service DTOs
-│       ├── mod.rs
-│       ├── pipeline_dto.rs
-│       └── job_dto.rs
-│
-├── jobs/                         # Background job processing
-│   ├── mod.rs
-│   ├── queue.rs                  # Job queue implementation
-│   ├── executor.rs               # Job execution engine
-│   ├── scheduler.rs              # Cron-like job scheduler
-│   ├── handlers/                 # Job-specific handlers
-│   │   ├── mod.rs
-│   │   ├── analysis_jobs.rs      # Analysis pipeline jobs
-│   │   ├── file_processing_jobs.rs
-│   │   ├── maintenance_jobs.rs
-│   │   └── notification_jobs.rs
-│   └── retry.rs                  # Retry logic and backoff
-│
-├── auth/                         # Authentication and authorization
-│   ├── mod.rs
-│   ├── jwt.rs                    # JWT token handling
-│   ├── password.rs               # Password hashing/verification
-│   ├── roles.rs                  # Role-based access control
-│   └── permissions.rs            # Permission definitions
-│
-├── storage/                      # File storage abstraction
-│   ├── mod.rs
-│   ├── local.rs                  # Local filesystem storage
-│   ├── s3.rs                     # AWS S3 storage
-│   ├── traits.rs                 # Storage traits
-│   └── manager.rs                # Storage tier management
-│
-├── monitoring/                   # Observability components
-│   ├── mod.rs
-│   ├── metrics.rs                # Prometheus metrics
-│   ├── tracing.rs                # Distributed tracing
-│   ├── health.rs                 # Health check implementations
-│   └── alerts.rs                 # Alerting logic
-│
-├── config/                       # Configuration management
-│   ├── mod.rs
-│   ├── settings.rs               # Settings structure
-│   ├── database.rs               # Database configuration
-│   ├── server.rs                 # Server configuration
-│   ├── auth.rs                   # Auth configuration
-│   ├── storage.rs                # Storage configuration
-│   └── monitoring.rs             # Monitoring configuration
-│
-├── validation/                   # Input validation
-│   ├── mod.rs
-│   ├── analysis_validation.rs
-│   ├── sample_validation.rs
-│   ├── user_validation.rs
-│   └── common.rs                 # Common validation rules
-│
-├── error/                        # Error handling
-│   ├── mod.rs
-│   ├── api_error.rs              # API-specific errors
-│   ├── service_error.rs          # Service-layer errors
-│   ├── database_error.rs         # Database errors
-│   └── job_error.rs              # Job processing errors
-│
-├── utils/                        # Utility functions
-│   ├── mod.rs
-│   ├── pagination.rs             # Pagination utilities
-│   ├── time.rs                   # Time/date utilities
-│   ├── crypto.rs                 # Cryptographic utilities
-│   ├── file_utils.rs             # File handling utilities
-│   └── test_utils.rs             # Testing utilities
-│
-├── integration/                  # External service integrations
-│   ├── mod.rs
-│   ├── email.rs                  # Email service integration
-│   ├── webhook.rs                # Webhook delivery
-│   └── notification.rs           # Notification service
-│
-├── main.rs                       # Application entry point
-└── lib.rs                        # Library root
-
-tests/                            # Integration tests
-├── common/                       # Test utilities
-│   ├── mod.rs
-│   ├── fixtures.rs               # Test fixtures
-│   ├── database.rs               # Test database setup
-│   └── client.rs                 # Test HTTP client
-├── api/                          # API endpoint tests
-│   ├── analysis_tests.rs
-│   ├── sample_tests.rs
-│   ├── user_tests.rs
-│   └── auth_tests.rs
-├── services/                     # Service layer tests
-│   ├── analysis_service_tests.rs
-│   └── user_service_tests.rs
-└── integration_tests.rs          # Full integration tests
-
-benches/                          # Performance benchmarks
-├── api_benchmarks.rs
-├── database_benchmarks.rs
-└── pipeline_benchmarks.rs
-
-docs/                             # Documentation
-├── api/                          # API documentation
-│   ├── openapi.yaml              # OpenAPI specification
-│   ├── authentication.md         # Authentication guide
-│   ├── rate_limiting.md          # Rate limiting info
-│   └── examples/                 # Usage examples
-│       ├── curl_examples.sh
-│       ├── python_client.py
-│       └── javascript_client.js
-├── deployment/                   # Deployment guides
-│   ├── docker.md
-│   ├── kubernetes.md
-│   └── monitoring.md
-├── development/                  # Development guides
-│   ├── setup.md
-│   ├── testing.md
-│   ├── database.md
-│   └── contributing.md
-└── architecture/                 # Architecture documentation
-    ├── system_overview.md
-    ├── data_flow.md
-    └── security.md
-
-config/                           # Configuration files
-├── default.toml                  # Default API configuration
-├── development.toml              # Development overrides
-├── production.toml               # Production configuration
-└── test.toml                     # Test configuration
-
-scripts/                          # Utility scripts
-├── setup_dev.sh                  # Development environment setup
-├── run_tests.sh                  # Test runner script
-├── build_docker.sh               # Docker build script
-├── deploy.sh                     # Deployment script
-└── migrate.sh                    # Database migration script
-
-migrations/                       # Database migrations (SQLx)
-├── 20240101000000_initial_schema.sql
-├── 20240102000000_add_jobs_table.sql
-└── 20240103000000_add_indexes.sql
-
-.github/                          # GitHub workflows
-└── workflows/
-    ├── ci.yml                    # Continuous integration
-    ├── cd.yml                    # Continuous deployment
-    └── security.yml              # Security scanning
-
-docker/                           # Docker-related files
-├── Dockerfile                    # Production image
-├── Dockerfile.dev                # Development image
-├── docker-compose.yml            # Development stack
-└── docker-compose.prod.yml       # Production stack
-
-k8s/                             # Kubernetes manifests
-├── namespace.yaml
-├── deployment.yaml
-├── service.yaml
-├── ingress.yaml
-├── configmap.yaml
-└── secrets.yaml
+├── benches
+│   └──  performance_profiler.rs
+├── config
+│   └──  default.toml
+├── data
+│   ├──  metagenomics.db
+│   ├──  metagenomics.db-shm
+│   └──  metagenomics.db-wal
+├── docs
+│   ├──  additional_test_coverage_recommendations.md
+│   ├──  agent_orchestration_strategy.md
+│   ├──  api_directory_structure.md
+│   ├──  assembly_performance_analysis_report.md
+│   ├──  bioinformatics_test_fixes.md
+│   ├──  bioinformatics_test_validation_report.md
+│   ├──  CLAUDE.md
+│   ├──  metagenomic_assembly_algorithm_analysis.md
+│   ├──  optimization_implementation_examples.md
+│   ├── 󰂺 README.md
+│   ├──  rest_api_architecture.md
+│   ├──  tdd_remediation_plan.md
+│   ├──  tui_architecture.md
+│   └──  tui_progress_integration_analysis.md
+├── examples
+│   └──  test_kmer_ambiguous.rs
+├── logs
+│   ├──  pipeline.log.2025-08-08
+│   ├──  pipeline.log.2025-08-09
+│   ├──  pipeline.log.2025-08-10
+│   └──  pipeline.log.2025-08-11
+├── output
+│   ├──  Sample_001_report.html
+│   ├──  Sample_001_report.json
+│   ├──  Sample_001_summary.tsv
+│   ├──  short_SRR390728_1_report.html
+│   ├──  short_SRR390728_1_report.json
+│   ├──  short_SRR390728_1_summary.tsv
+│   ├──  SRR390728_1_report.html
+│   ├──  SRR390728_1_report.json
+│   └──  SRR390728_1_summary.tsv
+├── reads
+│   ├──  2017.12.04_18.45.54_sample_0
+│   ├──  output
+│   ├──  SRR390728
+│   ├──  tmp
+│   ├──  work
+│   ├──  index.html
+│   ├──  sample_0.tar.gz
+│   ├──  short_SRR390728_1.fastq
+│   ├──  short_SRR390728_2.fastq
+│   ├──  SRR390728_1.fastq
+│   └──  SRR390728_2.fastq
+├── scripts
+│   ├──  batch_check.sh
+│   ├──  cc.sh
+│   ├──  cc_diff.sh
+│   ├──  cc_fix.sh
+│   ├──  coordinate_tdd_fixes.sh
+│   ├──  diagnostic_script.sh
+│   ├──  direct_cargo_check.sh
+│   ├──  rs_preflight.sh
+│   └──  run_checks.sh
+├── src
+│   ├──  assembly
+│   ├──  bin
+│   ├──  core
+│   ├──  database
+│   ├──  features
+│   ├──  ml
+│   ├──  pipeline
+│   ├──  tui
+│   ├──  utils
+│   ├──  lib.rs
+│   └──  main.rs
+├── target
+│   ├──  debug
+│   ├──  tmp
+│   └──  CACHEDIR.TAG
+├── tests
+│   ├──  tests_db
+│   ├──  assembly_performance_test.rs
+│   ├──  comprehensive_test_suite.rs
+│   ├──  mod.rs
+│   ├──  test_ambiguous_bases.rs
+│   ├──  test_assembly_graph.rs
+│   ├──  test_assembly_pipeline.rs
+│   ├──  test_core_data_structures.rs
+│   ├──  test_edge_cases_bioinformatics.rs
+│   ├──  test_graph_algorithms.rs
+│   ├──  test_integration_end_to_end.rs
+│   ├──  test_property_based_genomics.rs
+│   ├──  test_statistical_accuracy.rs
+│   └──  test_synthetic_biological_data.rs
+├── tmp
+├── work
+├── Cargo.lock
+├──  Cargo.toml
+├── check_compilation.sh
+├── CLAUDE.md
+├── imessage_recover.sh
+├── kraken2_benchmark.sh
+├── Makefile
+├── names.dmp
+├── OPTIMIZATION_REPORT.md
+├── quick_check.sh
+├── README.md
+├── run_analysis.sh
+├── run_diagnostics.sh
+├── rust_toolchain.toml
+├── simple_check.sh
+└── TESTING_FIXES_ANALYSIS.md
 ```
 
 ## File Organization Principles

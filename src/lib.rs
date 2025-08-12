@@ -67,7 +67,7 @@ mod tests {
             length: 8,
             coverage: 10.0,
             contig_type: crate::core::data_structures::ContigType::Linear,
-            metadata: std::collections::HashMap::new(),
+            node_path: vec![1, 2, 3],
         };
         assert_eq!(contig.length, 8);
         assert_eq!(contig.sequence.len(), 8);
@@ -87,13 +87,14 @@ mod tests {
         use crate::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 
         let config = AmbiguousBaseConfig {
-            strategy: AmbiguousBaseStrategy::Remove,
-            n_threshold: 0.1,
-            replacement_base: None,
+            strategy: AmbiguousBaseStrategy::Skip,
+            max_n_count: 1,
+            replacement_base: 'A',
+            random_probabilities: None,
         };
 
-        assert!(matches!(config.strategy, AmbiguousBaseStrategy::Remove));
-        assert_eq!(config.n_threshold, 0.1);
+        assert!(matches!(config.strategy, AmbiguousBaseStrategy::Skip));
+        assert_eq!(config.max_n_count, 1);
     }
 
     #[test]
@@ -164,7 +165,7 @@ mod tests {
             length: 16,
             coverage: 5.5,
             contig_type: crate::core::data_structures::ContigType::Linear,
-            metadata: HashMap::new(),
+            node_path: vec![42, 43, 44],
         };
 
         assert_eq!(contig.id, 42);

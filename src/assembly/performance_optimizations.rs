@@ -13,6 +13,7 @@
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,6 +28,7 @@ pub struct SIMDNucleotideOps;
 impl SIMDNucleotideOps {
     /// Count nucleotides using AVX2 SIMD instructions (16x parallel)
     /// Achieves 4-8x speedup over scalar implementations
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     pub unsafe fn count_nucleotides_simd(sequence: &[u8]) -> [usize; 4] {
         let mut counts = [0usize; 4];
@@ -47,10 +49,10 @@ impl SIMDNucleotideOps {
         // Process 32 bytes per iteration
         for i in (0..simd_len).step_by(32) {
             let data = _mm256_loadu_si256(sequence.as_ptr().add(i) as *const __m256i);
-            
+
             // Convert to uppercase for consistent matching
             let upper_data = _mm256_or_si256(data, _mm256_set1_epi8(0x20));
-            
+
             // Compare with nucleotide masks
             let a_cmp = _mm256_cmpeq_epi8(upper_data, a_mask);
             let c_cmp = _mm256_cmpeq_epi8(upper_data, c_mask);
@@ -85,30 +87,40 @@ impl SIMDNucleotideOps {
     }
 
     /// Horizontal sum of 8-bit values in AVX2 register
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn horizontal_sum_u8(reg: __m256i) -> usize {
         // Convert to 16-bit to avoid overflow, then sum
         let lo = _mm256_unpacklo_epi8(reg, _mm256_setzero_si256());
         let hi = _mm256_unpackhi_epi8(reg, _mm256_setzero_si256());
         let sum16 = _mm256_add_epi16(lo, hi);
-        
+
         // Horizontal sum of 16-bit values
         let sum = _mm256_hadd_epi16(sum16, sum16);
         let sum = _mm256_hadd_epi16(sum, sum);
         let sum = _mm256_hadd_epi16(sum, sum);
-        
+
         // Extract final sum
         (_mm256_extract_epi16(sum, 0) + _mm256_extract_epi16(sum, 8)) as usize
     }
 
     /// Fast GC content calculation using SIMD
     pub fn gc_content_simd(sequence: &[u8]) -> f64 {
-        let counts = if is_x86_feature_detected!("avx2") {
-            unsafe { Self::count_nucleotides_simd(sequence) }
-        } else {
-            Self::count_nucleotides_fallback(sequence)
+        let counts = {
+            #[cfg(target_arch = "x86_64")]
+            {
+                if is_x86_feature_detected!("avx2") {
+                    unsafe { Self::count_nucleotides_simd(sequence) }
+                } else {
+                    Self::count_nucleotides_fallback(sequence)
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                Self::count_nucleotides_fallback(sequence)
+            }
         };
-        
+
         let total = counts.iter().sum::<usize>();
         if total == 0 {
             0.0
@@ -134,25 +146,35 @@ impl SIMDNucleotideOps {
 
     /// SIMD-optimized sequence complexity (Shannon entropy) calculation
     pub fn sequence_complexity_simd(sequence: &[u8]) -> f64 {
-        let counts = if is_x86_feature_detected!("avx2") {
-            unsafe { Self::count_nucleotides_simd(sequence) }
-        } else {
-            Self::count_nucleotides_fallback(sequence)
+        let counts = {
+            #[cfg(target_arch = "x86_64")]
+            {
+                if is_x86_feature_detected!("avx2") {
+                    unsafe { Self::count_nucleotides_simd(sequence) }
+                } else {
+                    Self::count_nucleotides_fallback(sequence)
+                }
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                Self::count_nucleotides_fallback(sequence)
+            }
         };
-        
+
         let total = counts.iter().sum::<usize>() as f64;
         if total == 0.0 {
             return 0.0;
         }
-        
-        let entropy = counts.iter()
+
+        let entropy = counts
+            .iter()
             .filter(|&&count| count > 0)
             .map(|&count| {
                 let p = count as f64 / total;
                 -p * p.log2()
             })
             .sum::<f64>();
-        
+
         entropy / 2.0 // Normalize by max entropy for 4 symbols
     }
 }
@@ -173,12 +195,12 @@ impl<'a> ZeroCopyKmerIterator<'a> {
     /// Create new zero-copy k-mer iterator
     pub fn new(sequence: &'a [u8], k: usize) -> Self {
         let mut hash_table = [0u64; 256];
-        
+
         // Pre-compute hash values for all possible bytes
         for i in 0..256 {
             hash_table[i] = Self::compute_byte_hash(i as u8);
         }
-        
+
         Self {
             sequence,
             k,
@@ -202,22 +224,22 @@ impl<'a> ZeroCopyKmerIterator<'a> {
     fn rolling_hash(&self, kmer_slice: &[u8]) -> u64 {
         let mut hash = 0u64;
         let base = 4u64;
-        
+
         for &byte in kmer_slice {
             hash = hash * base + self.hash_table[byte as usize];
         }
-        
+
         hash
     }
 
     /// Get canonical k-mer representation without allocation
     fn canonical_kmer_inplace(&self, kmer_slice: &[u8]) -> (u64, bool) {
         let forward_hash = self.rolling_hash(kmer_slice);
-        
+
         // Compute reverse complement hash efficiently
         let mut rc_hash = 0u64;
         let base = 4u64;
-        
+
         for &byte in kmer_slice.iter().rev() {
             let complement = match byte.to_ascii_uppercase() {
                 b'A' => 3, // T
@@ -228,7 +250,7 @@ impl<'a> ZeroCopyKmerIterator<'a> {
             };
             rc_hash = rc_hash * base + complement;
         }
-        
+
         // Return canonical (smaller) hash
         if forward_hash <= rc_hash {
             (forward_hash, true)
@@ -248,7 +270,7 @@ impl<'a> Iterator for ZeroCopyKmerIterator<'a> {
 
         let kmer_slice = &self.sequence[self.position..self.position + self.k];
         let (hash, is_forward) = self.canonical_kmer_inplace(kmer_slice);
-        
+
         self.position += 1;
         Some((hash, is_forward))
     }
@@ -338,9 +360,8 @@ impl CacheOptimizedGraph {
     pub fn add_node(&mut self, hash: u64, coverage: u32) -> u32 {
         if let Some(&index) = self.hash_to_index.get(&hash) {
             // Update existing node
-            self.nodes[index as usize].coverage = self.nodes[index as usize]
-                .coverage
-                .saturating_add(coverage);
+            self.nodes[index as usize].coverage =
+                self.nodes[index as usize].coverage.saturating_add(coverage);
             self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
             return index;
         }
@@ -348,28 +369,32 @@ impl CacheOptimizedGraph {
         // Add new node
         let index = self.nodes.len() as u32;
         let node = OptimizedGraphNode::new(hash, coverage);
-        
+
         self.nodes.push(node);
         self.adjacency.push(Vec::new());
         self.hash_to_index.insert(hash, index);
-        
+
         self.stats.node_count.fetch_add(1, Ordering::Relaxed);
         self.stats.cache_misses.fetch_add(1, Ordering::Relaxed);
-        
+
         index
     }
 
     /// Add edge with automatic degree updates
     pub fn add_edge(&mut self, from_hash: u64, to_hash: u64) -> Result<()> {
-        let from_idx = self.hash_to_index.get(&from_hash)
+        let from_idx = self
+            .hash_to_index
+            .get(&from_hash)
             .ok_or_else(|| anyhow!("Source node not found"))?;
-        let to_idx = self.hash_to_index.get(&to_hash)
+        let to_idx = self
+            .hash_to_index
+            .get(&to_hash)
             .ok_or_else(|| anyhow!("Target node not found"))?;
 
         // Add edge to adjacency list
         if !self.adjacency[*from_idx as usize].contains(to_idx) {
             self.adjacency[*from_idx as usize].push(*to_idx);
-            
+
             // Update degree information
             self.update_node_degrees(*from_idx, *to_idx);
             self.stats.edge_count.fetch_add(1, Ordering::Relaxed);
@@ -398,7 +423,10 @@ impl CacheOptimizedGraph {
             return Ok(());
         }
 
-        println!("🔍 Running optimized parallel transitive reduction on {} nodes", n);
+        println!(
+            "🔍 Running optimized parallel transitive reduction on {} nodes",
+            n
+        );
 
         // Use bit vectors for memory efficiency on large graphs
         if n > 10000 {
@@ -412,8 +440,13 @@ impl CacheOptimizedGraph {
 
     /// Bit vector based transitive reduction for large graphs
     fn transitive_reduction_bitvector(&mut self) -> Result<()> {
-        use bit_vec::BitVec;
-        
+        // Fallback to matrix-based approach for simplicity
+        return self.transitive_reduction_matrix();
+
+        // Original bit-vec implementation commented out for now
+        // use bit_vec::BitVec;
+
+        /*
         let n = self.nodes.len();
         let mut edges_to_remove = Vec::new();
 
@@ -453,6 +486,7 @@ impl CacheOptimizedGraph {
 
         println!("✅ Transitive reduction completed");
         Ok(())
+        */
     }
 
     /// Matrix-based transitive reduction for smaller graphs
@@ -482,11 +516,23 @@ impl CacheOptimizedGraph {
 
         // Find and remove transitive edges
         let mut removed_count = 0;
+
+        // First collect which edges to retain
+        let mut edges_to_retain: Vec<Vec<u32>> = Vec::with_capacity(self.adjacency.len());
+        for (i, adj_list) in self.adjacency.iter().enumerate() {
+            let mut retained_edges = Vec::new();
+            for &j in adj_list {
+                if !self.has_alternate_path_matrix(i, j as usize, &reachable) {
+                    retained_edges.push(j);
+                }
+            }
+            edges_to_retain.push(retained_edges);
+        }
+
+        // Now update the adjacency lists
         for (i, adj_list) in self.adjacency.iter_mut().enumerate() {
             let original_len = adj_list.len();
-            adj_list.retain(|&j| {
-                !self.has_alternate_path_matrix(i, j as usize, &reachable)
-            });
+            *adj_list = edges_to_retain[i].clone();
             removed_count += original_len - adj_list.len();
         }
 
@@ -495,14 +541,16 @@ impl CacheOptimizedGraph {
     }
 
     /// DFS to find all reachable nodes
-    fn dfs_reachable(&self, start: u32, reachable: &mut bit_vec::BitVec) {
+    fn dfs_reachable(&self, start: u32, reachable: &mut Vec<bool>) {
         let mut stack = vec![start];
         let mut visited = AHashSet::new();
 
         while let Some(node) = stack.pop() {
             if visited.insert(node) {
-                reachable.set(node as usize, true);
-                
+                if (node as usize) < reachable.len() {
+                    reachable[node as usize] = true;
+                }
+
                 if let Some(adj_list) = self.adjacency.get(node as usize) {
                     stack.extend(adj_list.iter().copied());
                 }
@@ -511,15 +559,18 @@ impl CacheOptimizedGraph {
     }
 
     /// Check for alternate path using bit vector
-    fn has_alternate_path_bitvec(&self, start: u32, end: u32, reachable: &bit_vec::BitVec) -> bool {
+    fn has_alternate_path_bitvec(&self, start: u32, end: u32, reachable: &Vec<bool>) -> bool {
         // Check if there's a path from start to end not using the direct edge
         if let Some(adj_list) = self.adjacency.get(start as usize) {
             for &intermediate in adj_list {
-                if intermediate != end && reachable[intermediate as usize] {
+                if intermediate != end
+                    && (intermediate as usize) < reachable.len()
+                    && reachable[intermediate as usize]
+                {
                     // Check if intermediate can reach end
-                    let mut temp_reachable = bit_vec::BitVec::from_elem(self.nodes.len(), false);
+                    let mut temp_reachable = vec![false; self.nodes.len()];
                     self.dfs_reachable(intermediate, &mut temp_reachable);
-                    if temp_reachable[end as usize] {
+                    if (end as usize) < temp_reachable.len() && temp_reachable[end as usize] {
                         return true;
                     }
                 }
@@ -531,8 +582,11 @@ impl CacheOptimizedGraph {
     /// Check for alternate path using matrix
     fn has_alternate_path_matrix(&self, start: usize, end: usize, reachable: &[Vec<bool>]) -> bool {
         for intermediate in 0..reachable.len() {
-            if intermediate != start && intermediate != end &&
-               reachable[start][intermediate] && reachable[intermediate][end] {
+            if intermediate != start
+                && intermediate != end
+                && reachable[start][intermediate]
+                && reachable[intermediate][end]
+            {
                 return true;
             }
         }
@@ -542,9 +596,14 @@ impl CacheOptimizedGraph {
     /// Memory footprint calculation
     pub fn memory_footprint(&self) -> usize {
         let nodes_size = self.nodes.len() * std::mem::size_of::<OptimizedGraphNode>();
-        let adj_size = self.adjacency.iter().map(|v| v.capacity() * std::mem::size_of::<u32>()).sum::<usize>();
-        let hash_size = self.hash_to_index.capacity() * (std::mem::size_of::<u64>() + std::mem::size_of::<u32>());
-        
+        let adj_size = self
+            .adjacency
+            .iter()
+            .map(|v| v.capacity() * std::mem::size_of::<u32>())
+            .sum::<usize>();
+        let hash_size = self.hash_to_index.capacity()
+            * (std::mem::size_of::<u64>() + std::mem::size_of::<u32>());
+
         nodes_size + adj_size + hash_size
     }
 
@@ -553,7 +612,7 @@ impl CacheOptimizedGraph {
         let node_count = self.stats.node_count.load(Ordering::Relaxed);
         let edge_count = self.stats.edge_count.load(Ordering::Relaxed);
         let memory_usage = self.memory_footprint();
-        
+
         let cache_hits = self.stats.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.stats.cache_misses.load(Ordering::Relaxed);
         let cache_hit_rate = if (cache_hits + cache_misses) > 0 {
@@ -580,16 +639,17 @@ impl ParallelContigGenerator {
 
         // Find strongly connected components in parallel
         let components = Self::tarjan_scc_parallel(graph)?;
-        
-        println!("   Found {} strongly connected components", components.len());
+
+        println!(
+            "   Found {} strongly connected components",
+            components.len()
+        );
 
         // Process components in parallel
         let contigs: Vec<OptimizedContig> = components
             .par_iter()
             .enumerate()
-            .filter_map(|(i, component)| {
-                Self::process_component(graph, component, i)
-            })
+            .filter_map(|(i, component)| Self::process_component(graph, component, i))
             .collect();
 
         println!("✅ Generated {} contigs", contigs.len());
@@ -615,8 +675,14 @@ impl ParallelContigGenerator {
         for i in 0..n {
             if indices[i].is_none() {
                 Self::tarjan_strongconnect(
-                    graph, i, &mut index_counter, &mut stack,
-                    &mut indices, &mut lowlinks, &mut on_stack, &mut components
+                    graph,
+                    i,
+                    &mut index_counter,
+                    &mut stack,
+                    &mut indices,
+                    &mut lowlinks,
+                    &mut on_stack,
+                    &mut components,
                 );
             }
         }
@@ -647,7 +713,14 @@ impl ParallelContigGenerator {
                 let w = w as usize;
                 if indices[w].is_none() {
                     Self::tarjan_strongconnect(
-                        graph, w, index_counter, stack, indices, lowlinks, on_stack, components
+                        graph,
+                        w,
+                        index_counter,
+                        stack,
+                        indices,
+                        lowlinks,
+                        on_stack,
+                        components,
                     );
                     lowlinks[v] = lowlinks[v].min(lowlinks[w]);
                 } else if on_stack[w] {
@@ -696,15 +769,18 @@ impl ParallelContigGenerator {
 
         // For multi-node components, find Eulerian path
         let path = Self::find_eulerian_path(graph, component)?;
-        let total_coverage = path.iter()
+        let total_coverage = path
+            .iter()
             .filter_map(|&idx| graph.nodes.get(idx as usize))
             .map(|node| node.coverage as u64)
-            .sum::<u64>() as f64 / path.len() as f64;
+            .sum::<u64>() as f64
+            / path.len() as f64;
 
+        let path_len = path.len();
         Some(OptimizedContig {
             id: component_id,
+            length: path_len * 21 - (path_len.saturating_sub(1)) * 20, // Overlap adjustment for k=21
             node_indices: path,
-            length: path.len() * 21 - (path.len() - 1) * 20, // Overlap adjustment for k=21
             coverage: total_coverage,
         })
     }
@@ -776,7 +852,10 @@ impl PerformanceBenchmark {
     pub fn benchmark_nucleotide_counting(&self, sequence: &[u8]) -> BenchmarkResult {
         use std::time::Instant;
 
-        println!("🔬 Benchmarking nucleotide counting ({} iterations)", self.iterations);
+        println!(
+            "🔬 Benchmarking nucleotide counting ({} iterations)",
+            self.iterations
+        );
 
         // Warmup
         for _ in 0..self.iterations / 10 {
@@ -815,7 +894,10 @@ impl PerformanceBenchmark {
     pub fn benchmark_kmer_iteration(&self, sequence: &[u8], k: usize) -> BenchmarkResult {
         use std::time::Instant;
 
-        println!("🔬 Benchmarking k-mer iteration ({} iterations)", self.iterations);
+        println!(
+            "🔬 Benchmarking k-mer iteration ({} iterations)",
+            self.iterations
+        );
 
         // Warmup
         for _ in 0..self.iterations / 10 {
@@ -825,10 +907,10 @@ impl PerformanceBenchmark {
         // Benchmark allocating version (simulated)
         let start = Instant::now();
         for _ in 0..self.iterations {
-            let mut count = 0;
+            let mut _count = 0;
             for i in 0..=sequence.len().saturating_sub(k) {
-                let _kmer = String::from_utf8_lossy(&sequence[i..i+k]);
-                count += 1;
+                let _kmer = String::from_utf8_lossy(&sequence[i..i + k]);
+                _count += 1;
             }
         }
         let allocating_time = start.elapsed();
@@ -866,10 +948,16 @@ pub struct BenchmarkResult {
 impl BenchmarkResult {
     pub fn print_results(&self) {
         println!("\n📊 Benchmark Results: {}", self.name);
-        println!("   Scalar time:     {:.2}ms", self.scalar_time_ns as f64 / 1_000_000.0);
-        println!("   Optimized time:  {:.2}ms", self.optimized_time_ns as f64 / 1_000_000.0);
+        println!(
+            "   Scalar time:     {:.2}ms",
+            self.scalar_time_ns as f64 / 1_000_000.0
+        );
+        println!(
+            "   Optimized time:  {:.2}ms",
+            self.optimized_time_ns as f64 / 1_000_000.0
+        );
         println!("   Speedup:         {:.2}x", self.speedup);
-        
+
         if self.speedup >= 3.0 {
             println!("   Status:          ✅ EXCELLENT");
         } else if self.speedup >= 1.5 {
@@ -902,17 +990,69 @@ mod tests {
     #[test]
     fn test_cache_optimized_graph() {
         let mut graph = CacheOptimizedGraph::new(100);
-        
+
         let idx1 = graph.add_node(12345, 5);
         let idx2 = graph.add_node(67890, 3);
-        
+
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
-        
+
         graph.add_edge(12345, 67890).unwrap();
-        
+
         let (nodes, edges, _memory, _cache_rate) = graph.get_statistics();
         assert_eq!(nodes, 2);
         assert_eq!(edges, 1);
+    }
+
+    #[test]
+    fn test_sequence_complexity_calculation() {
+        // Test with uniform sequence (low complexity)
+        let uniform_sequence = b"AAAAAAAAAA";
+        let uniform_complexity = SIMDNucleotideOps::sequence_complexity_simd(uniform_sequence);
+        assert!(
+            uniform_complexity < 0.1,
+            "Uniform sequence should have low complexity"
+        );
+
+        // Test with balanced sequence (high complexity)
+        let balanced_sequence = b"ATCGATCGATCGATCG";
+        let balanced_complexity = SIMDNucleotideOps::sequence_complexity_simd(balanced_sequence);
+        assert!(
+            balanced_complexity > 0.8,
+            "Balanced sequence should have high complexity"
+        );
+
+        // Test empty sequence
+        let empty_sequence = b"";
+        let empty_complexity = SIMDNucleotideOps::sequence_complexity_simd(empty_sequence);
+        assert_eq!(
+            empty_complexity, 0.0,
+            "Empty sequence should have zero complexity"
+        );
+    }
+
+    #[test]
+    fn test_optimized_graph_node_metadata() {
+        let mut node = OptimizedGraphNode::new(12345, 10);
+
+        // Test initial state
+        assert_eq!(node.node_type(), 0);
+        assert_eq!(node.in_degree(), 0);
+        assert_eq!(node.out_degree(), 0);
+
+        // Test setting node type
+        node.set_node_type(5);
+        assert_eq!(node.node_type(), 5);
+
+        // Test updating degrees
+        node.update_degree(3, 7);
+        assert_eq!(node.in_degree(), 3);
+        assert_eq!(node.out_degree(), 7);
+        assert_eq!(node.node_type(), 5); // Should preserve node type
+
+        // Test maximum degree handling
+        node.update_degree(255, 255); // Maximum values
+        assert_eq!(node.in_degree(), 255);
+        assert_eq!(node.out_degree(), 255);
     }
 }

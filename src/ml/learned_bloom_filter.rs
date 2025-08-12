@@ -165,8 +165,10 @@ impl LearnedBloomFilter {
 
         // Feature 2-5: Hash bits in different positions
         for i in 1..5 {
-            let shift = i * 16;
-            embedding[i] = ((kmer_hash >> shift) & 0xFFFF) as f32 / 65535.0;
+            if i < embedding.len() {
+                let shift = (i * 16) % 64; // Prevent overflow by limiting shift amount
+                embedding[i] = ((kmer_hash >> shift) & 0xFFFF) as f32 / 65535.0;
+            }
         }
 
         // Feature 6-10: Compositional features (simulated)
@@ -592,5 +594,206 @@ mod tests {
             .count();
 
         assert!(false_positives < 10); // Should be low for good parameters
+    }
+
+    #[test]
+    fn test_learned_bloom_filter_creation() {
+        let expected_elements = 1000;
+        let target_fpr = 0.01;
+        let embedding_dim = 32;
+        let hidden_dim = 64;
+
+        let filter =
+            LearnedBloomFilter::new(expected_elements, target_fpr, embedding_dim, hidden_dim);
+
+        // Check training config is set correctly
+        assert_eq!(filter.training_config.embedding_dim, embedding_dim);
+        assert_eq!(filter.training_config.hidden_dim, hidden_dim);
+        assert!((filter.training_config.target_fpr - target_fpr).abs() < f64::EPSILON);
+        assert!((filter.training_config.learning_rate - 0.001).abs() < f32::EPSILON);
+        assert_eq!(filter.training_config.batch_size, 64);
+        assert_eq!(filter.training_config.epochs, 100);
+
+        // Check neural oracle dimensions
+        assert_eq!(filter.neural_oracle.input_size, embedding_dim);
+        assert_eq!(filter.neural_oracle.hidden_size, hidden_dim);
+
+        // Check that caches are initialized as empty
+        assert!(filter.embedding_cache.is_empty());
+
+        // Check metrics are initialized to defaults
+        assert_eq!(filter.metrics.neural_queries, 0);
+        assert_eq!(filter.metrics.neural_hits, 0);
+        assert_eq!(filter.metrics.backup_queries, 0);
+    }
+
+    #[test]
+    fn test_neural_oracle_creation() {
+        let input_size = 16;
+        let hidden_size = 32;
+        let oracle = NeuralOracle::new(input_size, hidden_size);
+
+        assert_eq!(oracle.input_size, input_size);
+        assert_eq!(oracle.hidden_size, hidden_size);
+        assert_eq!(oracle.input_weights.len(), hidden_size);
+        assert_eq!(oracle.hidden_weights.len(), hidden_size);
+        assert_eq!(oracle.output_weights.len(), hidden_size);
+
+        // Check that input weights have correct dimensions
+        if !oracle.input_weights.is_empty() {
+            assert_eq!(oracle.input_weights[0].len(), input_size);
+        }
+
+        // Check threshold values are reasonable
+        assert!(oracle.positive_threshold > 0.5);
+        assert!(oracle.negative_threshold < 0.5);
+        assert!(oracle.positive_threshold > oracle.negative_threshold);
+    }
+
+    #[test]
+    fn test_neural_oracle_forward_pass() {
+        let oracle = NeuralOracle::new(8, 16);
+        let input = vec![0.5; 8];
+
+        let output = oracle.forward(&input).unwrap();
+
+        // Output should be between 0 and 1 due to sigmoid activation
+        assert!(output >= 0.0 && output <= 1.0);
+    }
+
+    #[test]
+    fn test_neural_oracle_prediction_types() {
+        let mut oracle = NeuralOracle::new(4, 8);
+
+        // Test with different input patterns
+        let high_confidence_positive = vec![1.0; 4];
+        let high_confidence_negative = vec![0.0; 4];
+        let uncertain_input = vec![0.5; 4];
+
+        // We can't guarantee specific predictions without training,
+        // but we can test that predictions return valid enum variants
+        let pred1 = oracle.predict(&high_confidence_positive).unwrap();
+        let pred2 = oracle.predict(&high_confidence_negative).unwrap();
+        let pred3 = oracle.predict(&uncertain_input).unwrap();
+
+        // Just verify that we get valid prediction types
+        match pred1 {
+            NeuralPrediction::DefinitelyPresent
+            | NeuralPrediction::DefinitelyAbsent
+            | NeuralPrediction::Uncertain => {}
+        }
+
+        match pred2 {
+            NeuralPrediction::DefinitelyPresent
+            | NeuralPrediction::DefinitelyAbsent
+            | NeuralPrediction::Uncertain => {}
+        }
+
+        match pred3 {
+            NeuralPrediction::DefinitelyPresent
+            | NeuralPrediction::DefinitelyAbsent
+            | NeuralPrediction::Uncertain => {}
+        }
+    }
+
+    #[test]
+    fn test_traditional_bloom_optimal_parameters() {
+        let expected_elements = 1000;
+        let fpr = 0.01;
+
+        let size = TraditionalBloom::optimal_size(expected_elements, fpr);
+        let hash_count = TraditionalBloom::optimal_hash_count(expected_elements, size);
+
+        // Size should be reasonable for the given parameters
+        assert!(size > expected_elements); // Should be larger than number of elements
+        assert!(size < expected_elements * 20); // But not excessively large
+
+        // Hash count should be reasonable
+        assert!(hash_count > 0);
+        assert!(hash_count < 20); // Typically less than 20 hash functions
+    }
+
+    #[test]
+    fn test_kmer_embedding_structure() {
+        let embedding = KmerEmbedding {
+            kmer_hash: 12345,
+            embedding: vec![0.1, 0.2, 0.3, 0.4],
+            taxonomy_id: Some(789),
+        };
+
+        assert_eq!(embedding.kmer_hash, 12345);
+        assert_eq!(embedding.embedding.len(), 4);
+        assert_eq!(embedding.taxonomy_id, Some(789));
+        assert!((embedding.embedding[0] - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_filter_metrics_initialization() {
+        let metrics = FilterMetrics::default();
+
+        assert_eq!(metrics.neural_queries, 0);
+        assert_eq!(metrics.neural_hits, 0);
+        assert_eq!(metrics.backup_queries, 0);
+        assert_eq!(metrics.false_positives, 0);
+        assert_eq!(metrics.true_positives, 0);
+    }
+
+    #[test]
+    fn test_training_config_structure() {
+        let config = TrainingConfig {
+            learning_rate: 0.005,
+            batch_size: 32,
+            epochs: 50,
+            embedding_dim: 16,
+            hidden_dim: 32,
+            target_fpr: 0.001,
+        };
+
+        assert!((config.learning_rate - 0.005).abs() < f32::EPSILON);
+        assert_eq!(config.batch_size, 32);
+        assert_eq!(config.epochs, 50);
+        assert_eq!(config.embedding_dim, 16);
+        assert_eq!(config.hidden_dim, 32);
+        assert!((config.target_fpr - 0.001).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_kmer_embedding() {
+        let filter = LearnedBloomFilter::new(1000, 0.01, 16, 32);
+        let kmer_hash = 0x123456789ABCDEF0u64;
+
+        let embedding = filter.compute_kmer_embedding(kmer_hash).unwrap();
+
+        assert_eq!(embedding.len(), 16); // Should match embedding_dim
+
+        // First feature should be normalized hash magnitude
+        assert!(embedding[0] >= 0.0 && embedding[0] <= 1.0);
+
+        // All features should be finite
+        for &feature in &embedding {
+            assert!(feature.is_finite());
+        }
+
+        // Test with a smaller hash to avoid overflow
+        let small_hash = 0x1234u64;
+        let embedding2 = filter.compute_kmer_embedding(small_hash).unwrap();
+        assert_eq!(embedding2.len(), 16);
+        assert!(embedding2[0] >= 0.0 && embedding2[0] <= 1.0);
+    }
+
+    #[test]
+    fn test_hash_function_consistency() {
+        let bloom = TraditionalBloom::new(100, 0.1);
+        let item = 42u64;
+        let seed = 0;
+
+        // Hash function should be deterministic
+        let hash1 = bloom.hash_function(item, seed);
+        let hash2 = bloom.hash_function(item, seed);
+        assert_eq!(hash1, hash2);
+
+        // Different seeds should generally produce different hashes
+        let hash3 = bloom.hash_function(item, 1);
+        assert_ne!(hash1, hash3); // Very likely to be different
     }
 }

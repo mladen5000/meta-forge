@@ -72,7 +72,7 @@ impl CompactKmer {
     /// Each nucleotide uses 2 bits: A=00, C=01, G=10, T=11
     fn pack_nucleotides(sequence: &str) -> Result<Box<[u64]>> {
         let nucleotides_per_u64 = 32;
-        let num_u64s = (sequence.len() + nucleotides_per_u64 - 1) / nucleotides_per_u64;
+        let num_u64s = sequence.len().div_ceil(nucleotides_per_u64);
         let mut data = vec![0u64; num_u64s];
 
         for (i, nucleotide) in sequence.chars().enumerate() {
@@ -189,7 +189,7 @@ impl CompactKmer {
 
         let new_k = self.k - 1;
         let nucleotides_per_u64 = 32;
-        let num_u64s = (new_k as usize + nucleotides_per_u64 - 1) / nucleotides_per_u64;
+        let num_u64s = (new_k as usize).div_ceil(nucleotides_per_u64);
         let mut new_data = vec![0u64; num_u64s];
 
         for i in 1..self.k as usize {
@@ -220,7 +220,7 @@ impl CompactKmer {
 
         let new_k = self.k - 1;
         let nucleotides_per_u64 = 32;
-        let num_u64s = (new_k as usize + nucleotides_per_u64 - 1) / nucleotides_per_u64;
+        let num_u64s = (new_k as usize).div_ceil(nucleotides_per_u64);
         let mut new_data = vec![0u64; num_u64s];
 
         for i in 0..(new_k as usize) {
@@ -925,7 +925,7 @@ impl MemoryBenchmark {
             "  Optimized:  {:.2} MB",
             self.optimized_memory as f64 / (1024.0 * 1024.0)
         );
-        println!("  Reduction:  {:.1}%", reduction);
+        println!("  Reduction:  {reduction:.1}%");
 
         if reduction >= 70.0 {
             println!("  Status:     ✅ TARGET ACHIEVED");

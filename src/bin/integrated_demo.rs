@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_multi_progress_creation() {
-        let multi_progress = MultiProgress::new();
+        let mut multi_progress = MultiProgress::new();
 
         // Test that we can add lines
         let _line1 = multi_progress.add_line("Test line 1".to_string());

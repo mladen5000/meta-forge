@@ -952,6 +952,7 @@ pub fn resolve_repeats_in_pipeline(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::data_structures::{GraphEdge, GraphFragment};
 
     #[test]
     fn test_feature_extraction() {
@@ -992,5 +993,149 @@ mod tests {
 
         let repeat_type = resolver.classify_repeat_type(1, 2, &graph).unwrap();
         assert_ne!(repeat_type, RepeatType::NotRepeat);
+    }
+
+    #[test]
+    fn test_gnn_config_creation() {
+        let config = GNNConfig {
+            node_feature_dim: 32,
+            hidden_dim: 64,
+            num_layers: 2,
+            dropout_rate: 0.1,
+            learning_rate: 0.001,
+        };
+
+        assert_eq!(config.node_feature_dim, 32);
+        assert_eq!(config.hidden_dim, 64);
+        assert_eq!(config.num_layers, 2);
+        assert!((config.dropout_rate - 0.1).abs() < f32::EPSILON);
+        assert!((config.learning_rate - 0.001).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_minimiser_graph_gnn_creation() {
+        let mut graph = MinimiserGraphGNN {
+            node_features: HashMap::new(),
+            edges: HashMap::new(),
+            adjacency: HashMap::new(),
+        };
+
+        // Add node features
+        graph.node_features.insert(1, vec![1.0, 2.0, 3.0]);
+        graph.node_features.insert(2, vec![4.0, 5.0, 6.0]);
+
+        // Add edges
+        graph.edges.insert((1, 2), vec![0.5, 0.8]);
+
+        // Add adjacency
+        graph.adjacency.insert(1, vec![2]);
+        graph.adjacency.insert(2, vec![1]);
+
+        assert_eq!(graph.node_features.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.adjacency.get(&1), Some(&vec![2]));
+        assert_eq!(graph.node_features.get(&1), Some(&vec![1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn test_edge_prediction_creation() {
+        let prediction = EdgePrediction {
+            from_node: 123,
+            to_node: 456,
+            confidence_score: 0.85,
+            is_correct: true,
+            repeat_type: RepeatType::TandemRepeat,
+        };
+
+        assert_eq!(prediction.from_node, 123);
+        assert_eq!(prediction.to_node, 456);
+        assert!((prediction.confidence_score - 0.85).abs() < f32::EPSILON);
+        assert!(prediction.is_correct);
+        assert_eq!(prediction.repeat_type, RepeatType::TandemRepeat);
+    }
+
+    #[test]
+    fn test_repeat_resolver_initialization() {
+        let resolver = RepeatResolverGNN::new(None).unwrap();
+
+        // Test that default confidence threshold is set correctly
+        assert!((resolver.confidence_threshold - 0.7).abs() < f32::EPSILON);
+
+        // Test that feature extractor is initialized
+        assert_eq!(resolver.feature_extractor.feature_dim, 64);
+
+        // Test that ONNX session is None when no model path provided
+        assert!(resolver.onnx_session.is_none());
+    }
+
+    #[test]
+    fn test_node_feature_extractor_initialization() {
+        let feature_dim = 128;
+        let extractor = NodeFeatureExtractor::new(feature_dim);
+        assert_eq!(extractor.feature_dim, feature_dim);
+    }
+
+    #[test]
+    fn test_repeat_type_variants() {
+        let types = vec![
+            RepeatType::TandemRepeat,
+            RepeatType::InterspersedRepeat,
+            RepeatType::InvertedRepeat,
+            RepeatType::NotRepeat,
+        ];
+
+        // Test that all variants can be created and compared
+        assert_eq!(types[0], RepeatType::TandemRepeat);
+        assert_eq!(types[1], RepeatType::InterspersedRepeat);
+        assert_eq!(types[2], RepeatType::InvertedRepeat);
+        assert_eq!(types[3], RepeatType::NotRepeat);
+
+        // Test that different types are not equal
+        assert_ne!(RepeatType::TandemRepeat, RepeatType::NotRepeat);
+    }
+
+    #[test]
+    fn test_message_passing_layer_creation() {
+        let input_dim = 16;
+        let hidden_dim = 32;
+        let layer = MessagePassingLayer::new(input_dim, hidden_dim);
+
+        // Check dimensions are correct
+        assert_eq!(layer.node_weights.len(), hidden_dim);
+        assert_eq!(layer.message_weights.len(), hidden_dim);
+        assert_eq!(layer.bias.len(), hidden_dim);
+        assert_eq!(layer.layer_norm_scale.len(), hidden_dim);
+        assert_eq!(layer.layer_norm_bias.len(), hidden_dim);
+
+        // Check that first layer weights have correct input dimension
+        if !layer.node_weights.is_empty() {
+            assert_eq!(layer.node_weights[0].len(), input_dim);
+        }
+        if !layer.message_weights.is_empty() {
+            assert_eq!(layer.message_weights[0].len(), hidden_dim);
+        }
+
+        // Check that layer norm parameters are initialized properly
+        assert!(layer
+            .layer_norm_scale
+            .iter()
+            .all(|&x| (x - 1.0).abs() < f32::EPSILON));
+        assert!(layer
+            .layer_norm_bias
+            .iter()
+            .all(|&x| x.abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn test_edge_classifier_creation() {
+        let input_dim = 64;
+        let classifier = EdgeClassifier::new(input_dim);
+
+        assert_eq!(classifier.weights.len(), 1); // Single layer
+        assert_eq!(classifier.weights[0].len(), input_dim);
+        assert_eq!(classifier.bias.len(), 1);
+
+        // Check that bias is initialized to zero
+        assert!((classifier.bias[0] - 0.0).abs() < f32::EPSILON);
     }
 }

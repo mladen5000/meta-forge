@@ -463,7 +463,7 @@ impl AssemblyMemoryBenchmark {
         let mut total_optimized = 0;
 
         for (name, benchmark) in &benchmarks {
-            println!("\n📊 {}", name);
+            println!("\n📊 {name}");
             println!("{}", "-".repeat(50));
             benchmark.print_results();
 
@@ -490,7 +490,7 @@ impl AssemblyMemoryBenchmark {
             "Total Optimized Memory:  {:.2} MB",
             total_optimized as f64 / (1024.0 * 1024.0)
         );
-        println!("Total Memory Reduction:  {:.1}%", overall_reduction);
+        println!("Total Memory Reduction:  {overall_reduction:.1}%");
 
         if overall_reduction >= 70.0 {
             println!("🎉 TARGET ACHIEVED: 70-85% memory reduction goal met!");
