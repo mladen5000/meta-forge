@@ -169,65 +169,24 @@ impl IntermediateOutputManager {
     ) -> Result<IntermediateMetadata> {
         let section_dir = self.get_section_dir(&section);
 
-        // Save in multiple formats based on configuration
-        let mut metadata_entries = Vec::new();
+        // Save as JSON (primary format)
+        let json_path = section_dir.join(format!("{}.json", filename));
+        let json_content =
+            serde_json::to_string_pretty(data).context("Failed to serialize data to JSON")?;
 
-        if self.config.enable_json {
-            let json_path = section_dir.join(format!("{}.json", filename));
-            let json_content =
-                serde_json::to_string_pretty(data).context("Failed to serialize data to JSON")?;
+        let file_path = if self.config.compress_files {
+            let compressed_path = json_path.with_extension("json.gz");
+            self.write_compressed(&compressed_path, json_content.as_bytes())?;
+            info!("💾 Saved compressed JSON: {}", compressed_path.display());
+            compressed_path
+        } else {
+            fs::write(&json_path, json_content)
+                .with_context(|| format!("Failed to write JSON file: {}", json_path.display()))?;
+            info!("💾 Saved JSON: {}", json_path.display());
+            json_path
+        };
 
-            if self.config.compress_files {
-                self.write_compressed(
-                    &json_path.with_extension("json.gz"),
-                    json_content.as_bytes(),
-                )?;
-                info!(
-                    "💾 Saved compressed JSON: {}",
-                    json_path.with_extension("json.gz").display()
-                );
-            } else {
-                fs::write(&json_path, json_content).with_context(|| {
-                    format!("Failed to write JSON file: {}", json_path.display())
-                })?;
-                info!("💾 Saved JSON: {}", json_path.display());
-            }
-
-            let file_path = if self.config.compress_files {
-                json_path.with_extension("json.gz")
-            } else {
-                json_path
-            };
-
-            let metadata =
-                self.create_metadata(&section, &file_path, "json", section_metadata.clone())?;
-            metadata_entries.push(metadata);
-        }
-
-        if self.config.enable_binary {
-            let bin_path = section_dir.join(format!("{}.bin", filename));
-            let binary_content = bincode::encode_to_vec(data, bincode::config::standard())
-                .map_err(|e| anyhow::anyhow!("Failed to serialize data to binary format: {}", e))?;
-
-            if self.config.compress_files {
-                self.write_compressed(&bin_path.with_extension("bin.gz"), &binary_content)?;
-                info!(
-                    "💾 Saved compressed binary: {}",
-                    bin_path.with_extension("bin.gz").display()
-                );
-            } else {
-                fs::write(&bin_path, binary_content).with_context(|| {
-                    format!("Failed to write binary file: {}", bin_path.display())
-                })?;
-                info!("💾 Saved binary: {}", bin_path.display());
-            }
-        }
-
-        // Return the first metadata entry (JSON takes precedence)
-        metadata_entries
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No intermediate files were saved"))
+        self.create_metadata(&section, &file_path, "json", section_metadata)
     }
 
     /// Save FASTA sequences for sections dealing with sequences
@@ -322,68 +281,48 @@ impl IntermediateOutputManager {
     ) -> Result<T> {
         let section_dir = self.get_section_dir(&section);
 
-        // Try JSON first
-        if self.config.enable_json {
-            let json_path = section_dir.join(format!("{}.json", filename));
-            let json_gz_path = section_dir.join(format!("{}.json.gz", filename));
+        // Load from JSON (primary format)
+        let json_path = section_dir.join(format!("{}.json", filename));
+        let json_gz_path = section_dir.join(format!("{}.json.gz", filename));
 
-            let content = if json_gz_path.exists() {
-                self.read_compressed(&json_gz_path)?
-            } else if json_path.exists() {
-                fs::read_to_string(&json_path)
-                    .with_context(|| format!("Failed to read JSON file: {}", json_path.display()))?
-            } else {
-                return Err(anyhow::anyhow!(
-                    "JSON file not found: {}",
-                    json_path.display()
-                ));
-            };
+        let content = if json_gz_path.exists() {
+            self.read_compressed(&json_gz_path)?
+        } else if json_path.exists() {
+            fs::read_to_string(&json_path)
+                .with_context(|| format!("Failed to read JSON file: {}", json_path.display()))?
+        } else {
+            return Err(anyhow::anyhow!(
+                "JSON file not found: {}",
+                json_path.display()
+            ));
+        };
 
-            let data: T =
-                serde_json::from_str(&content).context("Failed to deserialize JSON data")?;
-            return Ok(data);
-        }
-
-        // Fallback to binary
-        if self.config.enable_binary {
-            let bin_path = section_dir.join(format!("{}.bin", filename));
-            let bin_gz_path = section_dir.join(format!("{}.bin.gz", filename));
-
-            let content = if bin_gz_path.exists() {
-                self.read_compressed_bytes(&bin_gz_path)?
-            } else if bin_path.exists() {
-                fs::read(&bin_path).with_context(|| {
-                    format!("Failed to read binary file: {}", bin_path.display())
-                })?
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Binary file not found: {}",
-                    bin_path.display()
-                ));
-            };
-
-            let (data, _): (T, usize) =
-                bincode::decode_from_slice(&content, bincode::config::standard())
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize binary data: {}", e))?;
-            return Ok(data);
-        }
-
-        Err(anyhow::anyhow!(
-            "No supported intermediate file formats found for {}",
-            filename
-        ))
+        let data: T = serde_json::from_str(&content).context("Failed to deserialize JSON data")?;
+        Ok(data)
     }
 
     /// Check if intermediate files exist for a section
     pub fn has_intermediate(&self, section: PipelineSection, filename: &str) -> bool {
         let section_dir = self.get_section_dir(&section);
 
+        // Check JSON files
         let json_path = section_dir.join(format!("{}.json", filename));
         let json_gz_path = section_dir.join(format!("{}.json.gz", filename));
-        let bin_path = section_dir.join(format!("{}.bin", filename));
-        let bin_gz_path = section_dir.join(format!("{}.bin.gz", filename));
 
-        json_path.exists() || json_gz_path.exists() || bin_path.exists() || bin_gz_path.exists()
+        // Check FASTA files
+        let fasta_path = section_dir.join(format!("{}.fasta", filename));
+        let fasta_gz_path = section_dir.join(format!("{}.fasta.gz", filename));
+
+        // Check TSV files
+        let tsv_path = section_dir.join(format!("{}.tsv", filename));
+        let tsv_gz_path = section_dir.join(format!("{}.tsv.gz", filename));
+
+        json_path.exists()
+            || json_gz_path.exists()
+            || fasta_path.exists()
+            || fasta_gz_path.exists()
+            || tsv_path.exists()
+            || tsv_gz_path.exists()
     }
 
     /// List all run directories in the base output directory
