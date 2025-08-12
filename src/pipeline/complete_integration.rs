@@ -940,7 +940,7 @@ impl MetagenomicsPipeline {
         });
 
         self.output_manager.save_intermediate(
-            crate::utils::intermediate_output::PipelineSection::Preprocessing,
+            PipelineSection::Preprocessing,
             "initialization_status",
             &preprocessing_init,
             serde_json::json!({"phase": "initialization"}),
@@ -964,7 +964,7 @@ impl MetagenomicsPipeline {
             });
 
             self.output_manager.save_intermediate(
-                crate::utils::intermediate_output::PipelineSection::Preprocessing,
+                PipelineSection::Preprocessing,
                 &format!("file_{}_processing", file_idx),
                 &file_status,
                 serde_json::json!({"file_processing": true}),
@@ -1002,7 +1002,7 @@ impl MetagenomicsPipeline {
             });
 
             self.output_manager.save_intermediate(
-                crate::utils::intermediate_output::PipelineSection::Preprocessing,
+                PipelineSection::Preprocessing,
                 &format!("file_{}_completed", file_idx),
                 &file_complete,
                 serde_json::json!({"file_completed": true}),
@@ -1026,7 +1026,7 @@ impl MetagenomicsPipeline {
         });
 
         self.output_manager.save_intermediate(
-            crate::utils::intermediate_output::PipelineSection::Preprocessing,
+            PipelineSection::Preprocessing,
             "final_summary",
             &preprocessing_summary,
             serde_json::json!({"final_summary": true}),
@@ -1129,7 +1129,18 @@ impl MetagenomicsPipeline {
                 correction_metadata: r.correction_metadata.clone(),
             })
             .collect();
-        let assembly_graph = builder.build(&assembly_reads)?;
+
+        // Choose assembly mode based on system resources
+        let assembly_graph = if self.config.performance.memory_limit_gb <= 4 {
+            info!("🔧 Using low-memory assembly mode");
+            builder.build_low_memory(&assembly_reads)?
+        } else if self.config.performance.num_threads <= 4 {
+            info!("🔧 Using low-CPU assembly mode");
+            builder.build_low_cpu(&assembly_reads)?
+        } else {
+            info!("🔧 Using balanced assembly mode");
+            builder.build(&assembly_reads)?
+        };
         // Note: Contigs are generated during the build process
 
         // Store assembly results in database if available

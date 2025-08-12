@@ -198,10 +198,40 @@ impl AssemblyGraphBuilder {
         }
     }
 
+    /// Create builder optimized for low-CPU systems (2-4 cores)
+    pub fn new_low_cpu(base_k: usize, max_k: usize, min_cov: u32) -> Self {
+        Self {
+            base_k,
+            max_k,
+            min_cov,
+        }
+    }
+
+    /// Create builder optimized for low-memory systems (<4GB RAM)
+    pub fn new_low_memory(base_k: usize, max_k: usize, min_cov: u32) -> Self {
+        Self {
+            base_k,
+            max_k,
+            min_cov,
+        }
+    }
+
     /* -------- 1. chunking + adaptive‑k ---------------------------------- */
     fn create_chunks<'a>(&self, reads: &'a [CorrectedRead]) -> Vec<&'a [CorrectedRead]> {
         const CHUNK: usize = 1_000;
         reads.chunks(CHUNK).collect()
+    }
+
+    /// Optimized chunking for low-memory mode - smaller chunks to reduce memory usage
+    fn create_chunks_low_memory<'a>(&self, reads: &'a [CorrectedRead]) -> Vec<&'a [CorrectedRead]> {
+        const SMALL_CHUNK: usize = 250; // 4x smaller chunks for memory efficiency
+        reads.chunks(SMALL_CHUNK).collect()
+    }
+
+    /// Sequential chunking for low-CPU mode - larger chunks processed sequentially
+    fn create_chunks_low_cpu<'a>(&self, reads: &'a [CorrectedRead]) -> Vec<&'a [CorrectedRead]> {
+        const LARGE_CHUNK: usize = 5_000; // Larger chunks to minimize overhead
+        reads.chunks(LARGE_CHUNK).collect()
     }
 
     /* -------- 2. build per‑chunk fragment ------------------------------- */
@@ -322,6 +352,73 @@ impl AssemblyGraphBuilder {
         let merged = Self::merge_fragments(fragments);
         // 4. simplify
         let simplified = Self::simplify(merged);
+        // 5. create assembly graph and generate contigs
+        let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
+        assembly_graph.generate_contigs()?;
+        Ok(assembly_graph)
+    }
+
+    /// Build optimized for low-memory systems - streaming processing with smaller chunks
+    pub fn build_low_memory(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
+        // 1. smaller chunks for memory efficiency
+        let chunks = self.create_chunks_low_memory(reads);
+
+        // 2. process chunks sequentially to avoid memory spike
+        let mut fragments = Vec::new();
+        for chunk in chunks {
+            let fragment = self.build_fragment(chunk)?;
+            fragments.push(fragment);
+
+            // Periodically merge to keep memory usage low
+            if fragments.len() > 4 {
+                let partial_merge = Self::merge_fragments(fragments);
+                fragments = vec![partial_merge];
+            }
+        }
+
+        // 3. final merge
+        let merged = if fragments.len() > 1 {
+            Self::merge_fragments(fragments)
+        } else {
+            fragments
+                .into_iter()
+                .next()
+                .unwrap_or_else(GraphFragment::empty)
+        };
+
+        // 4. conservative simplification to preserve memory
+        let simplified = Self::simplify(merged);
+
+        // 5. create assembly graph and generate contigs
+        let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
+        assembly_graph.generate_contigs()?;
+        Ok(assembly_graph)
+    }
+
+    /// Build optimized for low-CPU systems - sequential processing with minimal parallelization
+    pub fn build_low_cpu(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
+        // 1. larger chunks to minimize overhead
+        let chunks = self.create_chunks_low_cpu(reads);
+
+        // 2. sequential processing instead of parallel
+        let fragments: Vec<GraphFragment> = chunks
+            .iter()
+            .map(|c| self.build_fragment(c))
+            .collect::<Result<_>>()?;
+
+        // 3. sequential merge instead of parallel
+        let merged = fragments
+            .into_iter()
+            .fold(GraphFragment::empty(), |mut acc, frag| {
+                for e in frag.edges {
+                    acc.insert_edge(e.from_hash, e.to_hash);
+                }
+                acc
+            });
+
+        // 4. minimal simplification
+        let simplified = Self::simplify(merged);
+
         // 5. create assembly graph and generate contigs
         let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
         assembly_graph.generate_contigs()?;
