@@ -144,10 +144,26 @@ Never save working files, text/mds and tests to the root folder.
 
 ## Project Status
 
-- Metagenomic assembly pipeline successfully implemented but needs extensive optimization
-- K-mer processing and graph construction functional  
-- Error correction and quality assessment working
-- Output generation and reporting complete
+- Metagenomic assembly pipeline successfully implemented with TUI interface
+- K-mer processing and graph construction optimized for performance
+- Error correction and quality assessment working with ML enhancements
+- Output generation and reporting complete with multiple formats
+- SQLite database integration for taxonomy and k-mer storage
+- Neural network models for repeat resolution and learned data structures
+
+## Module Organization
+
+Each `src/` subdirectory contains its own `CLAUDE.md` with specific guidelines:
+- `src/assembly/` - Sequence assembly with adaptive k-mer strategies
+- `src/core/` - Fundamental data structures and utilities
+- `src/database/` - SQLite-based storage and querying
+- `src/features/` - Feature extraction from sequences and graphs
+- `src/ml/` - Machine learning models and neural networks
+- `src/pipeline/` - High-level workflow orchestration
+- `src/tui/` - Terminal user interface components
+- `src/utils/` - Shared utilities and helper functions
 
 ## Project Memories
 - Use the bioinformatics agents when possible
+- Each module has specific performance and testing requirements
+- Follow modular design principles for maintainability

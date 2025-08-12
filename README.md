@@ -2,18 +2,20 @@
 
 &#x20;&#x20;
 
-MetaForge began as a side project in a small lab that needed a faster way to assemble and classify metagenomic reads. Over time it grew into a compact Rust toolkit that handles everything from k‑mer assembly to basic machine‑learning–assisted taxonomy, all without drowning you in dependencies.
+MetaForge began as a side project in a small lab that needed a faster way to assemble and classify metagenomic reads. Over time it grew into a comprehensive Rust toolkit that handles everything from adaptive k‑mer assembly to machine‑learning–assisted taxonomy classification, featuring a modern terminal UI and optimized bioinformatics algorithms.
 
 ---
 
 ## What It Does
 
-* **Adaptive k‑mers**: Picks k‑mer sizes based on local complexity, so you don’t run three assemblies to find the sweet spot.
-* **Pragmatic ML**: A lightweight neural model helps resolve repeats and tricky taxa, but core tasks stay in Rust for speed and reproducibility.
-* **Feature extraction**: Compute sequence stats and graph metrics in one go, then dump to JSON/CSV for downstream analysis.
-* **SQLite backend**: Simple embedded database for k‑mer lookups and taxonomy tables—no need to install PostgreSQL.
-* **Streamable & multithreaded**: Process large FASTQ files in chunks, use as many cores as you have, and keep memory in check.
-* **Minimal setup**: One `cargo build --release`, one binary, no Python or R required.
+* **Adaptive k‑mers**: Intelligently selects k‑mer sizes based on local sequence complexity and dataset characteristics
+* **Neural-enhanced assembly**: Graph neural networks for repeat resolution and learned Bloom filters for efficient k‑mer storage
+* **Interactive TUI**: Modern terminal interface for real-time monitoring and configuration of analysis pipelines
+* **Comprehensive feature extraction**: Sequence composition, graph topology, and assembly quality metrics in one pass
+* **SQLite backend**: Embedded database for k‑mer indices, taxonomy data, and analysis results—no external database required
+* **Optimized performance**: SIMD-accelerated operations, memory-efficient streaming, and parallel processing across all cores
+* **Modular architecture**: Clean separation of concerns with dedicated modules for assembly, ML, database, and UI components
+* **Zero external dependencies**: Pure Rust implementation with minimal setup—just `cargo build --release`
 
 ---
 

@@ -1,8 +1,8 @@
 [package]
 name = "meta-forge"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
-authors = ["Mladen Rasic <youremail@example.com>"]
+authors = ["Mladen Rasic <mrasic2@uic.edu>"]
 description = "Metagenomic data analysis and LLM integration toolkit"
 license = "MIT"
 repository = "https://github.com/mladen5000/meta-forge"
@@ -34,7 +34,6 @@ name = "meta_forge"
 path = "src/lib.rs"
 
 [dependencies]
-
 # --- Core Data Structures & Concurrency ---
 ahash = { version = "0.8.12", features = ["serde"] }
 dashmap = "6.1.0"
@@ -42,9 +41,8 @@ fxhash = "0.2.1"
 parking_lot = "0.12.4"
 
 # --- Configuration, CLI, and Utilities ---
-clap = { version = "4.5.43", features = ["derive"] }
-config = "0.15.13"
-toml = "0.9.5"
+config = "0.5.13"
+toml = "0.2.3"
 dirs = "6.0.0"
 num_cpus = "1.17.0"
 tempfile = "3.20.0"
@@ -68,10 +66,8 @@ smartcore = "0.4.2"
 fastrand = "2.3.0"
 pathfinding = "4.14.0"
 
-# --- Error Handling, Logging, Observability ---
-anyhow = "1.0.98"
-thiserror = "2.0.12"
 tracing = "0.1.41"
+clap = { version = "4.5.44", features = ["derive"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 
@@ -84,6 +80,7 @@ tui-textarea = "0.7.0"
 
 # --- Bioinformatics ---
 bio = "2.3.0"
+
 seq_io = "0.3.4"
 rust-htslib = "0.50.0"
 
@@ -106,3 +103,5 @@ bench = ["criterion"]
 
 [dev-dependencies]
 criterion = "0.7.0"
+anyhow = "1.0.99"
+thiserror = "2.0.14"
