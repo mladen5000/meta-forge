@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{info, instrument};
 
+use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
+use tracing::warn;
 
 use crate::assembly::adaptive_k::AssemblyGraphBuilder;
 // use crate::tests::comprehensive_test_suite::{TestDataGenerator, TestRunner};
@@ -121,6 +123,24 @@ pub enum Commands {
         output: PathBuf,
     },
 
+    /// Resume analysis from checkpoint
+    Resume {
+        /// Run ID to resume from
+        #[arg(short, long)]
+        run_id: String,
+
+        /// Pipeline section to resume from
+        #[arg(short = 's', long, value_enum)]
+        section: CheckpointSection,
+
+        /// Sample name for resumed analysis
+        #[arg(short = 'n', long)]
+        sample_name: String,
+    },
+
+    /// List available runs
+    ListRuns,
+
     /// Run tests and benchmarks
     Test {
         /// Run benchmarks
@@ -222,12 +242,34 @@ enum ConfigTemplate {
     LowMemory,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum CheckpointSection {
+    Assembly,
+    Features,
+    Classification,
+    Abundance,
+    Report,
+}
+
+impl From<CheckpointSection> for PipelineSection {
+    fn from(checkpoint: CheckpointSection) -> Self {
+        match checkpoint {
+            CheckpointSection::Assembly => PipelineSection::Assembly,
+            CheckpointSection::Features => PipelineSection::Features,
+            CheckpointSection::Classification => PipelineSection::Classification,
+            CheckpointSection::Abundance => PipelineSection::Abundance,
+            CheckpointSection::Report => PipelineSection::Report,
+        }
+    }
+}
+
 /// Complete pipeline orchestrator
 pub struct MetagenomicsPipeline {
     config: PipelineConfiguration,
     config_manager: ConfigurationManager,
     database: Option<MetagenomicsDatabase>,
     resource_monitor: ResourceMonitor,
+    output_manager: IntermediateOutputManager,
 }
 
 impl MetagenomicsPipeline {
@@ -262,11 +304,24 @@ impl MetagenomicsPipeline {
 
         let resource_monitor = ResourceMonitor::new(config.performance.monitoring.clone());
 
+        // Initialize intermediate output manager with run-specific directory
+        let output_config = OutputConfig {
+            enable_json: config.io.output_formats.json,
+            enable_binary: true,
+            enable_fasta: config.io.output_formats.fasta,
+            enable_tsv: config.io.output_formats.tsv,
+            compress_files: false, // Set based on configuration if available
+            max_file_size_mb: 100,
+        };
+        let output_manager =
+            IntermediateOutputManager::new(config.general.output_dir.clone(), output_config)?;
+
         Ok(Self {
             config,
             config_manager,
             database,
             resource_monitor,
+            output_manager,
         })
     }
 
@@ -294,13 +349,69 @@ impl MetagenomicsPipeline {
         info!("📋 Phase 1: Data preprocessing and error correction");
         let corrected_reads = self.preprocess_inputs(inputs).await?;
 
+        // Save preprocessing intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Preprocessing,
+            "corrected_reads",
+            &corrected_reads,
+            serde_json::json!({
+                "num_reads": corrected_reads.len(),
+                "total_corrections": corrected_reads.iter().map(|r| r.corrections.len()).sum::<usize>(),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })
+        )?;
+        info!("💾 Saved preprocessing intermediate files");
+
         // Phase 2: Assembly with adaptive k-mer selection
         info!("🧬 Phase 2: Adaptive assembly");
         let assembly_results = self.run_assembly(&corrected_reads).await?;
 
+        // Save assembly intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Assembly,
+            "assembly_results",
+            &assembly_results,
+            serde_json::json!({
+                "num_contigs": assembly_results.contigs.len(),
+                "total_length": assembly_results.assembly_stats.total_length,
+                "n50": assembly_results.assembly_stats.n50,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        )?;
+
+        // Save contigs as FASTA
+        let contig_sequences: Vec<(String, String)> = assembly_results
+            .contigs
+            .iter()
+            .map(|c| (format!("contig_{}", c.id), c.sequence.clone()))
+            .collect();
+        self.output_manager.save_sequences(
+            PipelineSection::Assembly,
+            "contigs",
+            &contig_sequences,
+            serde_json::json!({
+                "num_contigs": contig_sequences.len(),
+                "assembly_stats": assembly_results.assembly_stats
+            }),
+        )?;
+        info!("💾 Saved assembly intermediate files");
+
         // Phase 3: Feature extraction
         info!("🔍 Phase 3: Feature extraction");
         let features = self.extract_features(&assembly_results).await?;
+
+        // Save features intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Features,
+            "feature_collection",
+            &features,
+            serde_json::json!({
+                "num_sequences": features.sequence_features.len(),
+                "has_graph_features": features.graph_features.is_some(),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        )?;
+        info!("💾 Saved feature extraction intermediate files");
 
         // Phase 4: Taxonomic classification
         info!("🏷️  Phase 4: Taxonomic classification");
@@ -308,9 +419,69 @@ impl MetagenomicsPipeline {
             .classify_sequences(&assembly_results, &features)
             .await?;
 
+        // Save classification intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Classification,
+            "taxonomic_classifications",
+            &classifications,
+            serde_json::json!({
+                "num_classifications": classifications.len(),
+                "unique_taxa": classifications.iter().map(|c| &c.taxonomy_name).collect::<std::collections::HashSet<_>>().len(),
+                "mean_confidence": classifications.iter().map(|c| c.confidence).sum::<f64>() / classifications.len() as f64,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })
+        )?;
+
+        // Save classifications as TSV
+        let headers = vec![
+            "contig_id".to_string(),
+            "taxonomy_id".to_string(),
+            "taxonomy_name".to_string(),
+            "confidence".to_string(),
+            "lineage".to_string(),
+            "method".to_string(),
+        ];
+        let rows: Vec<Vec<String>> = classifications
+            .iter()
+            .map(|c| {
+                vec![
+                    c.contig_id.to_string(),
+                    c.taxonomy_id.to_string(),
+                    c.taxonomy_name.clone(),
+                    c.confidence.to_string(),
+                    c.lineage.clone(),
+                    c.method.clone(),
+                ]
+            })
+            .collect();
+        self.output_manager.save_tsv(
+            PipelineSection::Classification,
+            "classifications",
+            &headers,
+            &rows,
+            serde_json::json!({
+                "num_classifications": classifications.len()
+            }),
+        )?;
+        info!("💾 Saved classification intermediate files");
+
         // Phase 5: Abundance estimation
         info!("📊 Phase 5: Abundance estimation");
         let abundance_profile = self.estimate_abundance(&corrected_reads).await?;
+
+        // Save abundance intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Abundance,
+            "abundance_profile",
+            &abundance_profile,
+            serde_json::json!({
+                "unique_kmers": abundance_profile.unique_kmers,
+                "total_kmers": abundance_profile.total_kmers,
+                "abundant_kmers_count": abundance_profile.abundant_kmers.len(),
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        )?;
+        info!("💾 Saved abundance estimation intermediate files");
 
         // Phase 6: Generate comprehensive report
         info!("📝 Phase 6: Generating report");
@@ -322,6 +493,28 @@ impl MetagenomicsPipeline {
                 &abundance_profile,
             )
             .await?;
+
+        // Save final report intermediate results
+        self.output_manager.save_intermediate(
+            PipelineSection::Report,
+            "analysis_report",
+            &report,
+            serde_json::json!({
+                "sample_name": report.sample_name,
+                "timestamp": report.timestamp.to_rfc3339(),
+                "total_contigs": report.summary.total_contigs,
+                "unique_species": report.summary.unique_species
+            }),
+        )?;
+
+        // Generate run summary
+        let run_summary = self.output_manager.generate_run_summary()?;
+        info!(
+            "📊 Run Summary - ID: {}, Files in {} sections",
+            run_summary.run_id,
+            run_summary.sections.len()
+        );
+        info!("💾 Saved final report intermediate files");
 
         let total_time = start_time.elapsed();
         info!(
@@ -339,6 +532,283 @@ impl MetagenomicsPipeline {
             processing_time: total_time,
             config_used: self.config.clone(),
         })
+    }
+
+    /// Resume analysis from a specific checkpoint
+    #[instrument(skip(self))]
+    pub async fn resume_from_checkpoint(
+        &mut self,
+        run_id: &str,
+        checkpoint: PipelineSection,
+        sample_name: &str,
+    ) -> Result<AnalysisResults> {
+        info!("🔄 Resuming analysis from checkpoint: {:?}", checkpoint);
+
+        // Load the specified run directory
+        let run_dir = self
+            .output_manager
+            .base_output_dir
+            .join(format!("run_{}", run_id));
+        if !run_dir.exists() {
+            return Err(anyhow::anyhow!(
+                "Run directory not found: {}",
+                run_dir.display()
+            ));
+        }
+
+        // Create a temporary output manager for the existing run
+        let temp_output_manager = IntermediateOutputManager {
+            base_output_dir: self.output_manager.base_output_dir.clone(),
+            run_dir: run_dir.clone(),
+            run_timestamp: chrono::Utc::now(), // Use current time for resume
+            run_id: run_id.to_string(),
+            config: self.output_manager.config.clone(),
+        };
+
+        match checkpoint {
+            PipelineSection::Preprocessing => {
+                // Start from the beginning
+                warn!("⚠️  Cannot resume from preprocessing - starting fresh analysis");
+                return Err(anyhow::anyhow!(
+                    "Cannot resume from preprocessing checkpoint"
+                ));
+            }
+
+            PipelineSection::Assembly => {
+                info!("🗬 Loading corrected reads from preprocessing...");
+                let corrected_reads: Vec<CorrectedRead> = temp_output_manager
+                    .load_intermediate(PipelineSection::Preprocessing, "corrected_reads")?;
+
+                info!("🧬 Phase 2: Adaptive assembly (resumed)");
+                let assembly_results = self.run_assembly(&corrected_reads).await?;
+
+                // Continue with remaining phases...
+                return self
+                    .continue_from_assembly(assembly_results, corrected_reads, sample_name)
+                    .await;
+            }
+
+            PipelineSection::Features => {
+                info!("🗬 Loading assembly results...");
+                let assembly_results: AssemblyResults = temp_output_manager
+                    .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
+                let corrected_reads: Vec<CorrectedRead> = temp_output_manager
+                    .load_intermediate(PipelineSection::Preprocessing, "corrected_reads")?;
+
+                info!("🔍 Phase 3: Feature extraction (resumed)");
+                let features = self.extract_features(&assembly_results).await?;
+
+                // Continue with remaining phases...
+                return self
+                    .continue_from_features(
+                        assembly_results,
+                        features,
+                        corrected_reads,
+                        sample_name,
+                    )
+                    .await;
+            }
+
+            PipelineSection::Classification => {
+                info!("🔍 Loading features and assembly results...");
+                let assembly_results: AssemblyResults = temp_output_manager
+                    .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
+                let features: FeatureCollection = temp_output_manager
+                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                let corrected_reads: Vec<CorrectedRead> = temp_output_manager
+                    .load_intermediate(PipelineSection::Preprocessing, "corrected_reads")?;
+
+                info!("🏷️  Phase 4: Taxonomic classification (resumed)");
+                let classifications = self
+                    .classify_sequences(&assembly_results, &features)
+                    .await?;
+
+                // Continue with remaining phases...
+                return self
+                    .continue_from_classification(
+                        assembly_results,
+                        features,
+                        classifications,
+                        corrected_reads,
+                        sample_name,
+                    )
+                    .await;
+            }
+
+            PipelineSection::Abundance => {
+                info!("📊 Loading previous results...");
+                let assembly_results: AssemblyResults = temp_output_manager
+                    .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
+                let features: FeatureCollection = temp_output_manager
+                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                let classifications: Vec<TaxonomicClassification> = temp_output_manager
+                    .load_intermediate(
+                        PipelineSection::Classification,
+                        "taxonomic_classifications",
+                    )?;
+                let corrected_reads: Vec<CorrectedRead> = temp_output_manager
+                    .load_intermediate(PipelineSection::Preprocessing, "corrected_reads")?;
+
+                info!("📊 Phase 5: Abundance estimation (resumed)");
+                let abundance_profile = self.estimate_abundance(&corrected_reads).await?;
+
+                // Continue with final phase...
+                return self
+                    .continue_from_abundance(
+                        assembly_results,
+                        features,
+                        classifications,
+                        abundance_profile,
+                        sample_name,
+                    )
+                    .await;
+            }
+
+            PipelineSection::Report => {
+                info!("📝 Loading all previous results...");
+                let assembly_results: AssemblyResults = temp_output_manager
+                    .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
+                let features: FeatureCollection = temp_output_manager
+                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                let classifications: Vec<TaxonomicClassification> = temp_output_manager
+                    .load_intermediate(
+                        PipelineSection::Classification,
+                        "taxonomic_classifications",
+                    )?;
+                let abundance_profile: AbundanceProfile = temp_output_manager
+                    .load_intermediate(PipelineSection::Abundance, "abundance_profile")?;
+
+                info!("📝 Phase 6: Generating report (resumed)");
+                let report = self
+                    .generate_report(
+                        sample_name,
+                        &assembly_results,
+                        &classifications,
+                        &abundance_profile,
+                    )
+                    .await?;
+
+                let total_time = std::time::Duration::from_secs(0); // Unknown for resumed analysis
+
+                return Ok(AnalysisResults {
+                    sample_name: sample_name.to_string(),
+                    assembly_results,
+                    classifications,
+                    abundance_profile,
+                    features,
+                    report,
+                    processing_time: total_time,
+                    config_used: self.config.clone(),
+                });
+            }
+
+            PipelineSection::QualityControl => {
+                return Err(anyhow::anyhow!(
+                    "Quality control checkpoint not yet implemented"
+                ));
+            }
+        }
+    }
+
+    /// Continue analysis from assembly phase
+    async fn continue_from_assembly(
+        &mut self,
+        assembly_results: AssemblyResults,
+        corrected_reads: Vec<CorrectedRead>,
+        sample_name: &str,
+    ) -> Result<AnalysisResults> {
+        // Continue with feature extraction and beyond
+        let features = self.extract_features(&assembly_results).await?;
+        self.continue_from_features(assembly_results, features, corrected_reads, sample_name)
+            .await
+    }
+
+    /// Continue analysis from features phase
+    async fn continue_from_features(
+        &mut self,
+        assembly_results: AssemblyResults,
+        features: FeatureCollection,
+        corrected_reads: Vec<CorrectedRead>,
+        sample_name: &str,
+    ) -> Result<AnalysisResults> {
+        let classifications = self
+            .classify_sequences(&assembly_results, &features)
+            .await?;
+        self.continue_from_classification(
+            assembly_results,
+            features,
+            classifications,
+            corrected_reads,
+            sample_name,
+        )
+        .await
+    }
+
+    /// Continue analysis from classification phase
+    async fn continue_from_classification(
+        &mut self,
+        assembly_results: AssemblyResults,
+        features: FeatureCollection,
+        classifications: Vec<TaxonomicClassification>,
+        corrected_reads: Vec<CorrectedRead>,
+        sample_name: &str,
+    ) -> Result<AnalysisResults> {
+        let abundance_profile = self.estimate_abundance(&corrected_reads).await?;
+        self.continue_from_abundance(
+            assembly_results,
+            features,
+            classifications,
+            abundance_profile,
+            sample_name,
+        )
+        .await
+    }
+
+    /// Continue analysis from abundance phase  
+    async fn continue_from_abundance(
+        &mut self,
+        assembly_results: AssemblyResults,
+        features: FeatureCollection,
+        classifications: Vec<TaxonomicClassification>,
+        abundance_profile: AbundanceProfile,
+        sample_name: &str,
+    ) -> Result<AnalysisResults> {
+        let report = self
+            .generate_report(
+                sample_name,
+                &assembly_results,
+                &classifications,
+                &abundance_profile,
+            )
+            .await?;
+
+        let total_time = std::time::Duration::from_secs(0); // Unknown for resumed analysis
+
+        Ok(AnalysisResults {
+            sample_name: sample_name.to_string(),
+            assembly_results,
+            classifications,
+            abundance_profile,
+            features,
+            report,
+            processing_time: total_time,
+            config_used: self.config.clone(),
+        })
+    }
+
+    /// List available runs for resumption
+    pub fn list_available_runs(&self) -> Result<Vec<String>> {
+        let run_dirs = self.output_manager.list_run_directories()?;
+        let run_ids: Vec<String> = run_dirs
+            .into_iter()
+            .filter_map(|dir| {
+                dir.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| name.strip_prefix("run_"))
+                    .map(|id| id.to_string())
+            })
+            .collect();
+        Ok(run_ids)
     }
 
     /// Run analysis with beautiful progress display
@@ -1425,6 +1895,74 @@ async fn main() -> Result<()> {
                         println!("Binary format not implemented for console output");
                     }
                 }
+            }
+        }
+
+        Commands::Resume {
+            run_id,
+            section,
+            sample_name,
+        } => {
+            let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
+
+            // Override config with CLI parameters
+            if let Some(threads) = cli.threads {
+                pipeline.config.performance.num_threads = threads;
+            }
+            if let Some(memory) = cli.memory {
+                pipeline.config.performance.memory_limit_gb = memory;
+            }
+            if let Some(output) = cli.output {
+                pipeline.config.general.output_dir = output;
+            }
+
+            let results = pipeline
+                .resume_from_checkpoint(&run_id, section.into(), &sample_name)
+                .await?;
+
+            println!("✅ Analysis resumed and completed successfully!");
+            println!("📊 Results:");
+            println!("   Sample: {}", results.sample_name);
+            println!("   Contigs: {}", results.assembly_results.contigs.len());
+            println!(
+                "   Total length: {} bp",
+                results.assembly_results.assembly_stats.total_length
+            );
+            println!("   N50: {} bp", results.assembly_results.assembly_stats.n50);
+            println!(
+                "   Processing time: {:.2} seconds",
+                results.processing_time.as_secs_f64()
+            );
+        }
+
+        Commands::ListRuns => {
+            let pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
+            let available_runs = pipeline.list_available_runs()?;
+
+            if available_runs.is_empty() {
+                println!("💭 No previous runs found.");
+            } else {
+                println!("🗺 Available runs for resumption:");
+                for run_id in available_runs {
+                    let run_dir = pipeline
+                        .output_manager
+                        .base_output_dir
+                        .join(format!("run_{}", run_id));
+                    if let Ok(metadata) = std::fs::metadata(&run_dir) {
+                        if let Ok(modified) = metadata.modified() {
+                            println!("   • {} (modified: {:?})", run_id, modified);
+                        } else {
+                            println!("   • {}", run_id);
+                        }
+                    } else {
+                        println!("   • {}", run_id);
+                    }
+                }
+
+                println!("🔄 To resume a run, use: meta-pipeline resume --run-id <ID> --section <SECTION> --sample-name <NAME>");
+                println!(
+                    "📌 Available sections: assembly, features, classification, abundance, report"
+                );
             }
         }
 
