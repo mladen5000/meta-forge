@@ -64,3 +64,7 @@ logs/pipeline.log.2025-08-11
 scripts/coordinate_tdd_fixes.sh
 scripts/rs_preflight.sh
 scripts/run_checks.sh
+.leann/indexes/my-project/documents.index
+.leann/indexes/my-project/documents.leann.meta.json
+.leann/indexes/my-project/documents.leann.passages.idx
+.leann/indexes/my-project/documents.leann.passages.jsonl

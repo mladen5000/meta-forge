@@ -298,7 +298,7 @@ impl AdvancedAssemblyGraphBuilder {
     fn build_chunk_graph_streaming(&self, reads: &[CorrectedRead]) -> Result<CacheOptimizedGraph> {
         let mut processor =
             crate::assembly::bioinformatics_optimizations::StreamingKmerProcessor::new(self.base_k);
-        let mut graph = CacheOptimizedGraph::new(reads.len() * 10, reads.len() * 20);
+        let mut graph = CacheOptimizedGraph::new(reads.len() * 10);
 
         for read in reads {
             processor.process_sequence(&read.corrected)?;
@@ -341,39 +341,168 @@ impl AdvancedAssemblyGraphBuilder {
         crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(graph)
     }
 
-    /// Build assembly graph using all advanced parallel techniques
+    /// Build assembly graph using all advanced parallel techniques with detailed progress tracking
     /// Build assembly graph using adaptive k-mer selection and hierarchical merging
     pub fn build_graph(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
+        use crate::utils::progress_display::MultiProgress;
+
         println!("🚀 Advanced parallel assembly from {} reads", reads.len());
 
-        // OPTIMIZATION: Use streaming memory-bounded approach for large datasets
-        if reads.len() > 100_000 {
-            return self.build_streaming_graph_optimized(reads);
+        // Initialize detailed progress tracking
+        let mut multi_progress = MultiProgress::new();
+        let init_line = multi_progress
+            .add_line("🔧 Initialization: Preparing assembly pipeline...".to_string());
+        let validation_line =
+            multi_progress.add_line("✅ Validation: Checking input data...".to_string());
+        let complexity_line =
+            multi_progress.add_line("🧮 Complexity: Analyzing sequence complexity...".to_string());
+        let chunking_line =
+            multi_progress.add_line("📦 Chunking: Creating adaptive chunks...".to_string());
+        let fragment_line =
+            multi_progress.add_line("🔨 Fragments: Building graph fragments...".to_string());
+        let optimization_line =
+            multi_progress.add_line("⚡ Optimization: Local optimizations...".to_string());
+        let merging_line =
+            multi_progress.add_line("🌳 Merging: Hierarchical fragment merging...".to_string());
+        let simplification_line =
+            multi_progress.add_line("🔧 Simplification: Graph simplification...".to_string());
+        let reduction_line =
+            multi_progress.add_line("🔍 Reduction: Transitive reduction...".to_string());
+        let scc_line =
+            multi_progress.add_line("🧬 SCCs: Strongly connected components...".to_string());
+        let contig_line = multi_progress.add_line("📋 Contigs: Generating contigs...".to_string());
+        let stats_line =
+            multi_progress.add_line("📊 Statistics: Calculating assembly stats...".to_string());
+
+        // Step 1: Initialization & validation
+        multi_progress.update_line(
+            init_line,
+            "🔧 Initialization: ✅ Pipeline ready".to_string(),
+        );
+
+        if reads.is_empty() {
+            return Err(anyhow::anyhow!("No reads provided for assembly"));
         }
 
-        // Phase 1: Adaptive chunking with complexity analysis
+        multi_progress.update_line(
+            validation_line,
+            format!("✅ Validation: {} reads validated", reads.len()),
+        );
+
+        // Step 2: Choose optimization strategy based on dataset size
+        if reads.len() > 100_000 {
+            multi_progress.update_line(
+                complexity_line,
+                "🧮 Complexity: Large dataset detected, using streaming mode".to_string(),
+            );
+            return self.build_streaming_graph_optimized_with_progress(reads, multi_progress);
+        }
+
+        // Step 3: Complexity analysis
+        multi_progress.update_line(
+            complexity_line,
+            "🧮 Complexity: Analyzing sequence patterns...".to_string(),
+        );
+        let start_time = std::time::Instant::now();
+
+        // Step 4: Adaptive chunking with complexity analysis
+        multi_progress.update_line(
+            chunking_line,
+            "📦 Chunking: Creating adaptive chunks...".to_string(),
+        );
         let chunks = self
             .thread_pool
             .install(|| self.create_adaptive_chunks(reads))?;
+        multi_progress.update_line(
+            chunking_line,
+            format!("📦 Chunking: ✅ {} chunks created", chunks.len()),
+        );
 
-        // Phase 2: Parallel fragment construction with task-based parallelism
-        let fragments = self.parallel_fragment_construction(chunks)?;
+        // Step 5: Parallel fragment construction with task-based parallelism
+        multi_progress.update_line(
+            fragment_line,
+            "🔨 Fragments: Building graph fragments in parallel...".to_string(),
+        );
+        let fragments = self.parallel_fragment_construction_with_progress(
+            chunks,
+            &mut multi_progress,
+            fragment_line,
+        )?;
 
-        // Phase 3: Hierarchical parallel merging
-        let merged = self.hierarchical_merge(fragments)?;
+        // Step 6: Local optimizations
+        multi_progress.update_line(
+            optimization_line,
+            "⚡ Optimization: ✅ Local optimizations completed".to_string(),
+        );
 
-        // Phase 4: Advanced graph simplification
-        // Convert GraphFragment to AssemblyGraph for simplification
+        // Step 7: Hierarchical parallel merging
+        multi_progress.update_line(
+            merging_line,
+            "🌳 Merging: Starting hierarchical merge...".to_string(),
+        );
+        let merged =
+            self.hierarchical_merge_with_progress(fragments, &mut multi_progress, merging_line)?;
+
+        // Step 8: Advanced graph simplification
+        multi_progress.update_line(
+            simplification_line,
+            "🔧 Simplification: Converting to assembly graph...".to_string(),
+        );
         let mut assembly_graph = AssemblyGraph::new();
         assembly_graph.graph_fragment = merged;
-        let simplified = self.advanced_simplify_graph(assembly_graph)?;
+        let simplified = self.advanced_simplify_graph_with_progress(
+            assembly_graph,
+            &mut multi_progress,
+            simplification_line,
+        )?;
 
-        // Phase 5: Parallel contig generation via SCCs
-        let mut final_graph = self.parallel_transitive_reduction(simplified)?;
-        final_graph.parallel_generate_contigs()?;
+        // Step 9: Parallel transitive reduction
+        multi_progress.update_line(
+            reduction_line,
+            "🔍 Reduction: Removing transitive edges...".to_string(),
+        );
+        let mut intermediate_graph = self.parallel_transitive_reduction_with_progress(
+            simplified,
+            &mut multi_progress,
+            reduction_line,
+        )?;
 
-        self.print_metrics();
-        Ok(final_graph)
+        // Step 10: SCC detection and contig generation
+        multi_progress.update_line(
+            scc_line,
+            "🧬 SCCs: Finding strongly connected components...".to_string(),
+        );
+        multi_progress.update_line(
+            contig_line,
+            "📋 Contigs: Generating contigs from SCCs...".to_string(),
+        );
+        intermediate_graph.parallel_generate_contigs_with_progress(
+            &mut multi_progress,
+            scc_line,
+            contig_line,
+        )?;
+
+        // Step 11: Calculate final statistics
+        multi_progress.update_line(
+            stats_line,
+            "📊 Statistics: Calculating assembly statistics...".to_string(),
+        );
+        intermediate_graph.calculate_assembly_stats();
+
+        let elapsed = start_time.elapsed();
+        multi_progress.update_line(
+            stats_line,
+            format!(
+                "📊 Statistics: ✅ Assembly completed in {:.2}s",
+                elapsed.as_secs_f64()
+            ),
+        );
+
+        // Print final metrics
+        multi_progress.finish();
+        self.print_detailed_metrics(&intermediate_graph, elapsed);
+
+        Ok(intermediate_graph)
     }
 
     /// **CRITICAL OPTIMIZATION**: Streaming graph construction for memory-bounded processing
@@ -400,11 +529,8 @@ impl AdvancedAssemblyGraphBuilder {
         };
 
         // Stream k-mer processing with bounded memory
-        let mut processor = StreamingKmerProcessor::new(
-            self.base_k,
-            config.memory_limit_gb.unwrap_or(8.0) as usize * 1024,
-        );
-        let mut optimized_graph = CacheOptimizedGraph::new(reads.len() * 10, reads.len() * 20);
+        let mut processor = StreamingKmerProcessor::new(self.base_k);
+        let mut optimized_graph = CacheOptimizedGraph::new(reads.len() * 20);
 
         // Process reads in streaming fashion
         for read in reads {
@@ -1204,6 +1330,336 @@ impl AdvancedAssemblyGraphBuilder {
             println!("     k={k}: {count} chunks");
         }
     }
+
+    /// Print detailed metrics with assembly statistics
+    fn print_detailed_metrics(&self, graph: &AssemblyGraph, elapsed: std::time::Duration) {
+        self.print_metrics();
+
+        println!("\n🎯 Assembly Performance Summary:");
+        println!("   Total assembly time: {:.2}s", elapsed.as_secs_f64());
+        println!(
+            "   Nodes in final graph: {}",
+            graph.graph_fragment.nodes.len()
+        );
+        println!(
+            "   Edges in final graph: {}",
+            graph.graph_fragment.edges.len()
+        );
+        println!("   Generated contigs: {}", graph.contigs.len());
+
+        if graph.assembly_stats.total_length > 0 {
+            println!(
+                "   Total assembly length: {} bp",
+                graph.assembly_stats.total_length
+            );
+            println!("   N50: {} bp", graph.assembly_stats.n50);
+            println!(
+                "   Largest contig: {} bp",
+                graph.assembly_stats.largest_contig
+            );
+            println!(
+                "   Mean coverage: {:.1}x",
+                graph.assembly_stats.coverage_mean
+            );
+        }
+
+        // Calculate throughput
+        let reads_per_sec = graph.graph_fragment.nodes.len() as f64 / elapsed.as_secs_f64();
+        println!("   Processing rate: {:.0} k-mers/sec", reads_per_sec);
+
+        // Memory efficiency estimate
+        let estimated_memory_mb = (graph.graph_fragment.nodes.len() * 64
+            + graph.graph_fragment.edges.len() * 32)
+            / (1024 * 1024);
+        println!("   Estimated memory usage: {} MB", estimated_memory_mb);
+    }
+
+    /// Enhanced streaming graph construction with progress tracking
+    fn build_streaming_graph_optimized_with_progress(
+        &self,
+        reads: &[CorrectedRead],
+        mut multi_progress: crate::utils::progress_display::MultiProgress,
+    ) -> Result<AssemblyGraph> {
+        use crate::assembly::bioinformatics_optimizations::StreamingKmerProcessor;
+        use crate::assembly::performance_optimizations::{CacheOptimizedGraph, OptimizationConfig};
+
+        let streaming_line = multi_progress
+            .add_line("🌊 Streaming: Initializing streaming construction...".to_string());
+        let processing_line =
+            multi_progress.add_line("⚙️ Processing: Processing reads...".to_string());
+        let optimization_line =
+            multi_progress.add_line("🚀 Optimization: Applying optimizations...".to_string());
+
+        multi_progress.update_line(
+            streaming_line,
+            "🌊 Streaming: ✅ Using streaming optimized construction".to_string(),
+        );
+        let start_time = std::time::Instant::now();
+
+        // Configure for memory efficiency
+        let config = OptimizationConfig {
+            mode: crate::assembly::performance_optimizations::PerformanceMode::Balanced,
+            max_threads: self.thread_pool.current_num_threads(),
+            chunk_size: 50_000,
+            memory_limit_gb: Some(4.0),
+            enable_simd: true,
+            enable_streaming: true,
+            batch_size: 10_000,
+        };
+
+        // Stream k-mer processing with bounded memory
+        multi_progress.update_line(
+            processing_line,
+            "⚙️ Processing: Initializing k-mer processor...".to_string(),
+        );
+        let mut processor = StreamingKmerProcessor::new(self.base_k);
+        let mut optimized_graph = CacheOptimizedGraph::new(reads.len() * 20);
+
+        // Process reads in streaming fashion with progress updates
+        let chunk_size = 1000;
+        for (i, chunk) in reads.chunks(chunk_size).enumerate() {
+            let progress_pct = (i * chunk_size * 100) / reads.len();
+            multi_progress.update_line(
+                processing_line,
+                format!(
+                    "⚙️ Processing: {}% complete ({}/{})",
+                    progress_pct,
+                    i * chunk_size,
+                    reads.len()
+                ),
+            );
+
+            for read in chunk {
+                processor.process_sequence(&read.corrected)?;
+                let frequent_kmers = processor.get_frequent_kmers(2);
+                self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
+            }
+        }
+        multi_progress.update_line(
+            processing_line,
+            "⚙️ Processing: ✅ All reads processed".to_string(),
+        );
+
+        // Apply optimized transitive reduction
+        multi_progress.update_line(
+            optimization_line,
+            "🚀 Optimization: Applying transitive reduction...".to_string(),
+        );
+        optimized_graph.transitive_reduction_parallel()?;
+
+        // Generate contigs using parallel approach
+        multi_progress.update_line(
+            optimization_line,
+            "🚀 Optimization: Generating contigs...".to_string(),
+        );
+        let contigs = crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(&optimized_graph)?;
+
+        // Convert back to AssemblyGraph format
+        let mut assembly_graph =
+            self.convert_optimized_to_assembly_graph(optimized_graph, contigs)?;
+        assembly_graph.calculate_assembly_stats();
+
+        let elapsed = start_time.elapsed();
+        multi_progress.update_line(
+            optimization_line,
+            format!(
+                "🚀 Optimization: ✅ Streaming construction completed in {:.2}s",
+                elapsed.as_secs_f64()
+            ),
+        );
+        multi_progress.finish();
+
+        Ok(assembly_graph)
+    }
+
+    /// Parallel fragment construction with progress updates
+    fn parallel_fragment_construction_with_progress(
+        &self,
+        chunks: Vec<AssemblyChunk>,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+        progress_line: usize,
+    ) -> Result<Vec<GraphFragment>> {
+        multi_progress.update_line(
+            progress_line,
+            format!(
+                "🔨 Fragments: Processing {} chunks in parallel...",
+                chunks.len()
+            ),
+        );
+
+        let chunk_count = chunks.len();
+        let fragments: Result<Vec<_>> = chunks
+            .into_par_iter()
+            .enumerate()
+            .map(|(i, chunk)| -> Result<GraphFragment> {
+                // Update progress periodically
+                if i % 10 == 0 {
+                    let progress_pct = (i * 100) / chunk_count.max(1);
+                    // Note: Can't update multi_progress from parallel context safely
+                }
+
+                let mut fragment = chunk.graph_fragment.clone();
+                self.parallel_local_optimization(&mut fragment)?;
+                Ok(fragment)
+            })
+            .collect();
+
+        let fragments = fragments?;
+        multi_progress.update_line(
+            progress_line,
+            format!("🔨 Fragments: ✅ {} fragments generated", fragments.len()),
+        );
+
+        // Update metrics
+        self.metrics
+            .lock()
+            .unwrap()
+            .total_parallel_chunks
+            .store(fragments.len(), Ordering::Relaxed);
+
+        Ok(fragments)
+    }
+
+    /// Hierarchical merge with progress tracking
+    fn hierarchical_merge_with_progress(
+        &self,
+        mut fragments: Vec<GraphFragment>,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+        progress_line: usize,
+    ) -> Result<GraphFragment> {
+        if fragments.is_empty() {
+            return Err(anyhow!("Cannot merge empty fragment list"));
+        }
+        if fragments.len() == 1 {
+            multi_progress.update_line(
+                progress_line,
+                "🌳 Merging: ✅ Single fragment, no merge needed".to_string(),
+            );
+            return Ok(fragments.into_iter().next().unwrap());
+        }
+
+        multi_progress.update_line(
+            progress_line,
+            format!(
+                "🌳 Merging: Starting hierarchical merge of {} fragments",
+                fragments.len()
+            ),
+        );
+        let mut depth = 0;
+
+        while fragments.len() > 1 {
+            depth += 1;
+            multi_progress.update_line(
+                progress_line,
+                format!(
+                    "🌳 Merging: Level {} - processing {} fragments",
+                    depth,
+                    fragments.len()
+                ),
+            );
+
+            // Parallel pairwise merging
+            let next_level: Result<Vec<_>> = fragments
+                .par_chunks(self.merge_threshold)
+                .map(|chunk| -> Result<GraphFragment> {
+                    let mut merged = chunk[0].clone();
+                    for fragment in &chunk[1..] {
+                        merged.merge_with(fragment.clone())?;
+                    }
+                    Ok(merged)
+                })
+                .collect();
+
+            fragments = next_level?;
+        }
+
+        // Update metrics
+        self.metrics
+            .lock()
+            .unwrap()
+            .parallel_merge_depth
+            .store(depth, Ordering::Relaxed);
+
+        multi_progress.update_line(
+            progress_line,
+            format!(
+                "🌳 Merging: ✅ Hierarchical merge completed in {} levels",
+                depth
+            ),
+        );
+        Ok(fragments.into_iter().next().unwrap())
+    }
+
+    /// Advanced graph simplification with progress tracking
+    fn advanced_simplify_graph_with_progress(
+        &self,
+        mut graph: AssemblyGraph,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+        progress_line: usize,
+    ) -> Result<AssemblyGraph> {
+        multi_progress.update_line(
+            progress_line,
+            "🔧 Simplification: Starting advanced parallel simplification...".to_string(),
+        );
+
+        // Multiple parallel simplification passes
+        for pass in 1..=3 {
+            multi_progress.update_line(
+                progress_line,
+                format!(
+                    "🔧 Simplification: Pass {}/3 - removing tips and bubbles...",
+                    pass
+                ),
+            );
+
+            // Parallel tip removal
+            self.parallel_remove_tips(&mut graph)?;
+
+            // Parallel bubble popping
+            self.parallel_pop_bubbles(&mut graph)?;
+
+            // Parallel low-confidence edge removal
+            self.parallel_remove_low_confidence_edges(&mut graph)?;
+
+            // Early termination if no changes
+            if graph.graph_fragment.edges.is_empty() {
+                break;
+            }
+        }
+
+        multi_progress.update_line(
+            progress_line,
+            "🔧 Simplification: ✅ Graph simplification completed".to_string(),
+        );
+        Ok(graph)
+    }
+
+    /// Parallel transitive reduction with progress tracking
+    fn parallel_transitive_reduction_with_progress(
+        &self,
+        graph: AssemblyGraph,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+        progress_line: usize,
+    ) -> Result<AssemblyGraph> {
+        multi_progress.update_line(
+            progress_line,
+            "🔍 Reduction: Starting optimized parallel transitive reduction...".to_string(),
+        );
+
+        let result = self.parallel_transitive_reduction(graph)?;
+
+        let metrics = self.metrics.lock().unwrap();
+        let removed_count = metrics.transitive_edges_removed.load(Ordering::Relaxed);
+        multi_progress.update_line(
+            progress_line,
+            format!(
+                "🔍 Reduction: ✅ Removed {} transitive edges",
+                removed_count
+            ),
+        );
+
+        Ok(result)
+    }
 }
 
 /// Enhanced Assembly Graph with parallel contig generation
@@ -1264,6 +1720,101 @@ impl AssemblyGraph {
             "✅ Generated {} contigs in {:.2}s",
             self.contigs.len(),
             elapsed.as_secs_f64()
+        );
+
+        Ok(())
+    }
+
+    /// Parallel contig generation with progress tracking
+    pub fn parallel_generate_contigs_with_progress(
+        &mut self,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+        scc_line: usize,
+        contig_line: usize,
+    ) -> Result<()> {
+        let start_time = std::time::Instant::now();
+
+        if self.graph_fragment.nodes.is_empty() {
+            multi_progress.update_line(
+                scc_line,
+                "🧬 SCCs: Empty graph - no SCCs to find".to_string(),
+            );
+            multi_progress.update_line(
+                contig_line,
+                "📋 Contigs: ✅ No contigs to generate".to_string(),
+            );
+            return Ok(());
+        }
+
+        // Rebuild petgraph for SCC analysis
+        multi_progress.update_line(
+            scc_line,
+            "🧬 SCCs: Building graph for SCC analysis...".to_string(),
+        );
+        self.rebuild_petgraph()?;
+
+        // Find strongly connected components
+        multi_progress.update_line(
+            scc_line,
+            "🧬 SCCs: Finding strongly connected components...".to_string(),
+        );
+        let sccs = tarjan_scc(&self.petgraph);
+        multi_progress.update_line(
+            scc_line,
+            format!(
+                "🧬 SCCs: ✅ Found {} strongly connected components",
+                sccs.len()
+            ),
+        );
+
+        if sccs.is_empty() {
+            multi_progress.update_line(
+                contig_line,
+                "📋 Contigs: ✅ No contigs to generate from empty SCCs".to_string(),
+            );
+            return Ok(());
+        }
+
+        // Process SCCs in parallel with load balancing
+        multi_progress.update_line(
+            contig_line,
+            format!("📋 Contigs: Processing {} SCCs in parallel...", sccs.len()),
+        );
+        let contig_results: Result<Vec<Vec<Contig>>> = sccs
+            .into_par_iter()
+            .enumerate()
+            .map(|(scc_id, component)| -> Result<Vec<Contig>> {
+                self.process_scc_parallel(scc_id, &component)
+            })
+            .collect();
+
+        // Flatten and sort results
+        multi_progress.update_line(
+            contig_line,
+            "📋 Contigs: Collecting and sorting contigs...".to_string(),
+        );
+        let mut all_contigs = Vec::new();
+        for contigs in contig_results? {
+            all_contigs.extend(contigs);
+        }
+
+        // Sort by length (descending) and reassign IDs
+        all_contigs.sort_by(|a, b| b.length.cmp(&a.length));
+        for (i, contig) in all_contigs.iter_mut().enumerate() {
+            contig.id = i;
+        }
+
+        self.contigs = all_contigs;
+        self.calculate_assembly_stats();
+
+        let elapsed = start_time.elapsed();
+        multi_progress.update_line(
+            contig_line,
+            format!(
+                "📋 Contigs: ✅ Generated {} contigs in {:.2}s",
+                self.contigs.len(),
+                elapsed.as_secs_f64()
+            ),
         );
 
         Ok(())

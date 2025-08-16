@@ -5,17 +5,21 @@ pub mod paired_reads;
 pub use data_structures::{
     // Processing types
     AssemblyChunk,
+
     // Assembly-specific types
     AssemblyGraph,
     AssemblyStats,
     BaseCorrection,
+
     // Graph analysis types
     BubbleStructure,
     BubbleType,
+
     // Core k-mer and graph structures
     CanonicalKmer,
     Contig,
     ContigType,
+
     // Read and correction types
     CorrectedRead,
     CorrectionMetadata,
@@ -30,7 +34,6 @@ pub use data_structures::{
 
     GraphEdge,
     GraphFragment,
-
     GraphNode,
     GraphUpdate,
 
