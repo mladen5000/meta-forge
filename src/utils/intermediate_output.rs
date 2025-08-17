@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::info;
 
 /// Intermediate output manager for pipeline sections with run-specific directories
 #[derive(Debug, Clone)]

@@ -20,7 +20,6 @@ use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::io::repeat;
 use std::sync::Arc;
 
 /* ------------------------------------------------------------------------- */

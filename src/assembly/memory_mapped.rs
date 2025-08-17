@@ -4,7 +4,6 @@ use std::fs::{File, OpenOptions};
 use std::mem::size_of;
 use std::path::Path;
 use std::ptr;
-use std::sync::Arc; // kept if you need Arc elsewhere
 
 use crate::core::data_structures::*; // AssemblyGraph, GraphNode, GraphEdge, CanonicalKmer, etc.
 

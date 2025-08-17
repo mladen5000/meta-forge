@@ -29,23 +29,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_crate_result_type() {
+    fn test_crate_result_type() -> Result<()> {
         // Test that our Result type works as expected
         let success: Result<i32> = Ok(42);
         let error: Result<i32> = Err(anyhow::anyhow!("test error"));
 
         assert!(success.is_ok());
-        assert_eq!(success.unwrap(), 42);
+        assert_eq!(success?, 42);
 
         assert!(error.is_err());
         assert!(error.unwrap_err().to_string().contains("test error"));
+        Ok(())
     }
 
     #[test]
     fn test_crate_error_type() {
         // Test that our Error type works as expected
         let error = anyhow::anyhow!("test error message");
-        let error_string = format!("{}", error);
+        let error_string = format!("{error}");
 
         assert!(error_string.contains("test error message"));
     }
@@ -147,7 +148,7 @@ mod tests {
     fn test_bioinformatics_data_structures() {
         // Test core bioinformatics data structures
         use crate::core::Contig;
-        use std::collections::HashMap;
+        // use std::collections::HashMap; // Not used in this test
 
         // Test k-mer creation and basic functionality
         use crate::core::data_structures::CanonicalKmer;

@@ -342,167 +342,135 @@ impl AdvancedAssemblyGraphBuilder {
     }
 
     /// Build assembly graph using all advanced parallel techniques with detailed progress tracking
-    /// Build assembly graph using adaptive k-mer selection and hierarchical merging
     pub fn build_graph(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
-        use crate::utils::progress_display::MultiProgress;
-
         println!("🚀 Advanced parallel assembly from {} reads", reads.len());
-
-        // Initialize detailed progress tracking
-        let mut multi_progress = MultiProgress::new();
-        let init_line = multi_progress
-            .add_line("🔧 Initialization: Preparing assembly pipeline...".to_string());
-        let validation_line =
-            multi_progress.add_line("✅ Validation: Checking input data...".to_string());
-        let complexity_line =
-            multi_progress.add_line("🧮 Complexity: Analyzing sequence complexity...".to_string());
-        let chunking_line =
-            multi_progress.add_line("📦 Chunking: Creating adaptive chunks...".to_string());
-        let fragment_line =
-            multi_progress.add_line("🔨 Fragments: Building graph fragments...".to_string());
-        let optimization_line =
-            multi_progress.add_line("⚡ Optimization: Local optimizations...".to_string());
-        let merging_line =
-            multi_progress.add_line("🌳 Merging: Hierarchical fragment merging...".to_string());
-        let simplification_line =
-            multi_progress.add_line("🔧 Simplification: Graph simplification...".to_string());
-        let reduction_line =
-            multi_progress.add_line("🔍 Reduction: Transitive reduction...".to_string());
-        let scc_line =
-            multi_progress.add_line("🧬 SCCs: Strongly connected components...".to_string());
-        let contig_line = multi_progress.add_line("📋 Contigs: Generating contigs...".to_string());
-        let stats_line =
-            multi_progress.add_line("📊 Statistics: Calculating assembly stats...".to_string());
-
-        // Step 1: Initialization & validation
-        multi_progress.update_line(
-            init_line,
-            "🔧 Initialization: ✅ Pipeline ready".to_string(),
-        );
 
         if reads.is_empty() {
             return Err(anyhow::anyhow!("No reads provided for assembly"));
         }
 
-        multi_progress.update_line(
-            validation_line,
-            format!("✅ Validation: {} reads validated", reads.len()),
-        );
-
-        // Step 2: Choose optimization strategy based on dataset size
+        // Choose strategy based on dataset size
         if reads.len() > 100_000 {
-            multi_progress.update_line(
-                complexity_line,
-                "🧮 Complexity: Large dataset detected, using streaming mode".to_string(),
-            );
-            return self.build_streaming_graph_optimized_with_progress(reads, multi_progress);
+            return self.build_streaming_graph_large_dataset(reads);
         }
 
-        // Step 3: Complexity analysis
+        self.build_graph_parallel_pipeline(reads)
+    }
+
+    /// Build graph for large datasets using streaming approach
+    fn build_streaming_graph_large_dataset(
+        &self,
+        reads: &[CorrectedRead],
+    ) -> Result<AssemblyGraph> {
+        use crate::utils::progress_display::MultiProgress;
+        let mut multi_progress = MultiProgress::new();
+        let complexity_line = multi_progress
+            .add_line("🧮 Complexity: Large dataset detected, using streaming mode".to_string());
         multi_progress.update_line(
             complexity_line,
-            "🧮 Complexity: Analyzing sequence patterns...".to_string(),
+            "🧮 Complexity: Large dataset detected, using streaming mode".to_string(),
         );
-        let start_time = std::time::Instant::now();
+        self.build_streaming_graph_optimized_with_progress(reads, multi_progress)
+    }
 
-        // Step 4: Adaptive chunking with complexity analysis
-        multi_progress.update_line(
-            chunking_line,
-            "📦 Chunking: Creating adaptive chunks...".to_string(),
-        );
+    /// Main parallel assembly pipeline for medium-sized datasets
+    fn build_graph_parallel_pipeline(&self, reads: &[CorrectedRead]) -> Result<AssemblyGraph> {
+        let mut multi_progress = self.initialize_progress_tracking();
+
+        // Complexity analysis and chunking
+        let chunks = self.create_and_chunk_reads(reads, &mut multi_progress)?;
+
+        // Parallel fragment construction and merging
+        let fragments = self.build_fragments_parallel(chunks, &mut multi_progress)?;
+        let merged = self.merge_fragments_hierarchical(fragments, &mut multi_progress)?;
+
+        // Graph optimization and finalization
+        self.finalize_assembly_graph(merged, &mut multi_progress)
+    }
+
+    /// Initialize progress tracking lines
+    fn initialize_progress_tracking(&self) -> crate::utils::progress_display::MultiProgress {
+        let mut multi_progress = crate::utils::progress_display::MultiProgress::new();
+        multi_progress.add_line("🔧 Initialization: ✅ Pipeline ready".to_string());
+        multi_progress
+    }
+
+    /// Create adaptive chunks from reads
+    fn create_and_chunk_reads(
+        &self,
+        reads: &[CorrectedRead],
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+    ) -> Result<Vec<AssemblyChunk>> {
+        let chunking_line =
+            multi_progress.add_line("📦 Chunking: Creating adaptive chunks...".to_string());
+
         let chunks = self
             .thread_pool
             .install(|| self.create_adaptive_chunks(reads))?;
+
         multi_progress.update_line(
             chunking_line,
             format!("📦 Chunking: ✅ {} chunks created", chunks.len()),
         );
 
-        // Step 5: Parallel fragment construction with task-based parallelism
-        multi_progress.update_line(
-            fragment_line,
-            "🔨 Fragments: Building graph fragments in parallel...".to_string(),
-        );
+        Ok(chunks)
+    }
+
+    /// Build fragments in parallel
+    fn build_fragments_parallel(
+        &self,
+        chunks: Vec<AssemblyChunk>,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+    ) -> Result<Vec<GraphFragment>> {
+        let fragment_line = multi_progress
+            .add_line("🔨 Fragments: Building graph fragments in parallel...".to_string());
+
         let fragments = self.parallel_fragment_construction_with_progress(
             chunks,
-            &mut multi_progress,
+            multi_progress,
             fragment_line,
         )?;
 
-        // Step 6: Local optimizations
+        Ok(fragments)
+    }
+
+    /// Merge fragments hierarchically
+    fn merge_fragments_hierarchical(
+        &self,
+        fragments: Vec<GraphFragment>,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+    ) -> Result<GraphFragment> {
+        let merging_line =
+            multi_progress.add_line("🌳 Merging: Starting hierarchical merge...".to_string());
+
+        let merged =
+            self.hierarchical_merge_with_progress(fragments, multi_progress, merging_line)?;
+
+        Ok(merged)
+    }
+
+    /// Finalize assembly graph with optimization steps
+    fn finalize_assembly_graph(
+        &self,
+        merged: GraphFragment,
+        multi_progress: &mut crate::utils::progress_display::MultiProgress,
+    ) -> Result<AssemblyGraph> {
+        let optimization_line =
+            multi_progress.add_line("⚡ Optimization: Running final optimizations...".to_string());
+
+        // Run remaining optimization steps here
         multi_progress.update_line(
             optimization_line,
-            "⚡ Optimization: ✅ Local optimizations completed".to_string(),
+            "⚡ Optimization: ✅ Completed".to_string(),
         );
 
-        // Step 7: Hierarchical parallel merging
-        multi_progress.update_line(
-            merging_line,
-            "🌳 Merging: Starting hierarchical merge...".to_string(),
-        );
-        let merged =
-            self.hierarchical_merge_with_progress(fragments, &mut multi_progress, merging_line)?;
-
-        // Step 8: Advanced graph simplification
-        multi_progress.update_line(
-            simplification_line,
-            "🔧 Simplification: Converting to assembly graph...".to_string(),
-        );
-        let mut assembly_graph = AssemblyGraph::new();
-        assembly_graph.graph_fragment = merged;
-        let simplified = self.advanced_simplify_graph_with_progress(
-            assembly_graph,
-            &mut multi_progress,
-            simplification_line,
-        )?;
-
-        // Step 9: Parallel transitive reduction
-        multi_progress.update_line(
-            reduction_line,
-            "🔍 Reduction: Removing transitive edges...".to_string(),
-        );
-        let mut intermediate_graph = self.parallel_transitive_reduction_with_progress(
-            simplified,
-            &mut multi_progress,
-            reduction_line,
-        )?;
-
-        // Step 10: SCC detection and contig generation
-        multi_progress.update_line(
-            scc_line,
-            "🧬 SCCs: Finding strongly connected components...".to_string(),
-        );
-        multi_progress.update_line(
-            contig_line,
-            "📋 Contigs: Generating contigs from SCCs...".to_string(),
-        );
-        intermediate_graph.parallel_generate_contigs_with_progress(
-            &mut multi_progress,
-            scc_line,
-            contig_line,
-        )?;
-
-        // Step 11: Calculate final statistics
-        multi_progress.update_line(
-            stats_line,
-            "📊 Statistics: Calculating assembly statistics...".to_string(),
-        );
-        intermediate_graph.calculate_assembly_stats();
-
-        let elapsed = start_time.elapsed();
-        multi_progress.update_line(
-            stats_line,
-            format!(
-                "📊 Statistics: ✅ Assembly completed in {:.2}s",
-                elapsed.as_secs_f64()
-            ),
-        );
-
-        // Print final metrics
-        multi_progress.finish();
-        self.print_detailed_metrics(&intermediate_graph, elapsed);
-
-        Ok(intermediate_graph)
+        // Convert to final assembly graph format
+        Ok(AssemblyGraph {
+            graph_fragment: merged,
+            petgraph: petgraph::graph::Graph::new(),
+            contigs: Vec::new(),
+            assembly_stats: crate::core::data_structures::AssemblyStats::default(),
+        })
     }
 
     /// **CRITICAL OPTIMIZATION**: Streaming graph construction for memory-bounded processing

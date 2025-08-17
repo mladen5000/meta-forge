@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /* ========================================================================= */
 /*                      SIMD-OPTIMIZED NUCLEOTIDE OPERATIONS               */
@@ -1220,7 +1220,7 @@ mod tests {
     #[test]
     #[ignore] // Run with: cargo test --release -- --ignored benchmark_all_optimization_modes
     fn benchmark_all_optimization_modes() {
-        use crate::core::data_structures::CorrectedRead;
+        // use crate::core::data_structures::CorrectedRead; // Not used in this test
         use std::time::Instant;
 
         println!("\n🚀 COMPREHENSIVE OPTIMIZATION BENCHMARK");

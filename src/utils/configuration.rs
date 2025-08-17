@@ -249,6 +249,19 @@ pub struct FileHandlingConfig {
     pub compression_level: i32,
 }
 
+/// Centralized pipeline configuration to replace duplicates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineConfig {
+    pub k_range: (usize, usize),      // (min_k, max_k) for adaptive assembly
+    pub memory_limit_gb: usize,       // Total memory budget
+    pub use_gpu: bool,                // GPU acceleration if available
+    pub quality_threshold: f64,       // Error correction threshold
+    pub taxonomy_db_path: String,     // Path to taxonomy database
+    pub num_threads: usize,           // Parallel processing threads
+    pub enable_compression: bool,     // Compress intermediate data
+    pub streaming_buffer_size: usize, // Buffer size for streaming
+}
+
 /// Custom error types for better error handling
 #[derive(Error, Debug)]
 pub enum PipelineError {

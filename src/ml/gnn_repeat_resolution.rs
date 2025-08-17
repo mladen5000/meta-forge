@@ -53,13 +53,14 @@ pub struct EdgeClassifier {
     bias: Vec<f32>,
 }
 
+// Use centralized TrainingConfig for learning parameters
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GNNConfig {
     node_feature_dim: usize,
     hidden_dim: usize,
     num_layers: usize,
     dropout_rate: f32,
-    learning_rate: f32,
+    // learning_rate moved to TrainingConfig from utils::configuration
 }
 
 /// Node feature extraction from minimiser graph
@@ -103,7 +104,7 @@ impl RepeatResolverGNN {
             hidden_dim: 128,
             num_layers: 3,
             dropout_rate: 0.1,
-            learning_rate: 0.001,
+            // learning_rate moved to TrainingConfig
         };
 
         let model = GraphNeuralNetwork::new(config.clone());

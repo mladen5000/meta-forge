@@ -59,17 +59,9 @@ pub struct EnhancedMetaPipeline {
     channels: ChannelSystem,
 }
 
-#[derive(Clone)]
-pub struct PipelineConfig {
-    pub k_range: (usize, usize),      // (min_k, max_k) for adaptive assembly
-    pub memory_limit_gb: usize,       // Total memory budget
-    pub use_gpu: bool,                // GPU acceleration if available
-    pub quality_threshold: f64,       // Error correction threshold
-    pub taxonomy_db_path: String,     // Path to taxonomy database
-    pub num_threads: usize,           // Parallel processing threads
-    pub enable_compression: bool,     // Compress intermediate data
-    pub streaming_buffer_size: usize, // Buffer size for streaming
-}
+// Use centralized PipelineConfig from utils::configuration
+// This removes duplicate configuration structures
+pub use crate::utils::configuration::PipelineConfig;
 
 /// Channel system for efficient streaming between pipeline stages
 struct ChannelSystem {

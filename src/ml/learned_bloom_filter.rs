@@ -2,6 +2,17 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+// Local training config for learned bloom filter specific parameters
+#[derive(Clone, Serialize, Deserialize)]
+struct BloomTrainingConfig {
+    learning_rate: f32,
+    batch_size: usize,
+    epochs: usize,
+    embedding_dim: usize,
+    hidden_dim: usize,
+    target_fpr: f64,
+}
+
 /// Learned Bloom filter combining neural predictor with backup Bloom filter
 pub struct LearnedBloomFilter {
     /// Neural network predictor (lightweight MLP)
@@ -11,7 +22,7 @@ pub struct LearnedBloomFilter {
     /// K-mer embedding cache
     embedding_cache: HashMap<u64, Vec<f32>>,
     /// Training parameters
-    training_config: TrainingConfig,
+    training_config: BloomTrainingConfig,
     /// Performance metrics
     metrics: FilterMetrics,
 }
@@ -39,15 +50,7 @@ pub struct TraditionalBloom {
     size: usize,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct TrainingConfig {
-    learning_rate: f32,
-    batch_size: usize,
-    epochs: usize,
-    embedding_dim: usize,
-    hidden_dim: usize,
-    target_fpr: f64, // Target false positive rate
-}
+// Removed duplicate TrainingConfig - use the centralized one from utils::configuration
 
 #[derive(Default)]
 pub struct FilterMetrics {
@@ -72,7 +75,7 @@ impl LearnedBloomFilter {
         embedding_dim: usize,
         hidden_dim: usize,
     ) -> Self {
-        let config = TrainingConfig {
+        let config = BloomTrainingConfig {
             learning_rate: 0.001,
             batch_size: 64,
             epochs: 100,
@@ -296,7 +299,7 @@ struct SerializableModel {
     backup_bloom_bits: Vec<bool>,
     backup_bloom_size: usize,
     backup_bloom_hash_count: usize,
-    training_config: TrainingConfig,
+    training_config: BloomTrainingConfig,
 }
 
 #[derive(Debug)]
