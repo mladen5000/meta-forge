@@ -143,13 +143,47 @@ pub struct CorrectionStats {
     pub correction_types: HashMap<String, usize>,
 }
 
+/// Quality metrics for a read pair
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityMetrics {
+    pub forward_quality: f64,
+    pub reverse_quality: f64,
+    pub combined_quality: f64,
+    pub min_quality: f64,
+    pub max_quality: f64,
+    pub quality_ratio: f64,
+    pub mean_quality_r1: f64,
+    pub mean_quality_r2: f64,
+    pub quality_distribution: HashMap<u8, usize>,
+}
+
+/// Result of adapter trimming operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterTrimmingResult {
+    pub forward_trimmed: bool,
+    pub reverse_trimmed: bool,
+    pub forward_trimmed_length: usize,
+    pub reverse_trimmed_length: usize,
+    pub final_forward_length: usize,
+    pub final_reverse_length: usize,
+}
+
+impl AdapterTrimmingResult {
+    pub fn is_ok(&self) -> bool {
+        // Consider trimming successful if:
+        // 1. Both reads have reasonable length after processing
+        // 2. If no adapters were found, that's also success (clean reads)
+        self.final_forward_length >= 10 && self.final_reverse_length >= 10
+    }
+}
+
 impl ReadPair {
     /// Create a new read pair from individual reads
     pub fn new(forward: PairedRead, reverse: PairedRead) -> Result<Self> {
         // Validate that reads are properly paired
         if forward.pair_id != reverse.pair_id {
             return Err(anyhow!(
-                "Pair ID mismatch: {} vs {}",
+                "pair_id mismatch: {} vs {}",
                 forward.pair_id,
                 reverse.pair_id
             ));
@@ -276,6 +310,173 @@ impl ReadPair {
         }
 
         Ok(kmers)
+    }
+
+    /// Calculate quality metrics for the read pair
+    pub fn calculate_quality_metrics(&self) -> QualityMetrics {
+        let forward_avg = self.forward.read_info.avg_quality;
+        let reverse_avg = self.reverse.read_info.avg_quality;
+
+        // Calculate quality distribution
+        let mut quality_distribution = HashMap::new();
+        for &q in &self.forward.quality_scores {
+            *quality_distribution.entry(q).or_insert(0) += 1;
+        }
+        for &q in &self.reverse.quality_scores {
+            *quality_distribution.entry(q).or_insert(0) += 1;
+        }
+
+        QualityMetrics {
+            forward_quality: forward_avg,
+            reverse_quality: reverse_avg,
+            combined_quality: (forward_avg + reverse_avg) / 2.0,
+            min_quality: forward_avg.min(reverse_avg),
+            max_quality: forward_avg.max(reverse_avg),
+            quality_ratio: forward_avg / reverse_avg.max(1.0),
+            mean_quality_r1: forward_avg,
+            mean_quality_r2: reverse_avg,
+            quality_distribution,
+        }
+    }
+
+    /// Trim adapter sequences from both reads
+    pub fn trim_adapters(&mut self, adapters: &[&str]) -> AdapterTrimmingResult {
+        let mut trimmed_forward = false;
+        let mut trimmed_reverse = false;
+        let mut forward_trimmed_length = 0;
+        let mut reverse_trimmed_length = 0;
+
+        // Trim adapters from forward read
+        for adapter in adapters {
+            // First try exact match
+            if let Some(pos) = self.forward.corrected.find(adapter) {
+                self.forward.corrected = self.forward.corrected[..pos].to_string();
+                self.forward.quality_scores.truncate(pos);
+                self.forward.read_info.length = pos;
+                trimmed_forward = true;
+                forward_trimmed_length = self.forward.original.len() - pos;
+                break;
+            }
+
+            // Then try partial matches (minimum 7 bases for specificity)
+            for suffix_len in (7..adapter.len()).rev() {
+                let suffix = &adapter[..suffix_len];
+                if let Some(pos) = self.forward.corrected.find(suffix) {
+                    // Only trim if at end of read to avoid false positives
+                    if pos + suffix.len() == self.forward.corrected.len() {
+                        self.forward.corrected = self.forward.corrected[..pos].to_string();
+                        self.forward.quality_scores.truncate(pos);
+                        self.forward.read_info.length = pos;
+                        trimmed_forward = true;
+                        forward_trimmed_length = self.forward.original.len() - pos;
+                        break;
+                    }
+                }
+            }
+            if trimmed_forward {
+                break;
+            }
+        }
+
+        // Trim adapters from reverse read
+        for adapter in adapters {
+            // First try exact match
+            if let Some(pos) = self.reverse.corrected.find(adapter) {
+                self.reverse.corrected = self.reverse.corrected[..pos].to_string();
+                self.reverse.quality_scores.truncate(pos);
+                self.reverse.read_info.length = pos;
+                trimmed_reverse = true;
+                reverse_trimmed_length = self.reverse.original.len() - pos;
+                break;
+            }
+
+            // Then try partial matches (minimum 7 bases for specificity)
+            for suffix_len in (7..adapter.len()).rev() {
+                let suffix = &adapter[..suffix_len];
+                if let Some(pos) = self.reverse.corrected.find(suffix) {
+                    // Only trim if at end of read to avoid false positives
+                    if pos + suffix.len() == self.reverse.corrected.len() {
+                        self.reverse.corrected = self.reverse.corrected[..pos].to_string();
+                        self.reverse.quality_scores.truncate(pos);
+                        self.reverse.read_info.length = pos;
+                        trimmed_reverse = true;
+                        reverse_trimmed_length = self.reverse.original.len() - pos;
+                        break;
+                    }
+                }
+            }
+            if trimmed_reverse {
+                break;
+            }
+        }
+
+        AdapterTrimmingResult {
+            forward_trimmed: trimmed_forward,
+            reverse_trimmed: trimmed_reverse,
+            forward_trimmed_length,
+            reverse_trimmed_length,
+            final_forward_length: self.forward.read_info.length,
+            final_reverse_length: self.reverse.read_info.length,
+        }
+    }
+
+    /// Apply quality filters to the read pair
+    pub fn apply_quality_filters(&mut self) {
+        // Apply quality filtering to forward read
+        let min_quality = 20;
+        let mut forward_filtered = String::new();
+        let mut forward_quality_filtered = Vec::new();
+
+        for (i, base) in self.forward.corrected.char_indices() {
+            if i < self.forward.quality_scores.len()
+                && self.forward.quality_scores[i] >= min_quality
+            {
+                forward_filtered.push(base);
+                forward_quality_filtered.push(self.forward.quality_scores[i]);
+            }
+        }
+
+        self.forward.corrected = forward_filtered;
+        self.forward.quality_scores = forward_quality_filtered;
+        self.forward.read_info.length = self.forward.corrected.len();
+
+        // Apply quality filtering to reverse read
+        let mut reverse_filtered = String::new();
+        let mut reverse_quality_filtered = Vec::new();
+
+        for (i, base) in self.reverse.corrected.char_indices() {
+            if i < self.reverse.quality_scores.len()
+                && self.reverse.quality_scores[i] >= min_quality
+            {
+                reverse_filtered.push(base);
+                reverse_quality_filtered.push(self.reverse.quality_scores[i]);
+            }
+        }
+
+        self.reverse.corrected = reverse_filtered;
+        self.reverse.quality_scores = reverse_quality_filtered;
+        self.reverse.read_info.length = self.reverse.corrected.len();
+
+        // Update average quality scores
+        if !self.forward.quality_scores.is_empty() {
+            self.forward.read_info.avg_quality = self
+                .forward
+                .quality_scores
+                .iter()
+                .map(|&q| q as f64)
+                .sum::<f64>()
+                / self.forward.quality_scores.len() as f64;
+        }
+
+        if !self.reverse.quality_scores.is_empty() {
+            self.reverse.read_info.avg_quality = self
+                .reverse
+                .quality_scores
+                .iter()
+                .map(|&q| q as f64)
+                .sum::<f64>()
+                / self.reverse.quality_scores.len() as f64;
+        }
     }
 }
 
