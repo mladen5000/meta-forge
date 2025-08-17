@@ -1,7 +1,6 @@
 //! Property-based tests for genomic data structures
 //! Tests invariants and properties that should hold across all valid inputs
 
-use anyhow::Result;
 use meta_forge::assembly::adaptive_k::*;
 use meta_forge::core::data_structures::*;
 use std::collections::{HashMap, HashSet};

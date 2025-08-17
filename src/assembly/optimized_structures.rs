@@ -492,7 +492,7 @@ impl UnifiedAssemblyGraph {
 
         // Add new node
         let index = self.nodes.len() as u32;
-        if index >= u32::MAX {
+        if index == u32::MAX {
             return Err(anyhow!("Graph too large: exceeds 4B nodes"));
         }
 

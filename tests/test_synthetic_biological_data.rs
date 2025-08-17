@@ -3,7 +3,6 @@
 
 use meta_forge::assembly::adaptive_k::*;
 use meta_forge::core::data_structures::*;
-use std::collections::HashMap;
 
 #[cfg(test)]
 pub mod synthetic_genome_tests {
@@ -59,7 +58,7 @@ pub mod synthetic_genome_tests {
             };
 
             let end_pos = std::cmp::min(start_pos + read_length, genome.len());
-            let mut read_sequence = genome[start_pos..end_pos].to_string();
+            let read_sequence = genome[start_pos..end_pos].to_string();
 
             // Introduce sequencing errors
             let mut original_sequence = read_sequence.clone();

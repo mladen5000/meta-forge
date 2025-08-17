@@ -13,7 +13,6 @@ use meta_forge::CanonicalKmer;
 use meta_forge::GraphEdge;
 use meta_forge::GraphNode;
 use meta_forge::NodeType;
-use std::collections::HashSet;
 
 #[cfg(test)]
 pub mod assembly_graph_builder_tests {

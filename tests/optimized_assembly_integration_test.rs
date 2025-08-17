@@ -3,6 +3,7 @@
 use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
 // Note: Direct SIMD and memory-mapped tests moved to separate files
 // to avoid compilation issues on different platforms
+use meta_forge::assembly::memory_mapped::MappedGraph;
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -79,8 +80,8 @@ mod optimized_assembly_tests {
         println!("Memory-mapped operations time: {:?}", operation_time);
 
         // Verify data integrity
-        assert_eq!(graph.node_count(), 100);
-        assert_eq!(graph.edge_count(), 99);
+        assert_eq!(graph.node_count, 100);
+        assert_eq!(graph.edge_count, 99);
 
         // Test lookup performance
         let lookup_start = Instant::now();
@@ -269,8 +270,7 @@ mod optimized_assembly_tests {
 
         // Verify integrity
         assert_eq!(
-            mapped_graph.node_count() as u64,
-            node_id,
+            mapped_graph.node_count as u64, node_id,
             "All nodes should be stored"
         );
 

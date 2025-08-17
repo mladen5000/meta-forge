@@ -99,8 +99,8 @@ pub struct MappedGraph {
     node_mmap: MmapMut,
     edge_mmap: MmapMut,
     index_mmap: MmapMut,
-    node_count: usize,
-    edge_count: usize,
+    pub node_count: usize,
+    pub edge_count: usize,
     file_paths: MappedFilePaths,
 }
 
