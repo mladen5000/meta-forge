@@ -14,8 +14,16 @@ use crate::assembly::adaptive_k::AssemblyGraphBuilder;
 use crate::core::data_structures::*;
 use crate::database::integration::*;
 use crate::features::extraction::*;
-use crate::pipeline::integrated::AbundanceProfile;
+// Removed import from deleted integrated module
 use crate::utils::configuration::*;
+
+/// Abundance profile for k-mer frequency analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AbundanceProfile {
+    pub unique_kmers: u64,
+    pub abundant_kmers: std::collections::HashMap<u64, f64>,
+    pub total_kmers: u64,
+}
 
 /// Enhanced Metagenomics Pipeline - Complete Integration
 ///
