@@ -71,7 +71,7 @@ impl BitPackedKmer {
             } as u64;
             word |= bits << (62 - used);
             used += 2;
-            if used == 64 {
+            if used >= 64 {
                 packed.push(word);
                 word = 0;
                 used = 0;
@@ -287,7 +287,22 @@ impl AssemblyGraphBuilder {
     }
 
     /* -------- 4. parallel simplification -------------------------------- */
-    fn simplify(mut frag: GraphFragment) -> GraphFragment {
+    fn simplify(mut frag: GraphFragment, min_cov: u32) -> GraphFragment {
+        // First, filter nodes by minimum coverage
+        let low_coverage_nodes: Vec<u64> = frag
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.coverage < min_cov)
+            .map(|(&hash, _)| hash)
+            .collect();
+            
+        // Remove low coverage nodes and their edges
+        for node_hash in low_coverage_nodes {
+            frag.nodes.remove(&node_hash);
+        }
+        frag.edges.retain(|e| {
+            frag.nodes.contains_key(&e.from_hash) && frag.nodes.contains_key(&e.to_hash)
+        });
         // remove tips (nodes with out=0 or in=0) iteratively
         loop {
             let tips: Vec<u64> = {
@@ -350,8 +365,8 @@ impl AssemblyGraphBuilder {
             .collect::<Result<_>>()?;
         // 3. merge
         let merged = Self::merge_fragments(fragments);
-        // 4. simplify
-        let simplified = Self::simplify(merged);
+        // 4. simplify with coverage filtering
+        let simplified = Self::simplify(merged, self.min_cov);
         // 5. create assembly graph and generate contigs
         let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
         assembly_graph.generate_contigs()?;
@@ -387,7 +402,7 @@ impl AssemblyGraphBuilder {
         };
 
         // 4. conservative simplification to preserve memory
-        let simplified = Self::simplify(merged);
+        let simplified = Self::simplify(merged, self.min_cov);
 
         // 5. create assembly graph and generate contigs
         let mut assembly_graph = AssemblyGraph::from_fragment(simplified);
@@ -417,7 +432,7 @@ impl AssemblyGraphBuilder {
             });
 
         // 4. minimal simplification
-        let simplified = Self::simplify(merged);
+        let simplified = Self::simplify(merged, self.min_cov);
 
         // 5. create assembly graph and generate contigs
         let mut assembly_graph = AssemblyGraph::from_fragment(simplified);

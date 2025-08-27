@@ -7,3 +7,4 @@ pub mod test_integration_end_to_end;
 pub mod test_property_based_genomics;
 pub mod test_statistical_accuracy;
 pub mod test_synthetic_biological_data;
+pub mod tdd_assembly_robustness_tests;

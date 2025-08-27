@@ -6,6 +6,7 @@ use std::time::Instant;
 use tracing::{info, instrument};
 
 use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
+use crate::utils::kraken_reporter::{KrakenReporter, KrakenClassification};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 use tracing::warn;
 
@@ -1305,6 +1306,9 @@ impl MetagenomicsPipeline {
     async fn write_report_files(&self, report: &AnalysisReport) -> Result<()> {
         let output_dir = &self.config.general.output_dir;
 
+        // Generate Kraken-style reports
+        self.generate_kraken_reports(report).await?;
+
         // JSON report
         if self.config.io.output_formats.json {
             let json_path = output_dir.join(format!("{}_report.json", report.sample_name));
@@ -1328,6 +1332,35 @@ impl MetagenomicsPipeline {
             tokio::fs::write(&tsv_path, tsv_content).await?;
             info!("📊 TSV summary written to: {}", tsv_path.display());
         }
+
+        Ok(())
+    }
+
+    /// Generate Kraken-style reports with enhanced taxonomic classification
+    async fn generate_kraken_reports(&self, report: &AnalysisReport) -> Result<()> {
+        let output_dir = &self.config.general.output_dir;
+        let mut kraken_reporter = KrakenReporter::new(report.sample_name.clone());
+
+        // Convert existing taxonomic classifications to Kraken format
+        for classification in &report.taxonomic_composition {
+            let kraken_classification: KrakenClassification = classification.clone().into();
+            kraken_reporter.add_classification(kraken_classification);
+        }
+
+        // Generate standard Kraken output file
+        let kraken_output_path = output_dir.join(format!("{}.kraken", report.sample_name));
+        kraken_reporter.write_kraken_output(&kraken_output_path)?;
+        info!("🧬 Kraken output written to: {}", kraken_output_path.display());
+
+        // Generate Kraken-style report with abundance information
+        let kraken_report_path = output_dir.join(format!("{}_kraken_report.txt", report.sample_name));
+        kraken_reporter.write_kraken_report(&kraken_report_path)?;
+        info!("📊 Kraken report written to: {}", kraken_report_path.display());
+
+        // Generate enhanced JSON report with detailed classification
+        let enhanced_json_path = output_dir.join(format!("{}_enhanced_kraken.json", report.sample_name));
+        kraken_reporter.write_enhanced_json_report(&enhanced_json_path)?;
+        info!("📄 Enhanced Kraken JSON report written to: {}", enhanced_json_path.display());
 
         Ok(())
     }

@@ -1,0 +1,245 @@
+{
+  "sample_name": "demo_sample",
+  "timestamp": "2025-08-27T00:00:50.090314Z",
+  "summary_stats": {
+    "total_sequences": 4,
+    "classified_sequences": 3,
+    "unclassified_sequences": 1,
+    "classification_rate": 0.75,
+    "unique_taxa": 3,
+    "total_kmers": 504,
+    "classified_kmers": 397
+  },
+  "classifications": [
+    {
+      "classification_status": "Classified",
+      "sequence_id": "contig_001",
+      "taxonomy_id": 511145,
+      "sequence_length": 1547,
+      "kmer_lca_mappings": [
+        511145,
+        511145,
+        562,
+        511145,
+        561,
+        511145
+      ],
+      "confidence_metrics": {
+        "kmer_support_fraction": 0.92,
+        "classified_kmers": 147,
+        "total_kmers": 160,
+        "confidence_score": 0.92,
+        "classification_method": "exact_kmer_match"
+      },
+      "taxonomic_lineage": {
+        "domain": {
+          "taxonomy_id": 2,
+          "name": "Bacteria",
+          "rank": "superkingdom"
+        },
+        "kingdom": null,
+        "phylum": {
+          "taxonomy_id": 1224,
+          "name": "Proteobacteria",
+          "rank": "phylum"
+        },
+        "class": {
+          "taxonomy_id": 1236,
+          "name": "Gammaproteobacteria",
+          "rank": "class"
+        },
+        "order": {
+          "taxonomy_id": 91347,
+          "name": "Enterobacterales",
+          "rank": "order"
+        },
+        "family": {
+          "taxonomy_id": 543,
+          "name": "Enterobacteriaceae",
+          "rank": "family"
+        },
+        "genus": {
+          "taxonomy_id": 561,
+          "name": "Escherichia",
+          "rank": "genus"
+        },
+        "species": {
+          "taxonomy_id": 511145,
+          "name": "Escherichia coli str. K-12 substr. MG1655",
+          "rank": "strain"
+        }
+      }
+    },
+    {
+      "classification_status": "Classified",
+      "sequence_id": "contig_002",
+      "taxonomy_id": 28901,
+      "sequence_length": 892,
+      "kmer_lca_mappings": [
+        28901,
+        590,
+        28901,
+        28901
+      ],
+      "confidence_metrics": {
+        "kmer_support_fraction": 0.78,
+        "classified_kmers": 69,
+        "total_kmers": 89,
+        "confidence_score": 0.78,
+        "classification_method": "lca_mapping"
+      },
+      "taxonomic_lineage": {
+        "domain": {
+          "taxonomy_id": 2,
+          "name": "Bacteria",
+          "rank": "superkingdom"
+        },
+        "kingdom": null,
+        "phylum": {
+          "taxonomy_id": 1224,
+          "name": "Proteobacteria",
+          "rank": "phylum"
+        },
+        "class": {
+          "taxonomy_id": 1236,
+          "name": "Gammaproteobacteria",
+          "rank": "class"
+        },
+        "order": {
+          "taxonomy_id": 91347,
+          "name": "Enterobacterales",
+          "rank": "order"
+        },
+        "family": {
+          "taxonomy_id": 543,
+          "name": "Enterobacteriaceae",
+          "rank": "family"
+        },
+        "genus": {
+          "taxonomy_id": 590,
+          "name": "Salmonella",
+          "rank": "genus"
+        },
+        "species": {
+          "taxonomy_id": 28901,
+          "name": "Salmonella enterica",
+          "rank": "species"
+        }
+      }
+    },
+    {
+      "classification_status": "Unclassified",
+      "sequence_id": "contig_003",
+      "taxonomy_id": 0,
+      "sequence_length": 423,
+      "kmer_lca_mappings": [],
+      "confidence_metrics": {
+        "kmer_support_fraction": 0.0,
+        "classified_kmers": 0,
+        "total_kmers": 42,
+        "confidence_score": 0.0,
+        "classification_method": "none"
+      },
+      "taxonomic_lineage": {
+        "domain": null,
+        "kingdom": null,
+        "phylum": null,
+        "class": null,
+        "order": null,
+        "family": null,
+        "genus": null,
+        "species": null
+      }
+    },
+    {
+      "classification_status": "Classified",
+      "sequence_id": "contig_004",
+      "taxonomy_id": 1396,
+      "sequence_length": 2134,
+      "kmer_lca_mappings": [
+        1396,
+        1386,
+        1396,
+        1396,
+        186817,
+        1396
+      ],
+      "confidence_metrics": {
+        "kmer_support_fraction": 0.85,
+        "classified_kmers": 181,
+        "total_kmers": 213,
+        "confidence_score": 0.85,
+        "classification_method": "exact_kmer_match"
+      },
+      "taxonomic_lineage": {
+        "domain": {
+          "taxonomy_id": 2,
+          "name": "Bacteria",
+          "rank": "superkingdom"
+        },
+        "kingdom": null,
+        "phylum": {
+          "taxonomy_id": 1239,
+          "name": "Firmicutes",
+          "rank": "phylum"
+        },
+        "class": {
+          "taxonomy_id": 91061,
+          "name": "Bacilli",
+          "rank": "class"
+        },
+        "order": {
+          "taxonomy_id": 1385,
+          "name": "Bacillales",
+          "rank": "order"
+        },
+        "family": {
+          "taxonomy_id": 186817,
+          "name": "Bacillaceae",
+          "rank": "family"
+        },
+        "genus": {
+          "taxonomy_id": 1386,
+          "name": "Bacillus",
+          "rank": "genus"
+        },
+        "species": {
+          "taxonomy_id": 1396,
+          "name": "Bacillus subtilis",
+          "rank": "species"
+        }
+      }
+    }
+  ],
+  "taxonomic_summary": {
+    "domain_counts": {
+      "Bacteria": 3
+    },
+    "phylum_counts": {
+      "Proteobacteria": 2,
+      "Firmicutes": 1
+    },
+    "class_counts": {
+      "Gammaproteobacteria": 2,
+      "Bacilli": 1
+    },
+    "order_counts": {
+      "Bacillales": 1,
+      "Enterobacterales": 2
+    },
+    "family_counts": {
+      "Bacillaceae": 1,
+      "Enterobacteriaceae": 2
+    },
+    "genus_counts": {
+      "Salmonella": 1,
+      "Bacillus": 1,
+      "Escherichia": 1
+    },
+    "species_counts": {
+      "Salmonella enterica": 1,
+      "Escherichia coli str. K-12 substr. MG1655": 1,
+      "Bacillus subtilis": 1
+    }
+  }
+}
