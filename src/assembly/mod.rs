@@ -1,8 +1,13 @@
 pub mod adaptive_k;
+pub mod advanced_graph_algorithms;
 pub mod bioinformatics_optimizations;
+pub mod database_optimizations;
 pub mod graph_construction;
 pub mod memory_benchmark;
 pub mod memory_mapped;
+pub mod memory_optimizations;
+pub mod optimized_kmer_pool;
 pub mod optimized_structures;
+pub mod parallel_optimizations;
 pub mod performance_optimizations;
 pub mod simd_optimizations;
