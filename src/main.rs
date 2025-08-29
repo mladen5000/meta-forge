@@ -108,6 +108,63 @@ async fn main() -> Result<()> {
             use meta_forge::pipeline::complete_integration::handle_database_operation;
             handle_database_operation(operation).await?;
         }
+        Commands::Assemble {
+            input,
+            k_range,
+            min_coverage,
+        } => {
+            println!("🧬 MetaForge - Assembly-Only Mode");
+            println!("================================");
+            println!("Input files: {}", input.len());
+            if let Some(range) = &k_range {
+                println!("K-mer range: {}-{}", range.0, range.1);
+            }
+            println!("Min coverage: {}\n", min_coverage);
+
+            // Create pipeline with default configuration
+            let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
+
+            // Run preprocessing to get reads
+            println!("📋 Preprocessing input files...");
+            let reads = pipeline.preprocess_inputs(&input).await?;
+            
+            // Run assembly with verbose progress
+            println!("🚀 Starting assembly with enhanced verbose progress...");
+            let assembly_results = pipeline.run_assembly(&reads).await?;
+
+            // Display results
+            println!("\n🎉 Assembly Completed Successfully!");
+            println!("=====================================");
+            println!("📊 Assembly Statistics:");
+            println!("   Contigs generated: {}", assembly_results.contigs.len());
+            println!("   Total sequence length: {} bp", 
+                    assembly_results.assembly_stats.total_length);
+            println!("   Assembly N50: {} bp", 
+                    assembly_results.assembly_stats.n50);
+            println!("   Average contig length: {:.1} bp", 
+                    assembly_results.assembly_stats.total_length as f64 / assembly_results.assembly_stats.num_contigs.max(1) as f64);
+            println!("   Largest contig: {} bp", 
+                    assembly_results.assembly_stats.largest_contig);
+            
+            // Write contigs to FASTA file
+            let output_path = format!("contigs_{}.fasta", 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs());
+            
+            println!("💾 Writing contigs to: {}", output_path);
+            
+            // Write FASTA output (simplified)
+            use std::io::Write;
+            let mut file = std::fs::File::create(&output_path)?;
+            for (i, contig) in assembly_results.contigs.iter().enumerate() {
+                writeln!(file, ">contig_{}", i + 1)?;
+                writeln!(file, "{}", contig.sequence)?;
+            }
+            
+            println!("✅ Assembly results saved to {}", output_path);
+        }
         _ => {
             println!("Command not yet implemented in simplified main.rs");
         }

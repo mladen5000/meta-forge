@@ -10,7 +10,7 @@ use crate::utils::kraken_reporter::{KrakenReporter, KrakenClassification};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 use tracing::warn;
 
-use crate::assembly::adaptive_k::AssemblyGraphBuilder;
+// use crate::assembly::adaptive_k::AssemblyGraphBuilder; // Now using AdvancedAssemblyGraphBuilder
 // use crate::tests::comprehensive_test_suite::{TestDataGenerator, TestRunner};
 use crate::core::data_structures::*;
 use crate::database::integration::*;
@@ -936,7 +936,7 @@ impl MetagenomicsPipeline {
     }
 
     /// Preprocess input files with error correction
-    async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<Vec<CorrectedRead>> {
+    pub async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<Vec<CorrectedRead>> {
         info!("📋 Starting preprocessing of {} input files", inputs.len());
         let mut all_reads = Vec::new();
 
@@ -1118,13 +1118,21 @@ impl MetagenomicsPipeline {
         Ok(corrected_reads)
     }
 
-    /// Run assembly with adaptive parameters
-    async fn run_assembly(&self, reads: &[CorrectedRead]) -> Result<AssemblyResults> {
-        let builder = AssemblyGraphBuilder::new(
+    /// Run assembly with adaptive parameters and verbose progress
+    pub async fn run_assembly(&self, reads: &[CorrectedRead]) -> Result<AssemblyResults> {
+        println!("\n🧬 === Starting Metagenomic Assembly ===");
+        println!("📈 Dataset: {} reads", reads.len());
+        println!("⚙️ K-mer range: {}-{}", self.config.assembly.k_min, self.config.assembly.k_max);
+        println!("🎯 Min coverage: {}", self.config.assembly.min_coverage);
+        println!("🧵 Threads: {}", self.config.performance.num_threads);
+        println!("═══════════════════════════════════════════════\n");
+
+        let builder = crate::assembly::graph_construction::AdvancedAssemblyGraphBuilder::new(
             self.config.assembly.k_min,
             self.config.assembly.k_max,
             self.config.assembly.min_coverage,
-        );
+            self.config.performance.num_threads,
+        )?;
 
         // Convert core CorrectedRead to assembly CorrectedRead for compatibility
         let assembly_reads: Vec<_> = reads
@@ -1139,16 +1147,20 @@ impl MetagenomicsPipeline {
             })
             .collect();
 
-        // Choose assembly mode based on system resources
+        // Choose assembly mode based on system resources and use verbose progress
         let assembly_graph = if self.config.performance.memory_limit_gb <= 4 {
-            info!("🔧 Using low-memory assembly mode");
-            builder.build_low_memory(&assembly_reads)?
+            println!("🔧 Low-memory mode selected ({}GB limit)", self.config.performance.memory_limit_gb);
+            builder.build_graph_low_memory(&assembly_reads)?
         } else if self.config.performance.num_threads <= 4 {
-            info!("🔧 Using low-CPU assembly mode");
-            builder.build_low_cpu(&assembly_reads)?
+            println!("🔧 Low-CPU mode selected ({} threads)", self.config.performance.num_threads);
+            builder.build_graph_low_cpu(&assembly_reads)?
         } else {
-            info!("🔧 Using balanced assembly mode");
-            builder.build(&assembly_reads)?
+            println!("🚀 High-performance mode selected");
+            println!("💻 Using {} threads with {}GB memory limit", 
+                    self.config.performance.num_threads, 
+                    self.config.performance.memory_limit_gb);
+            // Use our enhanced verbose progress version
+            builder.build_graph(&assembly_reads)?
         };
         // Note: Contigs are generated during the build process
 
@@ -1581,31 +1593,47 @@ impl MetagenomicsPipeline {
     ) -> Result<AssemblyResults> {
         multi_progress.update_line(
             line_id,
-            "🧬 Assembly: Initializing graph builder...".to_string(),
+            "🧬 Assembly: Starting enhanced assembly with verbose progress...".to_string(),
         );
 
-        let builder = AssemblyGraphBuilder::new(
+        let builder = crate::assembly::graph_construction::AdvancedAssemblyGraphBuilder::new(
             self.config.assembly.k_min,
             self.config.assembly.k_max,
             self.config.assembly.min_coverage,
-        );
+            self.config.performance.num_threads,
+        )?;
 
+        // Convert core CorrectedRead to assembly CorrectedRead for compatibility
+        let assembly_reads: Vec<_> = reads
+            .iter()
+            .map(|r| crate::core::data_structures::CorrectedRead {
+                id: r.id,
+                original: r.original.clone(),
+                corrected: r.corrected.clone(),
+                corrections: r.corrections.clone(),
+                quality_scores: r.quality_scores.clone(),
+                correction_metadata: r.correction_metadata.clone(),
+            })
+            .collect();
+
+        // The advanced builder provides comprehensive progress reporting internally
         multi_progress.update_line(
-            line_id,
-            "🧬 Assembly: Building assembly graph...".to_string(),
+            line_id, 
+            format!("🧬 Assembly: Enhanced verbose progress active for {} reads", reads.len()),
         );
-        let assembly_graph = builder.build(reads)?;
+        
+        // Use our enhanced build_graph which provides detailed verbose progress
+        let assembly_graph = builder.build_graph(&assembly_reads)?;
 
-        multi_progress.update_line(line_id, "🧬 Assembly: Generating contigs...".to_string());
-        // Note: Contigs are generated during the build process
-
+        // Store results if database available
         if let Some(ref db) = self.database {
-            multi_progress.update_line(line_id, "🧬 Assembly: Storing results...".to_string());
+            println!("💾 Storing assembly results in database...");
             let _assembly_id = db.store_assembly_results(
                 &assembly_graph.assembly_stats,
                 "current_sample",
                 &serde_json::to_string(&self.config)?,
             )?;
+            println!("✅ Assembly results stored successfully");
         }
 
         Ok(AssemblyResults {

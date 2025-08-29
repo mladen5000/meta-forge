@@ -7,6 +7,59 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Assembly-specific progress information
+#[derive(Debug, Clone)]
+pub struct AssemblyProgress {
+    pub total_reads: usize,
+    pub processed_reads: usize,
+    pub kmers_extracted: usize,
+    pub nodes_created: usize,
+    pub edges_created: usize,
+    pub memory_used_mb: f64,
+    pub stage: AssemblyStage,
+    pub stage_progress: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssemblyStage {
+    Initialization,
+    KmerExtraction,
+    GraphConstruction,
+    ErrorCorrection,
+    TransitiveReduction,
+    ContigGeneration,
+    Finalization,
+    Complete,
+}
+
+impl AssemblyStage {
+    pub fn description(&self) -> &str {
+        match self {
+            AssemblyStage::Initialization => "Initializing assembly parameters",
+            AssemblyStage::KmerExtraction => "Extracting k-mers from sequences",
+            AssemblyStage::GraphConstruction => "Building De Bruijn graph",
+            AssemblyStage::ErrorCorrection => "Correcting sequencing errors",
+            AssemblyStage::TransitiveReduction => "Simplifying graph structure",
+            AssemblyStage::ContigGeneration => "Generating contiguous sequences",
+            AssemblyStage::Finalization => "Finalizing assembly results",
+            AssemblyStage::Complete => "Assembly completed",
+        }
+    }
+    
+    pub fn icon(&self) -> &str {
+        match self {
+            AssemblyStage::Initialization => "🔧",
+            AssemblyStage::KmerExtraction => "✂️",
+            AssemblyStage::GraphConstruction => "🌐",
+            AssemblyStage::ErrorCorrection => "🔍",
+            AssemblyStage::TransitiveReduction => "🔗",
+            AssemblyStage::ContigGeneration => "📝",
+            AssemblyStage::Finalization => "📊",
+            AssemblyStage::Complete => "✅",
+        }
+    }
+}
+
 /// Progress bar for genomic processing operations
 pub struct ProgressBar {
     total: u64,
@@ -17,6 +70,7 @@ pub struct ProgressBar {
     last_update: Instant,
     update_interval: Duration,
     finished: Arc<AtomicBool>,
+    assembly_info: Option<AssemblyProgress>,
 }
 
 impl ProgressBar {
@@ -31,6 +85,31 @@ impl ProgressBar {
             last_update: Instant::now(),
             update_interval: Duration::from_millis(100), // Update every 100ms
             finished: Arc::new(AtomicBool::new(false)),
+            assembly_info: None,
+        }
+    }
+
+    /// Create a new assembly-specific progress bar
+    pub fn new_assembly(total: u64, message: &str, total_reads: usize) -> Self {
+        Self {
+            total,
+            current: 0,
+            width: 50,
+            message: message.to_string(),
+            start_time: Instant::now(),
+            last_update: Instant::now(),
+            update_interval: Duration::from_millis(100),
+            finished: Arc::new(AtomicBool::new(false)),
+            assembly_info: Some(AssemblyProgress {
+                total_reads,
+                processed_reads: 0,
+                kmers_extracted: 0,
+                nodes_created: 0,
+                edges_created: 0,
+                memory_used_mb: 0.0,
+                stage: AssemblyStage::Initialization,
+                stage_progress: 0.0,
+            }),
         }
     }
 
@@ -56,9 +135,15 @@ impl ProgressBar {
         self.update(self.current + n);
     }
 
-    /// Display the progress bar
+    /// Display the progress bar  
     fn display(&self) {
         if self.finished.load(Ordering::Relaxed) {
+            return;
+        }
+
+        // Use enhanced assembly display if available
+        if self.assembly_info.is_some() {
+            self.display_assembly_progress();
             return;
         }
 
@@ -116,6 +201,114 @@ impl ProgressBar {
         }
 
         io::stdout().flush().unwrap();
+    }
+
+    /// Update assembly-specific progress information
+    pub fn update_assembly_info(&mut self, stage: AssemblyStage, processed_reads: usize, 
+                                kmers: usize, nodes: usize, edges: usize, memory_mb: f64) {
+        if let Some(info) = &mut self.assembly_info {
+            info.stage = stage;
+            info.processed_reads = processed_reads;
+            info.kmers_extracted = kmers;
+            info.nodes_created = nodes;
+            info.edges_created = edges;
+            info.memory_used_mb = memory_mb;
+            info.stage_progress = if info.total_reads > 0 {
+                (processed_reads as f64 / info.total_reads as f64) * 100.0
+            } else {
+                0.0
+            };
+        }
+    }
+
+    /// Display enhanced assembly progress with detailed metrics
+    fn display_assembly_progress(&self) {
+        if let Some(info) = &self.assembly_info {
+            let stage = &info.stage;
+            let elapsed = self.start_time.elapsed();
+            
+            // Clear line and show comprehensive progress
+            print!("\r\x1b[2K");
+            
+            // Stage header with icon and description
+            println!("\n{} {} - {:.1}% complete", 
+                    stage.icon(), stage.description(), info.stage_progress);
+            
+            // Main progress bar
+            let percentage = if self.total > 0 {
+                (self.current as f64 / self.total as f64) * 100.0
+            } else {
+                info.stage_progress
+            };
+            let filled = (self.width as f64 * percentage / 100.0) as usize;
+            let empty = self.width - filled;
+            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+            
+            // Detailed metrics line
+            print!("├─ [{}] {:.1}% | Reads: {}/{} | K-mers: {} | Nodes: {} | Edges: {}", 
+                  bar, percentage, 
+                  format_number(info.processed_reads as u64),
+                  format_number(info.total_reads as u64),
+                  format_number(info.kmers_extracted as u64),
+                  format_number(info.nodes_created as u64),
+                  format_number(info.edges_created as u64));
+            
+            // Memory and performance info
+            let memory_bar = if info.memory_used_mb > 4000.0 {
+                "🔴"  // Red for high memory usage
+            } else if info.memory_used_mb > 2000.0 {
+                "🟡"  // Yellow for medium memory usage  
+            } else {
+                "🟢"  // Green for low memory usage
+            };
+            
+            let rate = if elapsed.as_secs() > 0 {
+                info.processed_reads as f64 / elapsed.as_secs_f64()
+            } else {
+                0.0
+            };
+            
+            println!("\n├─ {} Memory: {:.1}MB | Rate: {:.0} reads/sec | Elapsed: {:?}", 
+                   memory_bar, info.memory_used_mb, rate, elapsed);
+            
+            // ETA if available
+            if let Some(eta) = self.eta() {
+                println!("└─ ⏱️  ETA: {:?}", eta);
+            } else {
+                println!("└─ ⏱️  ETA: calculating...");
+            }
+        }
+    }
+
+    /// Get estimated time remaining
+    pub fn eta(&self) -> Option<Duration> {
+        if self.current == 0 || self.total == 0 {
+            return None;
+        }
+        
+        let elapsed = self.start_time.elapsed();
+        let rate = self.current as f64 / elapsed.as_secs_f64();
+        let remaining = self.total - self.current;
+        
+        if rate > 0.0 {
+            Some(Duration::from_secs_f64(remaining as f64 / rate))
+        } else {
+            None
+        }
+    }
+
+    /// Set a custom message while preserving progress
+    pub fn set_message(&mut self, message: &str) {
+        self.message = message.to_string();
+    }
+
+    /// Get current progress percentage
+    pub fn percentage(&self) -> f64 {
+        if self.total > 0 {
+            (self.current as f64 / self.total as f64) * 100.0
+        } else {
+            0.0
+        }
     }
 
     /// Finish the progress bar and move to next line

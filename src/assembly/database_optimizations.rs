@@ -264,9 +264,15 @@ impl GenomicDatabase {
         Ok(())
     }
     
-    /// Batch insert k-mers with optimal performance
+    /// Batch insert k-mers with optimal performance and verbose progress
     pub fn batch_insert_kmers(&self, kmers: &[(String, Vec<u8>, u32)]) -> Result<usize> {
         let start_time = std::time::Instant::now();
+        
+        if kmers.len() > 1000 {
+            println!("💾 Database: Inserting {} k-mers in batches of {}", 
+                    kmers.len(), self.config.batch_size);
+        }
+        
         let conn = self.connection_pool.get_connection()?;
         
         let tx = conn.unchecked_transaction()?;
@@ -278,12 +284,36 @@ impl GenomicDatabase {
         )?;
         
         let mut inserted = 0;
+        let total_chunks = (kmers.len() + self.config.batch_size - 1) / self.config.batch_size;
+        let mut progress_bar = if kmers.len() > 5000 {
+            Some(crate::utils::progress_display::ProgressBar::new(
+                kmers.len() as u64, 
+                "💾 Database Insert"
+            ))
+        } else {
+            None
+        };
         
-        for chunk in kmers.chunks(self.config.batch_size) {
+        for (chunk_idx, chunk) in kmers.chunks(self.config.batch_size).enumerate() {
+            // Update progress for large insertions
+            if let Some(ref mut pb) = progress_bar {
+                pb.update(inserted as u64);
+                if chunk_idx % 10 == 0 {
+                    println!("├─ Processing chunk {}/{} ({:.1}% complete)", 
+                            chunk_idx + 1, total_chunks, 
+                            (chunk_idx as f64 / total_chunks as f64) * 100.0);
+                }
+            }
+            
             for (sequence, hash, count) in chunk {
                 stmt.execute(params![sequence, hash, count])?;
                 inserted += 1;
             }
+        }
+        
+        // Finish progress bar
+        if let Some(mut pb) = progress_bar {
+            pb.finish_with_message(&format!("✅ Inserted {} k-mers successfully", inserted));
         }
         
         // Drop statement before committing transaction  
@@ -291,10 +321,22 @@ impl GenomicDatabase {
         tx.commit()?;
         self.connection_pool.return_connection(conn);
         
-        // Update metrics
+        // Update metrics and provide verbose feedback
         let elapsed_ms = start_time.elapsed().as_millis() as usize;
+        let rate = if elapsed_ms > 0 { 
+            (inserted * 1000) / elapsed_ms.max(1) 
+        } else { 
+            0 
+        };
+        
         self.metrics.batch_operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.metrics.total_query_time_ms.fetch_add(elapsed_ms, std::sync::atomic::Ordering::Relaxed);
+        
+        if kmers.len() > 1000 {
+            println!("📊 Database Performance: {} k-mers/sec | Total time: {}ms | Memory efficient: {}", 
+                    rate, elapsed_ms, 
+                    if self.config.enable_compression { "Yes" } else { "No" });
+        }
         
         Ok(inserted)
     }

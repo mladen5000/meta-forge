@@ -1,0 +1,8 @@
+{
+  "file_paths": [
+    "data/short_SRR390728_1.fastq"
+  ],
+  "input_files": 1,
+  "status": "started",
+  "timestamp": "2025-08-29T20:05:14.762770+00:00"
+}
