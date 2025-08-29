@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use parking_lot::Mutex;
 
 /// Memory pool for efficient k-mer storage
+#[derive(Debug)]
 pub struct KmerPool {
     /// Pre-allocated blocks of memory for k-mer data
     blocks: Vec<Arc<[u64]>>,
@@ -53,7 +54,7 @@ impl KmerPool {
         
         let mut blocks = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
-            blocks.push(Arc::new(vec![0u64; block_size].into_boxed_slice()));
+            blocks.push(vec![0u64; block_size].into_boxed_slice().into());
         }
         
         Self {

@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
-use bincode;
+use serde_json;
 use std::sync::Arc;
 use parking_lot::{Mutex, RwLock};
 use lz4_flex::{compress, decompress};
@@ -84,19 +84,22 @@ impl ConnectionPool {
     }
     
     fn configure_connection(conn: &mut Connection) -> Result<()> {
-        // Enable WAL mode for better concurrent access
-        conn.execute("PRAGMA journal_mode = WAL", [])?;
+        // Handle all PRAGMA statements that might return results by using query pattern
+        let pragma_statements = [
+            "PRAGMA journal_mode = WAL",
+            "PRAGMA cache_size = 20000", // ~80MB cache  
+            "PRAGMA temp_store = memory",
+            "PRAGMA mmap_size = 1073741824", // 1GB mmap
+            "PRAGMA foreign_keys = ON", 
+            "PRAGMA synchronous = NORMAL",
+        ];
         
-        // Optimize for large databases
-        conn.execute("PRAGMA cache_size = 20000", [])?; // ~80MB cache
-        conn.execute("PRAGMA temp_store = memory", [])?;
-        conn.execute("PRAGMA mmap_size = 1073741824", [])?; // 1GB mmap
-        
-        // Enable foreign keys
-        conn.execute("PRAGMA foreign_keys = ON", [])?;
-        
-        // Optimize synchronization
-        conn.execute("PRAGMA synchronous = NORMAL", [])?;
+        for pragma in &pragma_statements {
+            let mut stmt = conn.prepare(pragma)?;
+            let mut rows = stmt.query_map([], |_| Ok(()))?;
+            // Consume any result rows - some PRAGMA statements return values
+            while let Some(_) = rows.next() {}
+        }
         
         Ok(())
     }
@@ -127,6 +130,7 @@ impl ConnectionPool {
 struct CachedResult {
     data: Vec<u8>,
     compressed: bool,
+    original_size: usize,
     created_at: std::time::SystemTime,
     hit_count: usize,
 }
@@ -282,6 +286,8 @@ impl GenomicDatabase {
             }
         }
         
+        // Drop statement before committing transaction  
+        drop(stmt);
         tx.commit()?;
         self.connection_pool.return_connection(conn);
         
@@ -299,17 +305,18 @@ impl GenomicDatabase {
         
         // Check cache first
         if self.config.enable_caching {
-            if let Some(cached) = self.query_cache.get_mut(&cache_key) {
+            if let Some(mut cached) = self.query_cache.get_mut(&cache_key) {
                 cached.hit_count += 1;
                 self.metrics.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 
                 let data = if cached.compressed {
-                    decompress(&cached.data)?
+                    decompress(&cached.data, cached.original_size)?
                 } else {
                     cached.data.clone()
                 };
                 
-                return Ok(bincode::decode_from_slice(&data, bincode::config::standard())?.0);
+                // For now, fall back to serde_json for simplicity
+                return Ok(serde_json::from_slice(&data)?);
             }
         }
         
@@ -346,12 +353,16 @@ impl GenomicDatabase {
             results.push(row?);
         }
         
+        // Drop statement before returning connection to avoid borrowing conflicts
+        drop(stmt);
         self.connection_pool.return_connection(conn);
         
         // Cache result
         if self.config.enable_caching && !results.is_empty() {
-            let serialized = bincode::encode_to_vec(&results, bincode::config::standard())?;
-            let (data, compressed) = if self.config.enable_compression && serialized.len() > 1024 {
+            // For now, use serde_json for simplicity
+            let serialized = serde_json::to_vec(&results)?;
+            let serialized_len = serialized.len();
+            let (data, compressed) = if self.config.enable_compression && serialized_len > 1024 {
                 (compress(&serialized), true)
             } else {
                 (serialized, false)
@@ -360,6 +371,7 @@ impl GenomicDatabase {
             self.query_cache.insert(cache_key, CachedResult {
                 data,
                 compressed,
+                original_size: serialized_len,
                 created_at: std::time::SystemTime::now(),
                 hit_count: 0,
             });
@@ -399,6 +411,7 @@ impl GenomicDatabase {
             }
         }
         
+        drop(stmt);
         tx.commit()?;
         self.connection_pool.return_connection(conn);
         
@@ -444,21 +457,24 @@ impl GenomicDatabase {
             WHERE gw.distance <= ?2
             ORDER BY ge.weight DESC";
         
-        let mut stmt = conn.prepare(query)?;
-        let rows = stmt.query_map(params![center_kmer_id, max_distance], |row| {
-            Ok(GraphEdge {
-                id: row.get(0)?,
-                from_kmer_id: row.get(1)?,
-                to_kmer_id: row.get(2)?,
-                weight: row.get(3)?,
-                confidence: row.get(4)?,
-            })
-        })?;
-        
-        let mut results = Vec::new();
-        for row in rows {
-            results.push(row?);
-        }
+        let results = {
+            let mut stmt = conn.prepare(query)?;
+            let rows = stmt.query_map(params![center_kmer_id, max_distance], |row| {
+                Ok(GraphEdge {
+                    id: row.get(0)?,
+                    from_kmer_id: row.get(1)?,
+                    to_kmer_id: row.get(2)?,
+                    weight: row.get(3)?,
+                    confidence: row.get(4)?,
+                })
+            })?;
+            
+            let mut results = Vec::new();
+            for row in rows {
+                results.push(row?);
+            }
+            results
+        };
         
         self.connection_pool.return_connection(conn);
         
@@ -486,8 +502,8 @@ impl GenomicDatabase {
         // Also limit cache size
         while self.estimate_cache_size_mb() > self.config.cache_size_mb {
             // Remove least recently used items
-            if let Some((key, _)) = self.query_cache.iter().min_by_key(|entry| entry.hit_count) {
-                let key = key.clone();
+            if let Some(entry) = self.query_cache.iter().min_by_key(|entry| entry.value().hit_count) {
+                let key = entry.key().clone();
                 self.query_cache.remove(&key);
             } else {
                 break;
@@ -511,6 +527,18 @@ impl GenomicDatabase {
             cache_size_mb: self.estimate_cache_size_mb(),
             cache_entries: self.query_cache.len(),
         }
+    }
+
+    /// Insert a batch of KmerRecord objects (TDD-required method)
+    /// This is a wrapper around batch_insert_kmers for compatibility with TDD tests
+    pub fn insert_kmers_batch(&self, kmers: &[KmerRecord]) -> Result<usize> {
+        // Convert KmerRecord to the format expected by batch_insert_kmers
+        let converted_kmers: Vec<(String, Vec<u8>, u32)> = kmers
+            .iter()
+            .map(|k| (k.sequence.clone(), k.hash.clone(), k.count))
+            .collect();
+        
+        self.batch_insert_kmers(&converted_kmers)
     }
 }
 

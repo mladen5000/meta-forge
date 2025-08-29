@@ -139,9 +139,9 @@ impl KmerArena {
 
 #[derive(Debug, Clone)]
 pub struct KmerRef {
-    block_id: usize,
-    offset: usize,
-    length: usize,
+    pub block_id: usize,
+    pub offset: usize,
+    pub length: usize,
 }
 
 #[derive(Debug)]
@@ -430,7 +430,7 @@ impl BoundedStreamProcessor {
     }
 
     /// Process k-mer stream with bounded memory guarantee
-    pub fn process_kmer_stream<I>(&self, kmer_stream: I) -> Result<StreamingStats>
+    pub fn process_kmer_stream<I>(&self, kmer_stream: I) -> Result<FinalStreamingStats>
     where
         I: Iterator<Item = (u64, Vec<u8>)> + Send,
     {

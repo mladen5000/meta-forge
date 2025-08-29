@@ -6,6 +6,8 @@ pub mod graph_construction;
 pub mod memory_benchmark;
 pub mod memory_mapped;
 pub mod memory_optimizations;
+pub mod optimization_tests;
+pub mod database_connection_tests;
 pub mod optimized_kmer_pool;
 pub mod optimized_structures;
 pub mod parallel_optimizations;
