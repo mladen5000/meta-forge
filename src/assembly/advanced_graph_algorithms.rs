@@ -9,9 +9,7 @@
 
 use anyhow::{anyhow, Result};
 use ahash::{AHashMap, AHashSet};
-use std::collections::VecDeque;
 use rayon::prelude::*;
-use std::sync::Arc;
 
 /// Advanced de Bruijn graph with optimized algorithms
 pub struct AdvancedDeBruijnGraph {
@@ -124,6 +122,12 @@ pub enum ContigType {
     Alternate, // Alternative path/haplotype
     Repeat,    // Repeat region
     Scaffold,  // Scaffolded sequence with gaps
+}
+
+impl Default for AdvancedDeBruijnGraph {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AdvancedDeBruijnGraph {
@@ -538,7 +542,7 @@ impl AdvancedDeBruijnGraph {
             }
         }
         
-        if odd_degree_nodes.len() != 0 && odd_degree_nodes.len() != 2 {
+        if !odd_degree_nodes.is_empty() && odd_degree_nodes.len() != 2 {
             // No Eulerian path exists
             return self.find_longest_path(nodes);
         }

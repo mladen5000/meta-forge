@@ -282,7 +282,7 @@ mod assembly_chunk_tests {
         // For k=3 and sequence "ATCGATCG" (8 bases), we expect:
         // ATC, TCG, CGA, GAT, ATC, TCG - some may be duplicates when canonicalized
         assert!(chunk.processing_stats.minimizers_found >= 6);
-        assert!(chunk.graph_fragment.nodes.len() > 0);
+        assert!(!chunk.graph_fragment.nodes.is_empty());
         assert!(chunk.graph_fragment.edges.len() >= 5); // n-1 edges for consecutive k-mers
     }
 

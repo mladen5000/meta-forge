@@ -4,9 +4,6 @@
 //! This module implements comprehensive tests for our optimization features
 //! following TDD principles: write failing tests first, then make them pass.
 
-use super::memory_optimizations::*;
-use anyhow::Result;
-use std::sync::atomic::Ordering;
 
 #[cfg(test)]
 mod tdd_tests {

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use crossbeam::queue::SegQueue;
 use parking_lot::RwLock;
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 
 /* ========================================================================= */
 /*                        ZERO-COPY KMER ARENA ALLOCATOR                   */

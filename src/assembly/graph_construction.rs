@@ -316,7 +316,7 @@ impl AdvancedAssemblyGraphBuilder {
     ) -> Result<()> {
         // Simplified merge - in production would be more sophisticated
         let (nodes, edges, _, _) = chunk_graph.get_statistics();
-        println!("     Merging {} nodes, {} edges", nodes, edges);
+        println!("     Merging {nodes} nodes, {edges} edges");
 
         // In a real implementation, we would:
         // 1. Identify overlapping k-mers between graphs
@@ -640,7 +640,7 @@ impl AdvancedAssemblyGraphBuilder {
         let merged = self.hierarchical_merge(fragments)?;
         let mut assembly_graph = AssemblyGraph::new();
         assembly_graph.graph_fragment = merged;
-        Ok(self.advanced_simplify_graph(assembly_graph)?)
+        self.advanced_simplify_graph(assembly_graph)
     }
 
     fn make_chunk(
@@ -694,8 +694,7 @@ impl AdvancedAssemblyGraphBuilder {
         use crate::assembly::performance_optimizations::OptimizationConfig;
 
         println!(
-            "🚀 Starting optimized graph construction with mode: {:?}",
-            mode
+            "🚀 Starting optimized graph construction with mode: {mode:?}"
         );
         let start_time = std::time::Instant::now();
 
@@ -752,8 +751,7 @@ impl AdvancedAssemblyGraphBuilder {
         let (node_count, edge_count, memory_usage, cache_hit_rate) = opt_graph.get_statistics();
 
         println!(
-            "   Converting {} nodes and {} edges from optimized format",
-            node_count, edge_count
+            "   Converting {node_count} nodes and {edge_count} edges from optimized format"
         );
 
         // For now, create a minimal assembly graph with basic stats
@@ -793,7 +791,7 @@ impl AdvancedAssemblyGraphBuilder {
         // Estimate performance improvement (placeholder values)
         let estimated_baseline_time = elapsed.as_secs_f64() * 2.0; // Assume 50% improvement
         let speedup = estimated_baseline_time / elapsed.as_secs_f64();
-        println!("   Estimated speedup: {:.1}x compared to baseline", speedup);
+        println!("   Estimated speedup: {speedup:.1}x compared to baseline");
 
         if speedup >= 2.0 {
             println!("   Status: ✅ EXCELLENT - Target performance achieved!");
@@ -1026,7 +1024,7 @@ impl AdvancedAssemblyGraphBuilder {
                 .insert(edge.to_hash);
         }
 
-        println!("   Processing {} nodes with sparse BFS approach", n);
+        println!("   Processing {n} nodes with sparse BFS approach");
 
         // CRITICAL: Use depth-limited parallel BFS instead of Floyd-Warshall
         const MAX_PATH_DEPTH: usize = 5; // Reasonable limit for genomic graphs
@@ -1333,13 +1331,13 @@ impl AdvancedAssemblyGraphBuilder {
 
         // Calculate throughput
         let reads_per_sec = graph.graph_fragment.nodes.len() as f64 / elapsed.as_secs_f64();
-        println!("   Processing rate: {:.0} k-mers/sec", reads_per_sec);
+        println!("   Processing rate: {reads_per_sec:.0} k-mers/sec");
 
         // Memory efficiency estimate
         let estimated_memory_mb = (graph.graph_fragment.nodes.len() * 64
             + graph.graph_fragment.edges.len() * 32)
             / (1024 * 1024);
-        println!("   Estimated memory usage: {} MB", estimated_memory_mb);
+        println!("   Estimated memory usage: {estimated_memory_mb} MB");
     }
 
     /// Enhanced streaming graph construction with progress tracking
@@ -1551,8 +1549,7 @@ impl AdvancedAssemblyGraphBuilder {
         multi_progress.update_line(
             progress_line,
             format!(
-                "🌳 Merging: ✅ Hierarchical merge completed in {} levels",
-                depth
+                "🌳 Merging: ✅ Hierarchical merge completed in {depth} levels"
             ),
         );
         Ok(fragments.into_iter().next().unwrap())
@@ -1575,8 +1572,7 @@ impl AdvancedAssemblyGraphBuilder {
             multi_progress.update_line(
                 progress_line,
                 format!(
-                    "🔧 Simplification: Pass {}/3 - removing tips and bubbles...",
-                    pass
+                    "🔧 Simplification: Pass {pass}/3 - removing tips and bubbles..."
                 ),
             );
 
@@ -1621,8 +1617,7 @@ impl AdvancedAssemblyGraphBuilder {
         multi_progress.update_line(
             progress_line,
             format!(
-                "🔍 Reduction: ✅ Removed {} transitive edges",
-                removed_count
+                "🔍 Reduction: ✅ Removed {removed_count} transitive edges"
             ),
         );
 

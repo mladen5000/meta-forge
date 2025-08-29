@@ -106,7 +106,7 @@ impl IntermediateOutputManager {
     pub fn new(base_output_dir: PathBuf, config: OutputConfig) -> Result<Self> {
         let now = Utc::now();
         let run_id = now.format("%d%m%y_%H%M%S").to_string();
-        let run_dir = base_output_dir.join(format!("run_{}", run_id));
+        let run_dir = base_output_dir.join(format!("run_{run_id}"));
 
         // Create base directories
         fs::create_dir_all(&run_dir)
@@ -170,7 +170,7 @@ impl IntermediateOutputManager {
         let section_dir = self.get_section_dir(&section);
 
         // Save as JSON (primary format)
-        let json_path = section_dir.join(format!("{}.json", filename));
+        let json_path = section_dir.join(format!("{filename}.json"));
         let json_content =
             serde_json::to_string_pretty(data).context("Failed to serialize data to JSON")?;
 
@@ -202,11 +202,11 @@ impl IntermediateOutputManager {
         }
 
         let section_dir = self.get_section_dir(&section);
-        let fasta_path = section_dir.join(format!("{}.fasta", filename));
+        let fasta_path = section_dir.join(format!("{filename}.fasta"));
 
         let mut fasta_content = String::new();
         for (id, sequence) in sequences {
-            fasta_content.push_str(&format!(">{}\n{}\n", id, sequence));
+            fasta_content.push_str(&format!(">{id}\n{sequence}\n"));
         }
 
         if self.config.compress_files {
@@ -246,7 +246,7 @@ impl IntermediateOutputManager {
         }
 
         let section_dir = self.get_section_dir(&section);
-        let tsv_path = section_dir.join(format!("{}.tsv", filename));
+        let tsv_path = section_dir.join(format!("{filename}.tsv"));
 
         let mut tsv_content = headers.join("\t") + "\n";
         for row in rows {
@@ -282,8 +282,8 @@ impl IntermediateOutputManager {
         let section_dir = self.get_section_dir(&section);
 
         // Load from JSON (primary format)
-        let json_path = section_dir.join(format!("{}.json", filename));
-        let json_gz_path = section_dir.join(format!("{}.json.gz", filename));
+        let json_path = section_dir.join(format!("{filename}.json"));
+        let json_gz_path = section_dir.join(format!("{filename}.json.gz"));
 
         let content = if json_gz_path.exists() {
             self.read_compressed(&json_gz_path)?
@@ -306,16 +306,16 @@ impl IntermediateOutputManager {
         let section_dir = self.get_section_dir(&section);
 
         // Check JSON files
-        let json_path = section_dir.join(format!("{}.json", filename));
-        let json_gz_path = section_dir.join(format!("{}.json.gz", filename));
+        let json_path = section_dir.join(format!("{filename}.json"));
+        let json_gz_path = section_dir.join(format!("{filename}.json.gz"));
 
         // Check FASTA files
-        let fasta_path = section_dir.join(format!("{}.fasta", filename));
-        let fasta_gz_path = section_dir.join(format!("{}.fasta.gz", filename));
+        let fasta_path = section_dir.join(format!("{filename}.fasta"));
+        let fasta_gz_path = section_dir.join(format!("{filename}.fasta.gz"));
 
         // Check TSV files
-        let tsv_path = section_dir.join(format!("{}.tsv", filename));
-        let tsv_gz_path = section_dir.join(format!("{}.tsv.gz", filename));
+        let tsv_path = section_dir.join(format!("{filename}.tsv"));
+        let tsv_gz_path = section_dir.join(format!("{filename}.tsv.gz"));
 
         json_path.exists()
             || json_gz_path.exists()

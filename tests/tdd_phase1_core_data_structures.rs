@@ -29,8 +29,7 @@ mod canonical_kmer_tests {
             let result = CanonicalKmer::new_with_config(seq, &config);
             assert!(
                 result.is_err(),
-                "Skip strategy should reject sequence with N: {}",
-                seq
+                "Skip strategy should reject sequence with N: {seq}"
             );
         }
 
@@ -40,8 +39,7 @@ mod canonical_kmer_tests {
             let result = CanonicalKmer::new_with_config(seq, &config);
             assert!(
                 result.is_ok(),
-                "Skip strategy should accept clean sequence: {}",
-                seq
+                "Skip strategy should accept clean sequence: {seq}"
             );
         }
     }
@@ -66,8 +64,7 @@ mod canonical_kmer_tests {
             let result = CanonicalKmer::new_with_config(input, &config);
             assert!(
                 result.is_ok(),
-                "Replace strategy should handle sequence: {}",
-                input
+                "Replace strategy should handle sequence: {input}"
             );
 
             let kmer = result.unwrap();
@@ -106,13 +103,11 @@ mod canonical_kmer_tests {
             // Both should have the same canonical representation
             assert_eq!(
                 kmer1.sequence, expected_canonical,
-                "Sequence {} should canonicalize to {}",
-                seq, expected_canonical
+                "Sequence {seq} should canonicalize to {expected_canonical}"
             );
             assert_eq!(
                 kmer2.sequence, expected_canonical,
-                "Reverse complement {} should canonicalize to {}",
-                expected_rc, expected_canonical
+                "Reverse complement {expected_rc} should canonicalize to {expected_canonical}"
             );
 
             // Hash should be identical for canonical forms
@@ -135,8 +130,7 @@ mod canonical_kmer_tests {
         for (i, &hash) in hashes.iter().enumerate() {
             assert_eq!(
                 hash, first_hash,
-                "Hash inconsistency at iteration {}: {} != {}",
-                i, hash, first_hash
+                "Hash inconsistency at iteration {i}: {hash} != {first_hash}"
             );
         }
     }
@@ -155,8 +149,7 @@ mod canonical_kmer_tests {
             let result = CanonicalKmer::new(seq);
             assert!(
                 result.is_err(),
-                "Should reject invalid DNA sequence: {:?}",
-                seq
+                "Should reject invalid DNA sequence: {seq:?}"
             );
         }
     }
@@ -317,8 +310,7 @@ mod graph_fragment_merge_tests {
             let kmer = CanonicalKmer::new(seq).unwrap();
             assert!(
                 fragment1.nodes.contains_key(&kmer.hash),
-                "K-mer {} should still be present after merge",
-                seq
+                "K-mer {seq} should still be present after merge"
             );
         }
     }
@@ -417,10 +409,7 @@ mod sequence_complexity_tests {
 
             assert!(
                 (complexity - expected_complexity).abs() < tolerance,
-                "Complexity for '{}' should be ~{}, got {}",
-                sequence,
-                expected_complexity,
-                complexity
+                "Complexity for '{sequence}' should be ~{expected_complexity}, got {complexity}"
             );
         }
     }
@@ -443,10 +432,7 @@ mod sequence_complexity_tests {
 
             assert!(
                 (gc_content - expected_gc).abs() < tolerance,
-                "GC content for '{}' should be {}, got {}",
-                sequence,
-                expected_gc,
-                gc_content
+                "GC content for '{sequence}' should be {expected_gc}, got {gc_content}"
             );
         }
     }
@@ -464,9 +450,7 @@ mod sequence_complexity_tests {
             let complexity = calculate_sequence_complexity(sequence);
             assert!(
                 complexity < 0.7,
-                "Sequence '{}' should have low complexity (<0.7), got {}",
-                sequence,
-                complexity
+                "Sequence '{sequence}' should have low complexity (<0.7), got {complexity}"
             );
         }
     }
@@ -483,9 +467,7 @@ mod sequence_complexity_tests {
             let complexity = calculate_sequence_complexity(sequence);
             assert!(
                 complexity > 0.8,
-                "Sequence '{}' should have high complexity (>0.8), got {}",
-                sequence,
-                complexity
+                "Sequence '{sequence}' should have high complexity (>0.8), got {complexity}"
             );
         }
     }
@@ -505,10 +487,8 @@ mod sequence_complexity_tests {
         for sequence in test_sequences {
             let complexity = calculate_sequence_complexity(sequence);
             assert!(
-                complexity >= 0.0 && complexity <= 1.0,
-                "Complexity for '{}' should be in [0,1], got {}",
-                sequence,
-                complexity
+                (0.0..=1.0).contains(&complexity),
+                "Complexity for '{sequence}' should be in [0,1], got {complexity}"
             );
         }
     }
@@ -525,7 +505,7 @@ mod sequence_complexity_tests {
 
         for sequence in valid_sequences {
             let result = validate_dna_sequence(sequence);
-            assert!(result.is_ok(), "Sequence '{}' should be valid", sequence);
+            assert!(result.is_ok(), "Sequence '{sequence}' should be valid");
         }
 
         // Invalid sequences
@@ -540,7 +520,7 @@ mod sequence_complexity_tests {
 
         for sequence in invalid_sequences {
             let result = validate_dna_sequence(sequence);
-            assert!(result.is_err(), "Sequence '{}' should be invalid", sequence);
+            assert!(result.is_err(), "Sequence '{sequence}' should be invalid");
         }
     }
 }
@@ -635,7 +615,7 @@ mod integration_tests {
 
         // Should be able to recover the original sequence (or at least preserve length)
         assert!(
-            reconstructed.len() >= original_sequence.len() - k + 1,
+            reconstructed.len() > original_sequence.len() - k,
             "Reconstructed sequence should preserve approximate original length"
         );
     }

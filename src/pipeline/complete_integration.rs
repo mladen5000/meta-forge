@@ -557,7 +557,7 @@ impl MetagenomicsPipeline {
         let run_dir = self
             .output_manager
             .base_output_dir
-            .join(format!("run_{}", run_id));
+            .join(format!("run_{run_id}"));
         if !run_dir.exists() {
             return Err(anyhow::anyhow!(
                 "Run directory not found: {}",
@@ -974,7 +974,7 @@ impl MetagenomicsPipeline {
 
             self.output_manager.save_intermediate(
                 PipelineSection::Preprocessing,
-                &format!("file_{}_processing", file_idx),
+                &format!("file_{file_idx}_processing"),
                 &file_status,
                 serde_json::json!({"file_processing": true}),
             )?;
@@ -1012,7 +1012,7 @@ impl MetagenomicsPipeline {
 
             self.output_manager.save_intermediate(
                 PipelineSection::Preprocessing,
-                &format!("file_{}_completed", file_idx),
+                &format!("file_{file_idx}_completed"),
                 &file_complete,
                 serde_json::json!({"file_completed": true}),
             )?;
@@ -2081,15 +2081,15 @@ async fn main() -> Result<()> {
                     let run_dir = pipeline
                         .output_manager
                         .base_output_dir
-                        .join(format!("run_{}", run_id));
+                        .join(format!("run_{run_id}"));
                     if let Ok(metadata) = std::fs::metadata(&run_dir) {
                         if let Ok(modified) = metadata.modified() {
-                            println!("   • {} (modified: {:?})", run_id, modified);
+                            println!("   • {run_id} (modified: {modified:?})");
                         } else {
-                            println!("   • {}", run_id);
+                            println!("   • {run_id}");
                         }
                     } else {
-                        println!("   • {}", run_id);
+                        println!("   • {run_id}");
                     }
                 }
 

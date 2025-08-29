@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use serde_json;
 use std::sync::Arc;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use lz4_flex::{compress, decompress};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -98,7 +98,7 @@ impl ConnectionPool {
             let mut stmt = conn.prepare(pragma)?;
             let mut rows = stmt.query_map([], |_| Ok(()))?;
             // Consume any result rows - some PRAGMA statements return values
-            while let Some(_) = rows.next() {}
+            for _ in rows {}
         }
         
         Ok(())
@@ -329,8 +329,7 @@ impl GenomicDatabase {
                 "SELECT id, sequence, hash, count FROM kmers 
                  WHERE count >= ? 
                  ORDER BY count DESC, sequence 
-                 LIMIT {}",
-                limit
+                 LIMIT {limit}"
             )
         } else {
             "SELECT id, sequence, hash, count FROM kmers 
@@ -585,14 +584,14 @@ impl DatabaseStats {
         let total_cache_requests = self.cache_hits + self.cache_misses;
         if total_cache_requests > 0 {
             let hit_rate = (self.cache_hits as f64 / total_cache_requests as f64) * 100.0;
-            println!("   Cache hit rate: {:.1}%", hit_rate);
+            println!("   Cache hit rate: {hit_rate:.1}%");
             println!("   Cache entries: {}", self.cache_entries);
             println!("   Cache size: {}MB", self.cache_size_mb);
         }
         
         if self.total_query_time_ms > 0 {
             let queries_per_second = (self.queries_executed * 1000) / self.total_query_time_ms;
-            println!("   Throughput: {} queries/sec", queries_per_second);
+            println!("   Throughput: {queries_per_second} queries/sec");
         }
     }
 }

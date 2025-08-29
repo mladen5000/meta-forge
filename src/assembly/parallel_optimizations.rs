@@ -37,6 +37,12 @@ struct ProcessingMetrics {
     throughput_ips: AtomicCell<f64>,
 }
 
+impl Default for ParallelProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParallelProcessor {
     /// Create new parallel processor with auto-tuning
     pub fn new() -> Self {
@@ -303,7 +309,7 @@ impl ParallelProcessor {
         // Use parallel reduction for large numbers of maps
         maps.into_par_iter()
             .reduce(
-                || AHashMap::new(),
+                AHashMap::new,
                 |mut acc, map| {
                     for (key, value) in map {
                         *acc.entry(key).or_insert(0) += value;
@@ -399,7 +405,7 @@ impl ProcessingStats {
             0.0
         };
         
-        println!("   Parallel efficiency: {:.1}%", efficiency);
+        println!("   Parallel efficiency: {efficiency:.1}%");
     }
 }
 

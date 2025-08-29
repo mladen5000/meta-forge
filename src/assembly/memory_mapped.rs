@@ -58,7 +58,7 @@ impl MemoryStats {
             } else {
                 0.0
             };
-            println!("   Estimated RAM savings: {:.1}%", savings_percent);
+            println!("   Estimated RAM savings: {savings_percent:.1}%");
         }
     }
 }
@@ -291,7 +291,7 @@ impl MappedGraph {
         for nv in self.iter_nodes() {
             let dummy_sequence = format!("NODE_{}", nv.hash);
             let kmer = CanonicalKmer::new(&dummy_sequence)
-                .map_err(|e| anyhow::Error::msg(format!("Failed to create k-mer: {}", e)))?;
+                .map_err(|e| anyhow::Error::msg(format!("Failed to create k-mer: {e}")))?;
             let graph_node = GraphNode::new(kmer, 31); // k=31 (adjust as needed)
             graph.graph_fragment.add_node(graph_node);
         }

@@ -260,7 +260,7 @@ pub mod synthetic_genome_tests {
 
         // Assembly might be fragmented due to repeats
         assert!(
-            assembly.contigs.len() >= 1,
+            !assembly.contigs.is_empty(),
             "Should generate contigs despite repeats"
         );
     }
@@ -565,7 +565,7 @@ mod biological_accuracy_validation {
         // Create a sequence with valid start/stop codons
         let coding_sequence = "ATGAAATTTGGCCCCTAG"; // ATG (start), AAA (Lys), TTT (Phe), GGC (Gly), CCT (Pro), TAG (stop)
         let non_coding = synthetic_genome_tests::generate_synthetic_genome(500, 0.4);
-        let genome = format!("{}{}{}", non_coding, coding_sequence, non_coding);
+        let genome = format!("{non_coding}{coding_sequence}{non_coding}");
 
         let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 80, 20.0, 0.005);
 
@@ -650,7 +650,7 @@ mod biological_accuracy_validation {
             })
             .collect::<String>();
 
-        let genome = format!("{}{}", leading_strand_high_g, lagging_strand_high_c);
+        let genome = format!("{leading_strand_high_g}{lagging_strand_high_c}");
         let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 100, 15.0, 0.008);
 
         let builder = AssemblyGraphBuilder::new(17, 25, 2);
@@ -680,8 +680,7 @@ mod biological_accuracy_validation {
 
         // Insert transposon at multiple locations
         let genome = format!(
-            "{}{}{}{}{}{}",
-            unique_seq1, transposon, unique_seq2, transposon, unique_seq3, transposon
+            "{unique_seq1}{transposon}{unique_seq2}{transposon}{unique_seq3}{transposon}"
         );
 
         let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 90, 18.0, 0.01);

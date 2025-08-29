@@ -393,9 +393,9 @@ mod optimization_mode_tests {
 #[cfg(test)]
 mod memory_mapped_processing_tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Write;
-    use tempfile::tempdir;
+    
+    
+    
 
     #[test]
     fn test_large_read_set_processing() {
@@ -403,12 +403,10 @@ mod memory_mapped_processing_tests {
 
         // Create a larger dataset to test chunking behavior
         let mut reads = Vec::new();
-        let base_sequences = vec![
-            "ATCGATCGATCGATCG",
+        let base_sequences = ["ATCGATCGATCGATCG",
             "TCGATCGATCGATCGA",
             "CGATCGATCGATCGAT",
-            "GATCGATCGATCGATC",
-        ];
+            "GATCGATCGATCGATC"];
 
         // Replicate to create a substantial dataset
         for i in 0..1000 {

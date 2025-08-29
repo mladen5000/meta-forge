@@ -411,7 +411,7 @@ impl From<crate::pipeline::complete_integration::TaxonomicClassification> for Kr
         
         let taxonomic_lineage = TaxonomicLineage {
             domain: None, // Would need to be parsed from lineage or database
-            kingdom: lineage_parts.get(0).map(|name| TaxonomicRank {
+            kingdom: lineage_parts.first().map(|name| TaxonomicRank {
                 taxonomy_id: 0, // Would need lookup
                 name: name.to_string(),
                 rank: "kingdom".to_string(),

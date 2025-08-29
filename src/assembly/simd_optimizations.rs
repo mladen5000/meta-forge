@@ -435,7 +435,7 @@ impl SimdBenchmark {
 
     /// Run performance comparison between SIMD implementations
     pub fn run_comparison(&self, sequence: &[u8], iterations: usize) {
-        println!("🏁 SIMD Performance Comparison ({} iterations)", iterations);
+        println!("🏁 SIMD Performance Comparison ({iterations} iterations)");
         println!("   Sequence length: {} bp", sequence.len());
 
         // Test nucleotide counting

@@ -4,9 +4,6 @@
 //! Tests proper resource management for database connections, transactions,
 //! and prepared statements to prevent borrowing conflicts.
 
-use super::database_optimizations::*;
-use tempfile::tempdir;
-use std::sync::Arc;
 
 #[cfg(test)]
 mod database_lifecycle_tests {

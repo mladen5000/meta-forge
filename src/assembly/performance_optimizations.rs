@@ -396,8 +396,8 @@ impl OptimizedGraphNode {
     }
 
     pub fn update_degree(&mut self, in_degree: u8, out_degree: u8) {
-        let in_deg = (in_degree.min(255) as u32) << 8;
-        let out_deg = (out_degree.min(255) as u32) << 16;
+        let in_deg = (in_degree as u32) << 8;
+        let out_deg = (out_degree as u32) << 16;
         self.metadata = (self.metadata & 0xFF0000FF) | in_deg | out_deg;
     }
 }
@@ -502,8 +502,7 @@ impl CacheOptimizedGraph {
         }
 
         println!(
-            "🔍 Running optimized parallel transitive reduction on {} nodes",
-            n
+            "🔍 Running optimized parallel transitive reduction on {n} nodes"
         );
 
         // Use bit vectors for memory efficiency on large graphs
@@ -519,7 +518,7 @@ impl CacheOptimizedGraph {
     /// Bit vector based transitive reduction for large graphs
     fn transitive_reduction_bitvector(&mut self) -> Result<()> {
         // Fallback to matrix-based approach for simplicity
-        return self.transitive_reduction_matrix();
+        self.transitive_reduction_matrix()
 
         // Original bit-vec implementation commented out for now
         // use bit_vec::BitVec;
@@ -614,7 +613,7 @@ impl CacheOptimizedGraph {
             removed_count += original_len - adj_list.len();
         }
 
-        println!("✅ Removed {} transitive edges", removed_count);
+        println!("✅ Removed {removed_count} transitive edges");
         Ok(())
     }
 

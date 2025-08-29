@@ -61,8 +61,7 @@ pub mod canonical_kmer_properties {
             {
                 assert_eq!(
                     kmer1.sequence, kmer2.sequence,
-                    "Canonical form should be same for {} and {}",
-                    seq, rev_comp
+                    "Canonical form should be same for {seq} and {rev_comp}"
                 );
                 assert_eq!(kmer1.hash, kmer2.hash);
             }
@@ -105,8 +104,7 @@ pub mod canonical_kmer_properties {
             for hash in &hashes {
                 assert_eq!(
                     *hash, hashes[0],
-                    "Hash should be consistent for sequence {}",
-                    seq
+                    "Hash should be consistent for sequence {seq}"
                 );
             }
         }
@@ -214,8 +212,7 @@ mod minimizer_properties {
                     assert_eq!(
                         minimizer.kmer.len(),
                         k,
-                        "Minimizer k-mer should have length {}",
-                        k
+                        "Minimizer k-mer should have length {k}"
                     );
                 }
             }
@@ -274,11 +271,7 @@ mod minimizer_properties {
                     if minimizers.len() > 1 {
                         let first_pos = minimizers.first().unwrap().position;
                         let last_pos = minimizers.last().unwrap().position;
-                        let span = if last_pos >= first_pos {
-                            last_pos - first_pos
-                        } else {
-                            0
-                        };
+                        let span = last_pos.saturating_sub(first_pos);
 
                         // Should cover a reasonable span
                         assert!(
@@ -482,8 +475,7 @@ mod graph_structure_properties {
                 let detected_as_tip = tips.contains(&node_hash);
 
                 assert_eq!(is_tip, detected_as_tip,
-                          "Node {:?} tip detection mismatch: in_deg={}, out_deg={}, is_tip={}, detected={}",
-                          node_hash, in_deg, out_deg, is_tip, detected_as_tip);
+                          "Node {node_hash:?} tip detection mismatch: in_deg={in_deg}, out_deg={out_deg}, is_tip={is_tip}, detected={detected_as_tip}");
             }
         }
     }
@@ -502,10 +494,8 @@ mod sequence_complexity_properties {
 
             let complexity = calculate_sequence_complexity(&sequence);
             assert!(
-                complexity >= 0.0 && complexity <= 1.0,
-                "Complexity {} should be in [0,1] for sequence {}",
-                complexity,
-                sequence
+                (0.0..=1.0).contains(&complexity),
+                "Complexity {complexity} should be in [0,1] for sequence {sequence}"
             );
         }
     }
@@ -547,7 +537,7 @@ mod sequence_complexity_properties {
     #[test]
     fn property_complexity_invariant_to_order() {
         // Property: Complexity should depend only on base frequencies, not order
-        let bases = vec!['A', 'T', 'C', 'G'];
+        let bases = ['A', 'T', 'C', 'G'];
 
         for _ in 0..20 {
             // Create two sequences with same base composition but different order
@@ -560,8 +550,8 @@ mod sequence_complexity_properties {
             let mut seq2 = String::new();
 
             for (i, &count) in counts.iter().enumerate() {
-                seq1.extend(std::iter::repeat(bases[i]).take(count));
-                seq2.extend(std::iter::repeat(bases[i]).take(count));
+                seq1.extend(std::iter::repeat_n(bases[i], count));
+                seq2.extend(std::iter::repeat_n(bases[i], count));
             }
 
             // Shuffle seq2 differently
@@ -591,10 +581,8 @@ mod sequence_complexity_properties {
 
             let gc_content = calculate_gc_content(&sequence);
             assert!(
-                gc_content >= 0.0 && gc_content <= 1.0,
-                "GC content {} should be in [0,1] for sequence {}",
-                gc_content,
-                sequence
+                (0.0..=1.0).contains(&gc_content),
+                "GC content {gc_content} should be in [0,1] for sequence {sequence}"
             );
         }
     }
@@ -693,7 +681,7 @@ mod assembly_invariants {
             let builder = AssemblyGraphBuilder::new(4, 6, 1);
 
             // Generate overlapping reads
-            let base_sequences = vec!["ATCGATCGATCGATCG", "TCGATCGATCGATCGA", "CGATCGATCGATCGAT"];
+            let base_sequences = ["ATCGATCGATCGATCG", "TCGATCGATCGATCGA", "CGATCGATCGATCGAT"];
 
             let mut reads = Vec::new();
             for (i, seq) in base_sequences.iter().enumerate() {

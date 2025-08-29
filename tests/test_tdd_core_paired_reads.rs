@@ -3,9 +3,7 @@
 //! Critical tests for paired-end read processing and validation
 //! Focus: Biological correctness, mate pair validation, quality metrics
 
-use meta_forge::core::data_structures::{BaseCorrection, CorrectionMetadata};
 use meta_forge::core::paired_reads::*;
-use std::collections::HashMap;
 
 /// Test read pair creation and validation
 /// BIOLOGICAL REQUIREMENT: Mate pairs must have matching IDs and proper orientations
@@ -180,10 +178,10 @@ mod adapter_trimming_tests {
         let adapter_r2 = "AGATCGGAAGAGC";
 
         // Create reads with adapter contamination
-        let sequence_with_adapter = format!("ATCGATCGATCGATCG{}", adapter_r1);
+        let sequence_with_adapter = format!("ATCGATCGATCGATCG{adapter_r1}");
         let clean_sequence = "CGATCGATCGATCGAT";
 
-        let mut forward = create_test_paired_read(
+        let forward = create_test_paired_read(
             1,
             "pair_001",
             ReadOrientation::Forward,
@@ -252,7 +250,7 @@ mod adapter_trimming_tests {
     fn test_partial_adapter_trimming() {
         // Test with partial adapter match (common in real data)
         let partial_adapter = "AGATCGG"; // Partial Illumina adapter
-        let sequence_with_partial = format!("ATCGATCGATCGATCG{}", partial_adapter);
+        let sequence_with_partial = format!("ATCGATCGATCGATCG{partial_adapter}");
 
         let forward = create_test_paired_read(
             1,
@@ -424,11 +422,7 @@ mod quality_metrics_tests {
 
             assert!(
                 complexity >= min_expected && complexity <= max_expected,
-                "Complexity for {} should be between {} and {}, got {}",
-                sequence,
-                min_expected,
-                max_expected,
-                complexity
+                "Complexity for {sequence} should be between {min_expected} and {max_expected}, got {complexity}"
             );
         }
     }
@@ -470,8 +464,7 @@ mod quality_metrics_tests {
             if should_pass {
                 assert!(
                     pair.forward.read_info.passes_filter,
-                    "Quality {} should pass filter",
-                    avg_quality
+                    "Quality {avg_quality} should pass filter"
                 );
             } else {
                 // Note: This test assumes quality filtering sets passes_filter correctly
@@ -588,7 +581,7 @@ mod paired_read_integration_tests {
         let mut pairs = Vec::new();
 
         for i in 0..10 {
-            let pair_id = format!("pair_{:03}", i);
+            let pair_id = format!("pair_{i:03}");
             let forward = create_test_paired_read(
                 i * 2,
                 &pair_id,
