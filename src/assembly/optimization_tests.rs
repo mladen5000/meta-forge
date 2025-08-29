@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod tdd_tests {
     use super::*;
+    use crate::assembly::memory_optimizations::*;
 
     /* ========================================================================= */
     /*                        TDD: KMER ARENA ALLOCATOR                        */

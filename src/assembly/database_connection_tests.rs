@@ -8,6 +8,9 @@
 #[cfg(test)]
 mod database_lifecycle_tests {
     use super::*;
+    use crate::assembly::database_optimizations::*;
+    use tempfile::tempdir;
+    use std::sync::Arc;
 
     fn create_test_database() -> GenomicDatabase {
         let temp_dir = tempdir().unwrap();
