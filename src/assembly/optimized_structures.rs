@@ -13,6 +13,7 @@
 //! - Custom allocator patterns for genomic workloads
 
 use anyhow::{anyhow, Result};
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -76,11 +77,33 @@ impl CompactKmer {
         let mut data = vec![0u64; num_u64s];
 
         for (i, nucleotide) in sequence.chars().enumerate() {
-            let bits = match nucleotide {
+            let bits = match nucleotide.to_ascii_uppercase() {
                 'A' => 0b00,
                 'C' => 0b01,
                 'G' => 0b10,
                 'T' => 0b11,
+                // Handle IUPAC ambiguous nucleotides based on configuration
+                'N' | 'Y' | 'R' | 'W' | 'S' | 'K' | 'M' | 'D' | 'V' | 'H' | 'B' => {
+                    // Use default Allow strategy with tolerance for ambiguous bases
+                    let default_config = AmbiguousBaseConfig {
+                        strategy: AmbiguousBaseStrategy::Allow,
+                        max_n_count: 2,
+                        replacement_base: 'A',
+                        random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
+                    };
+                    
+                    match default_config.strategy {
+                        AmbiguousBaseStrategy::Skip => {
+                            return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
+                        },
+                        AmbiguousBaseStrategy::Allow => {
+                            0b00 // Treat all ambiguous bases as A for encoding
+                        },
+                        AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
+                        AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
+                        AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
+                    }
+                }
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
 
@@ -119,11 +142,23 @@ impl CompactKmer {
     fn reverse_complement(sequence: &str) -> Result<String> {
         let mut result = String::with_capacity(sequence.len());
         for nucleotide in sequence.chars().rev() {
-            let complement = match nucleotide {
+            let complement = match nucleotide.to_ascii_uppercase() {
                 'A' => 'T',
                 'T' => 'A',
                 'C' => 'G',
                 'G' => 'C',
+                // Handle IUPAC ambiguous nucleotides
+                'N' => 'N', // N remains N in reverse complement
+                'Y' => 'R', // Y (C/T) -> R (A/G)
+                'R' => 'Y', // R (A/G) -> Y (C/T)
+                'W' => 'W', // W (A/T) -> W (A/T) - palindromic
+                'S' => 'S', // S (G/C) -> S (G/C) - palindromic
+                'K' => 'M', // K (G/T) -> M (A/C)
+                'M' => 'K', // M (A/C) -> K (G/T)
+                'D' => 'H', // D (A/G/T) -> H (A/C/T)
+                'V' => 'B', // V (A/C/G) -> B (C/G/T)
+                'H' => 'D', // H (A/C/T) -> D (A/G/T)
+                'B' => 'V', // B (C/G/T) -> V (A/C/G)
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
             result.push(complement);
@@ -307,6 +342,28 @@ impl RollingHasher {
             'C' => 1,
             'G' => 2,
             'T' => 3,
+            // Handle IUPAC ambiguous nucleotides based on configuration
+            'N' | 'Y' | 'R' | 'W' | 'S' | 'K' | 'M' | 'D' | 'V' | 'H' | 'B' => {
+                // Use default Allow strategy for rolling hash
+                let default_config = AmbiguousBaseConfig {
+                    strategy: AmbiguousBaseStrategy::Allow,
+                    max_n_count: 2,
+                    replacement_base: 'A',
+                    random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
+                };
+                
+                match default_config.strategy {
+                    AmbiguousBaseStrategy::Skip => {
+                        return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
+                    },
+                    AmbiguousBaseStrategy::Allow => {
+                        0 // Encode all ambiguous bases as A (0) for rolling hash
+                    },
+                    AmbiguousBaseStrategy::Replace => 0, // Replace with A
+                    AmbiguousBaseStrategy::RandomReplace => 0, // Use A for simplicity
+                    AmbiguousBaseStrategy::ContextReplace => 0, // Use A for simplicity
+                }
+            }
             _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
         };
 

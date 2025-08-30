@@ -6,6 +6,7 @@
 //! Expected performance improvement: 2-3x faster k-mer operations.
 
 use anyhow::{anyhow, Result};
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use std::sync::Arc;
 use std::collections::VecDeque;
 use parking_lot::Mutex;
@@ -193,11 +194,33 @@ impl PooledKmer {
         let mut data = vec![0u64; num_u64s];
         
         for (i, nucleotide) in sequence.chars().enumerate() {
-            let bits = match nucleotide {
+            let bits = match nucleotide.to_ascii_uppercase() {
                 'A' => 0b00,
                 'C' => 0b01,
                 'G' => 0b10,
                 'T' => 0b11,
+                // Handle IUPAC ambiguous nucleotides based on configuration
+                'N' | 'Y' | 'R' | 'W' | 'S' | 'K' | 'M' | 'D' | 'V' | 'H' | 'B' => {
+                    // Use default Allow strategy for k-mer pool
+                    let default_config = AmbiguousBaseConfig {
+                        strategy: AmbiguousBaseStrategy::Allow,
+                        max_n_count: 2,
+                        replacement_base: 'A',
+                        random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
+                    };
+                    
+                    match default_config.strategy {
+                        AmbiguousBaseStrategy::Skip => {
+                            return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
+                        },
+                        AmbiguousBaseStrategy::Allow => {
+                            0b00 // Treat all ambiguous bases as A for encoding
+                        },
+                        AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
+                        AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
+                        AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
+                    }
+                }
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
             
@@ -212,11 +235,23 @@ impl PooledKmer {
     fn reverse_complement(sequence: &str) -> Result<String> {
         let mut result = String::with_capacity(sequence.len());
         for nucleotide in sequence.chars().rev() {
-            let complement = match nucleotide {
+            let complement = match nucleotide.to_ascii_uppercase() {
                 'A' => 'T',
                 'T' => 'A',
                 'C' => 'G',
                 'G' => 'C',
+                // Handle IUPAC ambiguous nucleotides
+                'N' => 'N', // N remains N in reverse complement
+                'Y' => 'R', // Y (C/T) -> R (A/G)
+                'R' => 'Y', // R (A/G) -> Y (C/T)
+                'W' => 'W', // W (A/T) -> W (A/T) - palindromic
+                'S' => 'S', // S (G/C) -> S (G/C) - palindromic
+                'K' => 'M', // K (G/T) -> M (A/C)
+                'M' => 'K', // M (A/C) -> K (G/T)
+                'D' => 'H', // D (A/G/T) -> H (A/C/T)
+                'V' => 'B', // V (A/C/G) -> B (C/G/T)
+                'H' => 'D', // H (A/C/T) -> D (A/G/T)
+                'B' => 'V', // B (C/G/T) -> V (A/C/G)
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
             result.push(complement);

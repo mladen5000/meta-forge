@@ -17,6 +17,7 @@ use crate::assembly::performance_optimizations::{CacheOptimizedGraph, Optimizati
 use crate::CorrectedRead;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -73,11 +74,39 @@ impl BitPackedKmer {
         let mut current_word = 0u64;
         let mut bits_used = 0;
         for nucleotide in sequence.chars() {
-            let bits = match nucleotide {
+            let bits = match nucleotide.to_ascii_uppercase() {
                 'A' => 0b00,
                 'C' => 0b01,
                 'G' => 0b10,
                 'T' => 0b11,
+                // Handle IUPAC ambiguous nucleotides based on configuration
+                'N' | 'Y' | 'R' | 'W' | 'S' | 'K' | 'M' | 'D' | 'V' | 'H' | 'B' => {
+                    // For now, use default Allow strategy with max_n_count = 2
+                    // TODO: Pass configuration from higher level
+                    let default_config = AmbiguousBaseConfig {
+                        strategy: AmbiguousBaseStrategy::Allow,
+                        max_n_count: 2,
+                        replacement_base: 'A',
+                        random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
+                    };
+                    
+                    match default_config.strategy {
+                        AmbiguousBaseStrategy::Skip => {
+                            return Err(anyhow!("Ambiguous nucleotide {nucleotide} - skipping k-mer"))
+                        },
+                        AmbiguousBaseStrategy::Allow => {
+                            // For Allow strategy, replace N with A for encoding
+                            if nucleotide == 'N' {
+                                0b00 // Treat N as A
+                            } else {
+                                return Err(anyhow!("Ambiguous nucleotide {nucleotide} - skipping k-mer"))
+                            }
+                        },
+                        AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
+                        AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
+                        AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
+                    }
+                }
                 _ => return Err(anyhow!("Invalid nucleotide: {nucleotide}")),
             };
             current_word |= bits << (62 - bits_used);
@@ -125,11 +154,23 @@ impl BitPackedKmer {
         sequence
             .chars()
             .rev()
-            .map(|c| match c {
+            .map(|c| match c.to_ascii_uppercase() {
                 'A' => Ok('T'),
                 'T' => Ok('A'),
                 'G' => Ok('C'),
                 'C' => Ok('G'),
+                // Handle IUPAC ambiguous nucleotides
+                'N' => Ok('N'), // N remains N in reverse complement
+                'Y' => Ok('R'), // Y (C/T) -> R (A/G)
+                'R' => Ok('Y'), // R (A/G) -> Y (C/T)
+                'W' => Ok('W'), // W (A/T) -> W (A/T) - palindromic
+                'S' => Ok('S'), // S (G/C) -> S (G/C) - palindromic
+                'K' => Ok('M'), // K (G/T) -> M (A/C)
+                'M' => Ok('K'), // M (A/C) -> K (G/T)
+                'D' => Ok('H'), // D (A/G/T) -> H (A/C/T)
+                'V' => Ok('B'), // V (A/C/G) -> B (C/G/T)
+                'H' => Ok('D'), // H (A/C/T) -> D (A/G/T)
+                'B' => Ok('V'), // B (C/G/T) -> V (A/C/G)
                 _ => Err(anyhow!("Invalid nucleotide: {c}")),
             })
             .collect()
@@ -196,6 +237,33 @@ impl RollingHash {
             'C' => Ok(1),
             'G' => Ok(2),
             'T' => Ok(3),
+            // Handle IUPAC ambiguous nucleotides based on configuration
+            'N' | 'Y' | 'R' | 'W' | 'S' | 'K' | 'M' | 'D' | 'V' | 'H' | 'B' => {
+                // Use default Allow strategy for ambiguous bases
+                let default_config = AmbiguousBaseConfig {
+                    strategy: AmbiguousBaseStrategy::Allow,
+                    max_n_count: 2,
+                    replacement_base: 'A',
+                    random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
+                };
+                
+                match default_config.strategy {
+                    AmbiguousBaseStrategy::Skip => {
+                        Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", n))
+                    },
+                    AmbiguousBaseStrategy::Allow => {
+                        // For Allow strategy, treat N as A (most conservative)
+                        if n == 'N' {
+                            Ok(0) // A
+                        } else {
+                            Ok(0) // Default to A for other ambiguous bases
+                        }
+                    },
+                    AmbiguousBaseStrategy::Replace => Ok(0), // Replace with A 
+                    AmbiguousBaseStrategy::RandomReplace => Ok(0), // Use A for simplicity
+                    AmbiguousBaseStrategy::ContextReplace => Ok(0), // Use A for simplicity
+                }
+            }
             _ => Err(anyhow!("Invalid nucleotide: {n}")),
         }
     }

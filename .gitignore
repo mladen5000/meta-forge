@@ -68,3 +68,7 @@ scripts/run_checks.sh
 .leann/indexes/my-project/documents.leann.meta.json
 .leann/indexes/my-project/documents.leann.passages.idx
 .leann/indexes/my-project/documents.leann.passages.jsonl
+output/test_*
+data/*
+output/*
+outpu*
