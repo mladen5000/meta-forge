@@ -1,8 +1,0 @@
-{
-  "file_index": 0,
-  "file_path": "data/test_sample.fastq",
-  "reads_processed": 5,
-  "status": "completed",
-  "timestamp": "2025-08-29T20:05:45.462515+00:00",
-  "total_reads_so_far": 5
-}

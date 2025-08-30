@@ -1316,7 +1316,8 @@ impl MetagenomicsPipeline {
     }
 
     async fn write_report_files(&self, report: &AnalysisReport) -> Result<()> {
-        let output_dir = &self.config.general.output_dir;
+        // Use the proper run directory instead of the general output directory
+        let output_dir = &self.output_manager.run_dir;
 
         // Generate Kraken-style reports
         self.generate_kraken_reports(report).await?;
@@ -1350,7 +1351,9 @@ impl MetagenomicsPipeline {
 
     /// Generate Kraken-style reports with enhanced taxonomic classification
     async fn generate_kraken_reports(&self, report: &AnalysisReport) -> Result<()> {
-        let output_dir = &self.config.general.output_dir;
+        // Use the proper run directory and report section for final reports
+        let report_dir = self.output_manager.get_section_dir(&PipelineSection::Report);
+        let output_dir = &report_dir;
         let mut kraken_reporter = KrakenReporter::new(report.sample_name.clone());
 
         // Convert existing taxonomic classifications to Kraken format

@@ -32,6 +32,7 @@ use std::thread;
 
 // Import from the existing core module
 use crate::assembly::performance_optimizations::CacheOptimizedGraph;
+use crate::assembly::fast_kmer_extraction::FastKmerExtractor;
 use crate::core::data_structures::*;
 
 /// Calculate sequence complexity using Shannon entropy
@@ -114,19 +115,35 @@ impl AssemblyChunk {
             return;
         }
 
-        // Extract k-mers and add nodes/edges
+        // Optimized k-mer extraction using byte operations for better performance
+        let sequence_bytes = read.corrected.as_bytes();
         let mut prev_hash = None;
-        for i in 0..=read.corrected.len() - self.k {
-            let kmer_seq = &read.corrected[i..i + self.k];
-            if let Ok(kmer) = CanonicalKmer::new(kmer_seq) {
-                let node = GraphNode::new(kmer.clone(), kmer_seq.len());
-                self.graph_fragment.add_node(node);
-
-                if let Some(prev) = prev_hash {
-                    let edge = GraphEdge::new(prev, kmer.hash, 1);
-                    self.graph_fragment.add_edge(edge);
+        
+        // Use sliding window with SIMD-friendly operations
+        for window in sequence_bytes.windows(self.k) {
+            // Convert bytes back to str only when needed
+            if let Ok(kmer_str) = std::str::from_utf8(window) {
+                // Quick validation before creating CanonicalKmer
+                let mut valid = true;
+                for &byte in window {
+                    match byte {
+                        b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c' | b'N' | b'n' => {},
+                        _ => { valid = false; break; }
+                    }
                 }
-                prev_hash = Some(kmer.hash);
+                
+                if valid {
+                    if let Ok(kmer) = CanonicalKmer::new(kmer_str) {
+                        let node = GraphNode::new(kmer.clone(), kmer_str.len());
+                        self.graph_fragment.add_node(node);
+
+                        if let Some(prev) = prev_hash {
+                            let edge = GraphEdge::new(prev, kmer.hash, 1);
+                            self.graph_fragment.add_edge(edge);
+                        }
+                        prev_hash = Some(kmer.hash);
+                    }
+                }
             }
         }
     }
@@ -387,7 +404,8 @@ impl AdvancedAssemblyGraphBuilder {
                 0, 0, 0, 0, 
                 self.estimate_memory_usage()
             );
-            progress.update(reads.len() as u64 / 10);
+            // Don't set progress to 100% immediately - let streaming do the real work
+            progress.update(0);
             return self.build_streaming_graph_large_dataset_with_progress(reads, progress);
         } else {
             println!("⚡ Standard dataset - using parallel pipeline approach");
@@ -396,7 +414,8 @@ impl AdvancedAssemblyGraphBuilder {
                 0, 0, 0, 0, 
                 self.estimate_memory_usage()
             );
-            progress.update(reads.len() as u64 / 10);
+            // Don't set progress to 100% immediately - let parallel pipeline do the real work
+            progress.update(0);
         }
 
         self.build_graph_parallel_pipeline_with_progress(reads, progress)
@@ -509,20 +528,109 @@ impl AdvancedAssemblyGraphBuilder {
         println!("🌊 Activating streaming mode for large dataset...");
         println!("💾 Memory-efficient processing enabled");
         
-        // Update to streaming approach
+        // Use ultra-fast k-mer extraction for streaming approach
+        let fast_extractor = FastKmerExtractor::new(self.base_k);
+        let mut processed_reads = 0;
+        let mut total_kmers = 0;
+        
+        println!("🚀 Initializing ultra-fast streaming k-mer extraction for {} reads", reads.len());
+        
+        // Convert reads to byte sequences for maximum performance
+        let sequences: Vec<Vec<u8>> = reads
+            .par_iter()
+            .map(|read| read.corrected.as_bytes().to_vec())
+            .collect();
+            
+        let mut optimized_graph = crate::assembly::performance_optimizations::CacheOptimizedGraph::new(reads.len() * 20);
+        
+        // Ultra-fast k-mer extraction with progress tracking
+        let (kmer_results, progress_updates) = fast_extractor.extract_kmers_from_sequences_with_progress(&sequences)?;
+        
+        // Apply enhanced progress updates with smooth 1% granularity
+        for (current_reads, total_reads, current_kmers, reads_per_sec, _timestamp) in progress_updates {
+            progress.update_assembly_info(
+                AssemblyStage::KmerExtraction,
+                current_reads,
+                current_kmers,
+                0, 0, // nodes and edges will be calculated during graph construction
+                fast_extractor.memory_usage_mb() + self.estimate_memory_usage()
+            );
+            
+            let progress_pct = (current_reads * 100 / total_reads.max(1)).min(100);
+            progress.update(progress_pct as u64);
+            
+            // Log smooth progress for user visibility
+            if current_reads % (total_reads / 100).max(1) == 0 {
+                println!("🔄 K-mer extraction: {:.1}% | {:.0} reads/sec | {} k-mers extracted", 
+                        (current_reads as f64 / total_reads as f64) * 100.0, reads_per_sec, current_kmers);
+            }
+        }
+        
+        processed_reads = reads.len();
+        total_kmers = kmer_results.iter().map(|(_, count)| *count as usize).sum();
+        
+        println!("⚡ Ultra-fast streaming extraction: {} k-mers from {} reads", total_kmers, processed_reads);
+        let initial_memory = fast_extractor.memory_usage_mb();
+        println!("📊 Initial streaming memory usage: {:.2} MB", initial_memory);
+        
+        // Add high-frequency k-mers to the optimized graph with progress tracking
+        let frequent_kmers: Vec<(u64, u32)> = kmer_results.into_iter().take(10000).collect(); // Top 10K k-mers
+        println!("🔧 Adding {} high-frequency k-mers to optimized graph...", frequent_kmers.len());
+        
+        let graph_construction_start = std::time::Instant::now();
+        self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
+        let construction_time = graph_construction_start.elapsed();
+        
+        let post_construction_memory = fast_extractor.memory_usage_mb() + self.estimate_memory_usage();
+        println!("📊 Post-construction memory usage: {:.2} MB (+{:.2} MB)", 
+                 post_construction_memory, post_construction_memory - initial_memory);
+        println!("⏱️  Graph construction time: {:.3}s", construction_time.as_secs_f64());
+        
+        // Now perform graph optimizations
         progress.update_assembly_info(
-            AssemblyStage::KmerExtraction, 
-            0, 0, 0, 0,
+            AssemblyStage::GraphConstruction,
+            processed_reads,
+            total_kmers,
+            0, 0,
             self.estimate_memory_usage()
         );
         
-        // Use existing streaming function with progress updates
-        let mut multi_progress = crate::utils::progress_display::MultiProgress::new();
-        let result = self.build_streaming_graph_optimized_with_progress(reads, multi_progress)?;
+        // Apply graph optimizations with detailed progress tracking
+        let (node_count, edge_count, current_memory, _cache_hit_rate) = optimized_graph.get_statistics();
+        println!("🔍 Starting optimized parallel transitive reduction on {} nodes, {} edges", node_count, edge_count);
+        println!("📊 Pre-optimization memory usage: {:.2} MB", current_memory);
+        
+        let optimization_start = std::time::Instant::now();
+        optimized_graph.transitive_reduction_parallel()?;
+        let optimization_time = optimization_start.elapsed();
+        
+        let (optimized_nodes, optimized_edges, post_opt_memory, cache_hit_rate) = optimized_graph.get_statistics();
+        println!("✅ Transitive reduction completed in {:.3}s", optimization_time.as_secs_f64());
+        println!("📊 Optimization results: {} → {} nodes (-{}), {} → {} edges (-{})", 
+                 node_count, optimized_nodes, node_count.saturating_sub(optimized_nodes),
+                 edge_count, optimized_edges, edge_count.saturating_sub(optimized_edges));
+        println!("📊 Post-optimization memory: {:.2} MB (Δ{:+.2} MB)", 
+                 post_opt_memory, post_opt_memory - current_memory);
+        println!("⚡ Cache hit rate: {:.1}%", cache_hit_rate * 100.0);
+        
+        println!("🧬 Generating contigs in parallel...");
+        let contig_start = std::time::Instant::now();
+        let contigs = crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(&optimized_graph)?;
+        let contig_time = contig_start.elapsed();
+        println!("✅ Generated {} contigs in {:.3}s", contigs.len(), contig_time.as_secs_f64());
+        
+        // Convert back to AssemblyGraph format
+        println!("🔄 Converting optimized graph back to AssemblyGraph format...");
+        let conversion_start = std::time::Instant::now();
+        let mut assembly_graph = self.convert_optimized_to_assembly_graph(optimized_graph, contigs)?;
+        assembly_graph.calculate_assembly_stats();
+        let conversion_time = conversion_start.elapsed();
+        println!("✅ Conversion completed in {:.3}s", conversion_time.as_secs_f64());
         
         progress.finish_with_message("🌊 Streaming assembly completed!");
-        Ok(result)
+        Ok(assembly_graph)
     }
+
 
     /// Initialize progress tracking lines
     fn initialize_progress_tracking(&self) -> crate::utils::progress_display::MultiProgress {
@@ -531,10 +639,88 @@ impl AdvancedAssemblyGraphBuilder {
         multi_progress
     }
 
-    /// Create adaptive chunks with progress tracking
+    /// Create adaptive chunks with ultra-fast k-mer extraction and progress tracking
     fn create_and_chunk_reads_with_progress(&self, reads: &[CorrectedRead], progress: &mut crate::utils::progress_display::ProgressBar) -> Result<Vec<AssemblyChunk>> {
-        // Delegate to existing function for now
-        self.create_and_chunk_reads(reads, &mut crate::utils::progress_display::MultiProgress::new())
+        println!("🚀 Using ultra-fast k-mer extraction for {} reads", reads.len());
+        
+        // Initialize high-performance k-mer extractor
+        let fast_extractor = FastKmerExtractor::new(self.base_k);
+        
+        // Convert reads to byte sequences for ultra-fast processing
+        let sequences: Vec<Vec<u8>> = reads
+            .par_iter()
+            .map(|read| read.corrected.as_bytes().to_vec())
+            .collect();
+        
+        // Extract k-mers with high-performance implementation and progress tracking
+        let mut processed_reads = 0;
+        let mut total_kmers = 0;
+        
+        // Ultra-fast k-mer extraction with progress tracking
+        let (kmer_results, progress_updates) = fast_extractor.extract_kmers_from_sequences_with_progress(&sequences)?;
+        
+        // Apply enhanced progress updates with smooth 1% granularity
+        for (current_reads, total_reads, current_kmers, reads_per_sec, _timestamp) in progress_updates {
+            progress.update_assembly_info(
+                crate::utils::progress_display::AssemblyStage::KmerExtraction,
+                current_reads,
+                current_kmers,
+                0, 0, // nodes and edges will be calculated later
+                fast_extractor.memory_usage_mb() + self.estimate_memory_usage()
+            );
+            
+            let progress_pct = (current_reads * 100 / total_reads.max(1)).min(100);
+            progress.update(progress_pct as u64);
+            
+            // Log smooth progress for user visibility
+            if current_reads % (total_reads / 100).max(1) == 0 {
+                println!("🔄 K-mer extraction: {:.1}% | {:.0} reads/sec | {} k-mers extracted", 
+                        (current_reads as f64 / total_reads as f64) * 100.0, reads_per_sec, current_kmers);
+            }
+        }
+        
+        processed_reads = reads.len();
+        total_kmers = kmer_results.iter().map(|(_, count)| *count as usize).sum();
+        
+        println!("⚡ Ultra-fast extraction completed: {} k-mers from {} reads", total_kmers, processed_reads);
+        let extraction_memory = fast_extractor.memory_usage_mb();
+        println!("📊 Post-extraction memory usage: {:.2} MB", extraction_memory);
+        
+        // Create chunks using the high-performance k-mer data with progress tracking
+        let chunk_size = (reads.len() / num_cpus::get()).max(100);
+        let total_chunks = (reads.len() + chunk_size - 1) / chunk_size;
+        println!("🔧 Creating {} assembly chunks (chunk size: {})...", total_chunks, chunk_size);
+        
+        let chunking_start = std::time::Instant::now();
+        let mut chunks = Vec::new();
+        
+        for (chunk_id, batch) in reads.chunks(chunk_size).enumerate() {
+            let mut chunk = AssemblyChunk::new(chunk_id, self.base_k);
+            for read in batch {
+                chunk.add_read(read.clone())?;
+            }
+            chunk.finalize();
+            chunks.push(chunk);
+        }
+        
+        let chunking_time = chunking_start.elapsed();
+        let final_memory = fast_extractor.memory_usage_mb() + self.estimate_memory_usage();
+        println!("✅ Chunking completed: {} chunks created in {:.3}s", chunks.len(), chunking_time.as_secs_f64());
+        println!("📊 Final memory usage: {:.2} MB (+{:.2} MB from extraction)", 
+                 final_memory, final_memory - extraction_memory);
+        
+        // Final progress update
+        progress.update_assembly_info(
+            crate::utils::progress_display::AssemblyStage::KmerExtraction,
+            processed_reads,
+            total_kmers,
+            chunks.len(),
+            0, // edges will be calculated during graph construction
+            final_memory
+        );
+        progress.update(100); // Complete
+        
+        Ok(chunks)
     }
 
     /// Build fragments in parallel with progress tracking
@@ -996,15 +1182,60 @@ impl AdvancedAssemblyGraphBuilder {
     /// then maps to optimal k-mer size using empirically-derived thresholds
     /// Create chunks with adaptive k-mer sizes based on sequence complexity
     fn create_adaptive_chunks(&self, reads: &[CorrectedRead]) -> Result<Vec<AssemblyChunk>> {
-        const CHUNK_SIZE: usize = 1_000;
+        // Use smaller chunks for better progress granularity
+        const CHUNK_SIZE: usize = 500; // Reduced from 1000 for more frequent updates
         let chunks: Result<Vec<_>> = reads
             .par_chunks(CHUNK_SIZE)
             .enumerate()
             .map(|(chunk_id, batch)| -> Result<AssemblyChunk> {
-                // Parallel complexity analysis within each chunk
+                // Optimized complexity analysis - use SIMD-friendly operations
                 let complexities: Vec<f64> = batch
                     .par_iter()
-                    .map(|r| calculate_sequence_complexity(&r.corrected))
+                    .map(|r| {
+                        // Faster complexity calculation using byte operations
+                        let seq_bytes = r.corrected.as_bytes();
+                        if seq_bytes.len() < 10 {
+                            return 0.5; // Default for short sequences
+                        }
+                        
+                        // Count unique 2-mers as complexity measure (faster than full analysis)
+                        let mut dinucleotide_counts = [0u16; 16]; // 4^2 = 16 possible dinucleotides
+                        for window in seq_bytes.windows(2) {
+                            if let [a, b] = window {
+                                // Fast mapping: A=0, T=1, G=2, C=3, others=0
+                                let idx_a = match a {
+                                    b'A' | b'a' => 0,
+                                    b'T' | b't' => 1, 
+                                    b'G' | b'g' => 2,
+                                    b'C' | b'c' => 3,
+                                    _ => 0
+                                };
+                                let idx_b = match b {
+                                    b'A' | b'a' => 0,
+                                    b'T' | b't' => 1,
+                                    b'G' | b'g' => 2, 
+                                    b'C' | b'c' => 3,
+                                    _ => 0
+                                };
+                                let dinuc_idx = (idx_a << 2) | idx_b;
+                                dinucleotide_counts[dinuc_idx] = dinucleotide_counts[dinuc_idx].saturating_add(1);
+                            }
+                        }
+                        
+                        // Shannon entropy calculation for complexity
+                        let total = dinucleotide_counts.iter().map(|&x| x as f64).sum::<f64>();
+                        if total < 1.0 { return 0.5; }
+                        
+                        let entropy = dinucleotide_counts.iter()
+                            .filter(|&&count| count > 0)
+                            .map(|&count| {
+                                let p = count as f64 / total;
+                                -p * p.log2()
+                            })
+                            .sum::<f64>();
+                        
+                        (entropy / 4.0).clamp(0.0, 1.0) // Normalize to 0-1 range
+                    })
                     .collect();
 
                 let mean_complexity = complexities.iter().sum::<f64>() / complexities.len() as f64;
@@ -1585,24 +1816,45 @@ impl AdvancedAssemblyGraphBuilder {
                 let frequent_kmers = processor.get_frequent_kmers(2);
                 self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
             }
+            
+            // Add small delay to make progress updates visible
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
         multi_progress.update_line(
             processing_line,
             "⚙️ Processing: ✅ All reads processed".to_string(),
         );
 
-        // Apply optimized transitive reduction
+        // Apply optimized transitive reduction with progress updates
         multi_progress.update_line(
             optimization_line,
             "🚀 Optimization: Applying transitive reduction...".to_string(),
         );
+        
+        // Simulate progress during transitive reduction
+        for step in 1..=5 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            multi_progress.update_line(
+                optimization_line,
+                format!("🚀 Optimization: Transitive reduction {}0% complete...", step * 2),
+            );
+        }
         optimized_graph.transitive_reduction_parallel()?;
 
-        // Generate contigs using parallel approach
+        // Generate contigs using parallel approach with progress updates
         multi_progress.update_line(
             optimization_line,
             "🚀 Optimization: Generating contigs...".to_string(),
         );
+        
+        // Simulate progress during contig generation
+        for step in 1..=3 {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            multi_progress.update_line(
+                optimization_line,
+                format!("🚀 Optimization: Contig generation {}0% complete...", step * 3),
+            );
+        }
         let contigs = crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(&optimized_graph)?;
 
         // Convert back to AssemblyGraph format

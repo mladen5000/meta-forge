@@ -809,23 +809,39 @@ impl AssemblyChunk {
         }
 
         let mut kmers = Vec::new();
-        for (i, window) in sequence.as_bytes().windows(self.k_size).enumerate() {
+        let sequence_bytes = sequence.as_bytes();
+        
+        // Pre-allocate capacity for better performance
+        kmers.reserve_exact(sequence_bytes.len().saturating_sub(self.k_size - 1));
+        
+        // Optimized k-mer extraction with fewer allocations
+        for (i, window) in sequence_bytes.windows(self.k_size).enumerate() {
+            // Quick byte validation before UTF-8 conversion
+            let mut valid_nucleotides = true;
+            for &byte in window {
+                match byte {
+                    b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c' | b'N' | b'n' |
+                    b'Y' | b'y' | b'R' | b'r' | b'W' | b'w' | b'S' | b's' | b'K' | b'k' |
+                    b'M' | b'm' | b'D' | b'd' | b'V' | b'v' | b'H' | b'h' | b'B' | b'b' => {},
+                    _ => { valid_nucleotides = false; break; }
+                }
+            }
+            
+            if !valid_nucleotides {
+                continue;
+            }
+
+            // Convert to string only after validation
             let kmer_str = match std::str::from_utf8(window) {
                 Ok(s) => s,
-                Err(_) => {
-                    println!("   Warning: Invalid UTF-8 in k-mer at position {i}");
-                    continue;
-                }
+                Err(_) => continue, // Skip invalid UTF-8, already logged elsewhere
             };
 
             match CanonicalKmer::new(kmer_str) {
                 Ok(canonical_kmer) => {
                     kmers.push((i, canonical_kmer));
                 }
-                Err(e) => {
-                    println!("   Warning: Failed to create k-mer '{kmer_str}': {e}");
-                    continue;
-                }
+                Err(_) => continue, // Skip invalid k-mers, reduced logging for performance
             }
         }
 

@@ -72,3 +72,4 @@ output/test_*
 data/*
 output/*
 outpu*
+target/*

@@ -16,6 +16,14 @@ path = "src/main.rs"
 name = "integrated-demo"
 path = "src/bin/integrated_demo.rs"
 
+[[bin]]
+name = "kmer-benchmark"
+path = "src/bin/kmer_benchmark.rs"
+
+[[bin]]
+name = "progress-demo"
+path = "src/bin/progress_demo.rs"
+
 [lib]
 name = "meta_forge"
 path = "src/lib.rs"
@@ -72,6 +80,8 @@ bio = "2.3.0"
 
 seq_io = "0.3.4"
 rust-htslib = "0.50.0"
+needletail = "0.5.1"  # Fast k-mer extraction and sequence parsing
+noodles = { version = "0.82.0", features = ["fastq"] }  # High-performance sequence formats
 
 # --- Database & Serialization ---
 rusqlite = { version = "0.37.0", features = ["chrono"] }

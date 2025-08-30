@@ -494,23 +494,39 @@ impl CacheOptimizedGraph {
         to_node.update_degree(current_in + 1, to_node.out_degree());
     }
 
-    /// Parallel transitive reduction with cache optimization
+    /// Parallel transitive reduction with enhanced progress tracking
     pub fn transitive_reduction_parallel(&mut self) -> Result<()> {
         let n = self.nodes.len();
         if n == 0 {
             return Ok(());
         }
 
-        println!(
-            "🔍 Running optimized parallel transitive reduction on {n} nodes"
-        );
+        let (_, edges_before, memory_before, _) = self.get_statistics();
+        println!("🔍 Running optimized parallel transitive reduction on {} nodes, {} edges", n, edges_before);
+        println!("📊 Pre-reduction memory: {:.2} MB", memory_before);
+        
+        let reduction_start = std::time::Instant::now();
 
-        // Use bit vectors for memory efficiency on large graphs
+        // Use bit vectors for memory efficiency on large graphs with progress tracking
         if n > 10000 {
+            println!("🔧 Using bit-vector algorithm for large graph (>10K nodes)");
             self.transitive_reduction_bitvector()?;
         } else {
+            println!("🔧 Using matrix-based algorithm for standard graph (<10K nodes)");
             self.transitive_reduction_matrix()?;
         }
+        
+        let reduction_time = reduction_start.elapsed();
+        let (_, edges_after, memory_after, cache_hit_rate) = self.get_statistics();
+        let edges_removed = edges_before.saturating_sub(edges_after);
+        
+        println!("✅ Transitive reduction completed in {:.3}s", reduction_time.as_secs_f64());
+        println!("📊 Edges reduced: {} → {} (-{} edges, {:.1}% reduction)", 
+                 edges_before, edges_after, edges_removed, 
+                 (edges_removed as f64 / edges_before.max(1) as f64) * 100.0);
+        println!("📊 Memory change: {:.2} MB → {:.2} MB ({:+.2} MB)", 
+                 memory_before, memory_after, memory_after - memory_before);
+        println!("⚡ Cache hit rate during reduction: {:.1}%", cache_hit_rate * 100.0);
 
         Ok(())
     }
@@ -578,8 +594,19 @@ impl CacheOptimizedGraph {
             }
         }
 
-        // Floyd-Warshall algorithm
+        // Floyd-Warshall algorithm with progress tracking
+        println!("🔄 Computing transitive closure using Floyd-Warshall algorithm...");
+        let fw_start = std::time::Instant::now();
+        
         for k in 0..n {
+            // Progress update every 10% of nodes
+            if k > 0 && k % (n / 10).max(1) == 0 {
+                let progress_pct = (k as f64 / n as f64) * 100.0;
+                let elapsed = fw_start.elapsed();
+                println!("  📊 Floyd-Warshall progress: {:.1}% (k={}/{}) | {:.3}s elapsed", 
+                         progress_pct, k, n, elapsed.as_secs_f64());
+            }
+            
             for i in 0..n {
                 if reachable[i][k] {
                     for j in 0..n {
@@ -590,9 +617,16 @@ impl CacheOptimizedGraph {
                 }
             }
         }
+        
+        let fw_time = fw_start.elapsed();
+        println!("✅ Floyd-Warshall completed in {:.3}s", fw_time.as_secs_f64());
 
-        // Find and remove transitive edges
+        // Find and remove transitive edges with progress tracking
+        println!("🔄 Analyzing edges for transitive reduction...");
+        let edge_analysis_start = std::time::Instant::now();
         let mut removed_count = 0;
+        let total_edges: usize = self.adjacency.iter().map(|adj| adj.len()).sum();
+        let mut processed_edges = 0;
 
         // First collect which edges to retain
         let mut edges_to_retain: Vec<Vec<u32>> = Vec::with_capacity(self.adjacency.len());
@@ -602,18 +636,35 @@ impl CacheOptimizedGraph {
                 if !self.has_alternate_path_matrix(i, j as usize, &reachable) {
                     retained_edges.push(j);
                 }
+                processed_edges += 1;
+                
+                // Progress update every 10% of edges
+                if processed_edges % (total_edges / 10).max(1) == 0 {
+                    let progress_pct = (processed_edges as f64 / total_edges as f64) * 100.0;
+                    println!("  📊 Edge analysis progress: {:.1}% ({}/{})", 
+                             progress_pct, processed_edges, total_edges);
+                }
             }
             edges_to_retain.push(retained_edges);
         }
+        
+        let edge_analysis_time = edge_analysis_start.elapsed();
+        println!("✅ Edge analysis completed in {:.3}s", edge_analysis_time.as_secs_f64());
 
         // Now update the adjacency lists
+        println!("🔄 Updating graph adjacency lists...");
+        let update_start = std::time::Instant::now();
+        
         for (i, adj_list) in self.adjacency.iter_mut().enumerate() {
             let original_len = adj_list.len();
             *adj_list = edges_to_retain[i].clone();
             removed_count += original_len - adj_list.len();
         }
-
-        println!("✅ Removed {removed_count} transitive edges");
+        
+        let update_time = update_start.elapsed();
+        println!("✅ Graph updates completed in {:.3}s", update_time.as_secs_f64());
+        println!("📊 Transitive reduction summary: Removed {} edges ({:.1}% reduction)", 
+                 removed_count, (removed_count as f64 / total_edges.max(1) as f64) * 100.0);
         Ok(())
     }
 
