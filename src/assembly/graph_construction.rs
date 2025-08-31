@@ -372,7 +372,7 @@ impl AdvancedAssemblyGraphBuilder {
     fn sequential_contig_generation(
         &self,
         graph: &CacheOptimizedGraph,
-    ) -> Result<Vec<crate::assembly::performance_optimizations::OptimizedContig>> {
+    ) -> Result<Vec<crate::core::data_structures::Contig>> {
         println!("   Sequential contig generation");
         crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(graph)
     }
@@ -947,7 +947,7 @@ impl AdvancedAssemblyGraphBuilder {
     fn convert_optimized_to_assembly_graph(
         &self,
         opt_graph: CacheOptimizedGraph,
-        contigs: Vec<crate::assembly::performance_optimizations::OptimizedContig>,
+        contigs: Vec<crate::core::data_structures::Contig>,
     ) -> Result<AssemblyGraph> {
         let mut assembly_graph = AssemblyGraph::new();
 
@@ -958,7 +958,7 @@ impl AdvancedAssemblyGraphBuilder {
                 sequence: format!("N{}", opt_contig.length), // Placeholder - would reconstruct actual sequence
                 coverage: opt_contig.coverage,
                 length: opt_contig.length,
-                node_path: opt_contig.node_indices.iter().map(|&i| i as u64).collect(),
+                node_path: opt_contig.node_path.clone(),
                 contig_type: ContigType::Linear,
             };
             assembly_graph.contigs.push(contig);

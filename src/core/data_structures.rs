@@ -715,12 +715,7 @@ pub struct EdgeWeight {
     pub confidence: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ContigType {
-    Linear,
-    Circular,
-    Repeat,
-}
+// Duplicate ContigType removed - using the existing one above
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contig {
