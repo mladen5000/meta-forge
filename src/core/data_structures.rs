@@ -716,6 +716,13 @@ pub struct EdgeWeight {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContigType {
+    Linear,
+    Circular,
+    Repeat,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contig {
     pub id: usize,
     pub sequence: String,

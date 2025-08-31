@@ -1778,7 +1778,11 @@ impl MetagenomicsPipeline {
                 total_length: assembly.assembly_stats.total_length,
                 n50: assembly.assembly_stats.n50,
                 mean_coverage: assembly.assembly_stats.coverage_mean,
-                unique_species: classifications.len(),
+                unique_species: classifications
+                    .iter()
+                    .map(|c| &c.taxonomy_name)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len(),
                 diversity_index: classifications
                     .iter()
                     .map(|c| c.confidence * c.confidence.ln())

@@ -94,7 +94,15 @@ async fn main() -> Result<()> {
                 "   Assembly N50: {} bp",
                 results.assembly_results.assembly_stats.n50
             );
-            println!("   Species identified: {}", results.classifications.len());
+            println!(
+                "   Species identified: {}",
+                results
+                    .classifications
+                    .iter()
+                    .map(|c| &c.taxonomy_name)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            );
             println!(
                 "   Processing time: {:.2} seconds",
                 results.processing_time.as_secs_f64()
