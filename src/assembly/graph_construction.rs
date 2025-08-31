@@ -345,36 +345,39 @@ impl AdvancedAssemblyGraphBuilder {
     }
 
     /// Process a single read and create proper sequence-based edges
-    /// This creates edges between consecutive k-mers that have (k-1) overlaps
+    /// OPTIMIZED: Batch operations and reduce per-k-mer overhead  
     fn process_read_with_edges(&self, graph: &mut CacheOptimizedGraph, sequence: &str) -> Result<()> {
         if sequence.len() < self.base_k {
             return Ok(()); // Skip short sequences
         }
 
-        let mut prev_kmer_hash: Option<u64> = None;
+        // Pre-validate sequence has only valid bases (batch check)
+        let sequence_bytes = sequence.as_bytes();
+        let is_valid = sequence_bytes.iter().all(|&b| matches!(b, b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c'));
+        if !is_valid {
+            return Ok(()); // Skip sequences with ambiguous bases
+        }
+
+        // Pre-allocate vector for batch operations
+        let mut kmer_hashes = Vec::with_capacity(sequence.len() - self.base_k + 1);
         
-        // Extract overlapping k-mers from the sequence
-        for window in sequence.as_bytes().windows(self.base_k) {
+        // Extract all k-mer hashes in one pass (batch hash computation)
+        for window in sequence_bytes.windows(self.base_k) {
             if let Ok(kmer_str) = std::str::from_utf8(window) {
-                // Validate k-mer (skip ambiguous bases for now)
-                if kmer_str.chars().all(|c| matches!(c.to_ascii_uppercase(), 'A' | 'T' | 'G' | 'C')) {
-                    // Create canonical k-mer and get hash
-                    if let Ok(canonical_kmer) = crate::core::data_structures::CanonicalKmer::new(kmer_str) {
-                        let kmer_hash = canonical_kmer.hash;
-                        
-                        // Add node to graph (with coverage of 1)
-                        graph.add_node(kmer_hash, 1);
-                        
-                        // Create edge to previous k-mer (this creates the de Bruijn graph structure)
-                        if let Some(prev_hash) = prev_kmer_hash {
-                            // This edge represents a (k-1) overlap between consecutive k-mers
-                            graph.add_edge(prev_hash, kmer_hash)?;
-                        }
-                        
-                        prev_kmer_hash = Some(kmer_hash);
-                    }
+                if let Ok(canonical_kmer) = crate::core::data_structures::CanonicalKmer::new(kmer_str) {
+                    kmer_hashes.push(canonical_kmer.hash);
                 }
             }
+        }
+        
+        // Batch add all nodes (single graph operation)
+        for &hash in &kmer_hashes {
+            graph.add_node(hash, 1);
+        }
+        
+        // Batch create edges between consecutive k-mers
+        for i in 1..kmer_hashes.len() {
+            graph.add_edge(kmer_hashes[i-1], kmer_hashes[i])?;
         }
         
         Ok(())
@@ -748,7 +751,7 @@ impl AdvancedAssemblyGraphBuilder {
         println!("📊 Post-extraction memory usage: {:.2} MB", extraction_memory);
         
         // Create chunks using the high-performance k-mer data with progress tracking
-        let chunk_size = (reads.len() / num_cpus::get()).max(100);
+        let chunk_size = (reads.len() / num_cpus::get()).max(100).min(1500);
         let total_chunks = (reads.len() + chunk_size - 1) / chunk_size;
         println!("🔧 Creating {} assembly chunks (chunk size: {})...", total_chunks, chunk_size);
         
@@ -896,11 +899,38 @@ impl AdvancedAssemblyGraphBuilder {
             "⚡ Optimization: ✅ Completed".to_string(),
         );
 
+        // Convert GraphFragment to CacheOptimizedGraph for contig generation
+        let mut cache_graph = crate::assembly::performance_optimizations::CacheOptimizedGraph::new(
+            merged.nodes.len()
+        );
+        
+        // Transfer nodes and edges from GraphFragment to CacheOptimizedGraph
+        for (hash, node) in &merged.nodes {
+            cache_graph.add_node(*hash, node.coverage as u32);
+        }
+        
+        for edge in &merged.edges {
+            let _ = cache_graph.add_edge(edge.from_hash, edge.to_hash);
+        }
+        
+        println!("🔍 DEBUG: Converting GraphFragment with {} nodes, {} edges to contigs", 
+                merged.nodes.len(), merged.edges.len());
+        
+        // Generate contigs using ParallelContigGenerator
+        // CRITICAL BUG FIX: Don't suppress errors with unwrap_or_else - propagate them!
+        let contigs = crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(&cache_graph)
+            .map_err(|e| {
+                eprintln!("🚨 CRITICAL: ParallelContigGenerator failed: {}", e);
+                e
+            })?;
+        
+        println!("🔍 DEBUG: Generated {} contigs from GraphFragment", contigs.len());
+        
         // Convert to final assembly graph format
         Ok(AssemblyGraph {
             graph_fragment: merged,
             petgraph: petgraph::graph::Graph::new(),
-            contigs: Vec::new(),
+            contigs,
             assembly_stats: crate::core::data_structures::AssemblyStats::default(),
         })
     }
@@ -982,11 +1012,11 @@ impl AdvancedAssemblyGraphBuilder {
     ) -> Result<AssemblyGraph> {
         let mut assembly_graph = AssemblyGraph::new();
 
-        // Convert contigs to standard format
+        // Convert contigs to standard format - preserve actual sequences
         for opt_contig in contigs {
             let contig = Contig {
                 id: opt_contig.id,
-                sequence: format!("N{}", opt_contig.length), // Placeholder - would reconstruct actual sequence
+                sequence: opt_contig.sequence.clone(), // Use the actual reconstructed sequence!
                 coverage: opt_contig.coverage,
                 length: opt_contig.length,
                 node_path: opt_contig.node_path.clone(),
@@ -1910,7 +1940,19 @@ impl AdvancedAssemblyGraphBuilder {
                 format!("🚀 Optimization: Contig generation {}0% complete...", step * 3),
             );
         }
+        
+        // Debug: Check graph state before contig generation
+        let (nodes, edges, memory_mb, cache_rate) = optimized_graph.get_statistics();
+        println!("🔍 DEBUG: Graph before contig generation: {} nodes, {} edges", nodes, edges);
+        
         let contigs = crate::assembly::performance_optimizations::ParallelContigGenerator::generate_contigs_parallel(&optimized_graph)?;
+        
+        // Debug: Check contig generation result
+        println!("🔍 DEBUG: Generated {} contigs from ParallelContigGenerator", contigs.len());
+        for (i, contig) in contigs.iter().enumerate() {
+            println!("  Debug Contig {}: {} bp, coverage {:.2}", 
+                     i + 1, contig.sequence.len(), contig.coverage);
+        }
 
         // Convert back to AssemblyGraph format
         let mut assembly_graph =

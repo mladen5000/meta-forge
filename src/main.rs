@@ -132,6 +132,11 @@ async fn main() -> Result<()> {
             // Create pipeline with default configuration
             let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
 
+            // CRITICAL FIX: Apply CLI arguments to pipeline configuration
+            let k_min = k_range.map(|(min, _)| min);
+            let k_max = k_range.map(|(_, max)| max);
+            pipeline.set_assembly_config(k_min, k_max, Some(min_coverage));
+
             // Run preprocessing to get reads
             println!("📋 Preprocessing input files...");
             let reads = pipeline.preprocess_inputs(&input).await?;

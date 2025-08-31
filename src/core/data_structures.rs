@@ -821,87 +821,72 @@ impl AssemblyChunk {
 
     pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
         let start_time = std::time::Instant::now();
-
-        // Simple k-mer extraction instead of minimizers for more reliable results
+        
+        // Fast k-mer extraction with minimal overhead
         let sequence = &read.corrected;
         if sequence.len() < self.k_size {
-            println!(
-                "   Warning: Read {} too short ({} bp) for k-mer size {}",
-                read.id,
-                sequence.len(),
-                self.k_size
-            );
+            // Silent skip for short reads - no logging overhead
             return Ok(());
         }
-
-        let mut kmers = Vec::new();
+        
         let sequence_bytes = sequence.as_bytes();
+        let expected_kmers = sequence_bytes.len().saturating_sub(self.k_size - 1);
         
-        // Pre-allocate capacity for better performance
-        kmers.reserve_exact(sequence_bytes.len().saturating_sub(self.k_size - 1));
+        // Batch validation: check entire sequence once (only ATGC allowed)
+        let is_valid_sequence = sequence_bytes.iter().all(|&b| {
+            matches!(b, b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c')
+        });
         
-        // Optimized k-mer extraction with fewer allocations
+        if !is_valid_sequence {
+            // Skip sequences with ambiguous bases - no per-kmer processing
+            return Ok(());
+        }
+        
+        // Pre-allocate for batch operations
+        let mut kmer_hashes = Vec::with_capacity(expected_kmers);
+        let mut positions = Vec::with_capacity(expected_kmers);
+        
+        // Fast k-mer extraction without individual validations
         for (i, window) in sequence_bytes.windows(self.k_size).enumerate() {
-            // Quick byte validation before UTF-8 conversion
-            let mut valid_nucleotides = true;
-            for &byte in window {
-                match byte {
-                    b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c' | b'N' | b'n' |
-                    b'Y' | b'y' | b'R' | b'r' | b'W' | b'w' | b'S' | b's' | b'K' | b'k' |
-                    b'M' | b'm' | b'D' | b'd' | b'V' | b'v' | b'H' | b'h' | b'B' | b'b' => {},
-                    _ => { valid_nucleotides = false; break; }
+            if let Ok(kmer_str) = std::str::from_utf8(window) {
+                if let Ok(canonical_kmer) = CanonicalKmer::new(kmer_str) {
+                    kmer_hashes.push(canonical_kmer.hash);
+                    positions.push(i);
                 }
             }
-            
-            if !valid_nucleotides {
-                continue;
-            }
-
-            // Convert to string only after validation
-            let kmer_str = match std::str::from_utf8(window) {
-                Ok(s) => s,
-                Err(_) => continue, // Skip invalid UTF-8, already logged elsewhere
-            };
-
-            match CanonicalKmer::new(kmer_str) {
-                Ok(canonical_kmer) => {
-                    kmers.push((i, canonical_kmer));
-                }
-                Err(_) => continue, // Skip invalid k-mers, reduced logging for performance
+        }
+        
+        self.processing_stats.minimizers_found += kmer_hashes.len();
+        
+        // Batch node creation - minimize HashMap operations
+        for (&hash, &pos) in kmer_hashes.iter().zip(positions.iter()) {
+            if let Some(existing_node) = self.graph_fragment.nodes.get_mut(&hash) {
+                existing_node.add_read_position(read.id, pos, Strand::Forward);
+            } else {
+                // Minimal kmer creation for performance (empty sequence)
+                let kmer = CanonicalKmer { hash, sequence: String::new(), is_canonical: true };
+                let mut new_node = GraphNode::new(kmer, self.k_size);
+                new_node.add_read_position(read.id, pos, Strand::Forward);
+                self.graph_fragment.add_node(new_node);
+                self.processing_stats.nodes_created += 1;
             }
         }
-
-        println!(
-            "   Read {}: extracted {} k-mers from {} bp sequence",
-            read.id,
-            kmers.len(),
-            sequence.len()
-        );
-        self.processing_stats.minimizers_found += kmers.len();
-
-        // Create nodes from k-mers
-        for (pos, kmer) in &kmers {
-            self.add_or_update_node(kmer, read.id, *pos)?;
-        }
-
-        // Create edges between consecutive k-mers
-        for window in kmers.windows(2) {
-            let (_, kmer1) = &window[0];
-            let (_, kmer2) = &window[1];
-
+        
+        // Batch edge creation between consecutive k-mers
+        for i in 1..kmer_hashes.len() {
             let edge = GraphEdge::new(
-                kmer1.hash,
-                kmer2.hash,
-                self.k_size - 1, // Overlap length
+                kmer_hashes[i-1],
+                kmer_hashes[i],
+                self.k_size - 1,
             );
             self.graph_fragment.add_edge(edge);
             self.processing_stats.edges_created += 1;
         }
-
+        
         self.reads.push(read);
         self.processing_stats.reads_processed += 1;
         self.processing_stats.processing_time_ms += start_time.elapsed().as_millis() as u64;
-
+        
         Ok(())
     }
 

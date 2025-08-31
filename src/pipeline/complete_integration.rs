@@ -282,6 +282,19 @@ pub struct MetagenomicsPipeline {
 }
 
 impl MetagenomicsPipeline {
+    /// Update assembly configuration parameters
+    pub fn set_assembly_config(&mut self, k_min: Option<usize>, k_max: Option<usize>, min_coverage: Option<u32>) {
+        if let Some(k_min) = k_min {
+            self.config.assembly.k_min = k_min;
+        }
+        if let Some(k_max) = k_max {
+            self.config.assembly.k_max = k_max;
+        }
+        if let Some(min_coverage) = min_coverage {
+            self.config.assembly.min_coverage = min_coverage;
+        }
+    }
+
     /// Initialize pipeline with configuration
     pub fn new(config_path: Option<&Path>) -> Result<Self> {
         let config_manager = if let Some(path) = config_path {
