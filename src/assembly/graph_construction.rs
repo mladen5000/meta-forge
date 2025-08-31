@@ -337,12 +337,47 @@ impl AdvancedAssemblyGraphBuilder {
         let mut graph = CacheOptimizedGraph::new(reads.len() * 10);
 
         for read in reads {
-            processor.process_sequence(&read.corrected)?;
-            let frequent_kmers = processor.get_frequent_kmers(self.min_coverage);
-            self.add_kmers_to_optimized_graph(&mut graph, &frequent_kmers)?;
+            // Process read and create proper sequence-based edges
+            self.process_read_with_edges(&mut graph, &read.corrected)?;
         }
 
         Ok(graph)
+    }
+
+    /// Process a single read and create proper sequence-based edges
+    /// This creates edges between consecutive k-mers that have (k-1) overlaps
+    fn process_read_with_edges(&self, graph: &mut CacheOptimizedGraph, sequence: &str) -> Result<()> {
+        if sequence.len() < self.base_k {
+            return Ok(()); // Skip short sequences
+        }
+
+        let mut prev_kmer_hash: Option<u64> = None;
+        
+        // Extract overlapping k-mers from the sequence
+        for window in sequence.as_bytes().windows(self.base_k) {
+            if let Ok(kmer_str) = std::str::from_utf8(window) {
+                // Validate k-mer (skip ambiguous bases for now)
+                if kmer_str.chars().all(|c| matches!(c.to_ascii_uppercase(), 'A' | 'T' | 'G' | 'C')) {
+                    // Create canonical k-mer and get hash
+                    if let Ok(canonical_kmer) = crate::core::data_structures::CanonicalKmer::new(kmer_str) {
+                        let kmer_hash = canonical_kmer.hash;
+                        
+                        // Add node to graph (with coverage of 1)
+                        graph.add_node(kmer_hash, 1);
+                        
+                        // Create edge to previous k-mer (this creates the de Bruijn graph structure)
+                        if let Some(prev_hash) = prev_kmer_hash {
+                            // This edge represents a (k-1) overlap between consecutive k-mers
+                            graph.add_edge(prev_hash, kmer_hash)?;
+                        }
+                        
+                        prev_kmer_hash = Some(kmer_hash);
+                    }
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     fn merge_chunk_into_final(
@@ -592,12 +627,13 @@ impl AdvancedAssemblyGraphBuilder {
         let initial_memory = fast_extractor.memory_usage_mb();
         println!("📊 Initial streaming memory usage: {:.2} MB", initial_memory);
         
-        // Add high-frequency k-mers to the optimized graph with progress tracking
-        let frequent_kmers: Vec<(u64, u32)> = kmer_results.into_iter().take(10000).collect(); // Top 10K k-mers
-        println!("🔧 Adding {} high-frequency k-mers to optimized graph...", frequent_kmers.len());
+        // Create proper sequence-based edges instead of frequency-based ones  
+        println!("🔧 Building graph with proper k-mer overlaps from {} reads...", reads.len());
         
         let graph_construction_start = std::time::Instant::now();
-        self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
+        for read in reads {
+            self.process_read_with_edges(&mut optimized_graph, &read.corrected)?;
+        }
         let construction_time = graph_construction_start.elapsed();
         
         let post_construction_memory = fast_extractor.memory_usage_mb() + self.estimate_memory_usage();
@@ -896,13 +932,10 @@ impl AdvancedAssemblyGraphBuilder {
         let mut processor = StreamingKmerProcessor::new(self.base_k);
         let mut optimized_graph = CacheOptimizedGraph::new(reads.len() * 20);
 
-        // Process reads in streaming fashion
+        // Process reads in streaming fashion with proper k-mer overlaps
         for read in reads {
-            processor.process_sequence(&read.corrected)?;
-
-            // Build graph incrementally with frequent k-mers
-            let frequent_kmers = processor.get_frequent_kmers(2);
-            self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
+            // Create proper sequence-based edges instead of frequency-based ones
+            self.process_read_with_edges(&mut optimized_graph, &read.corrected)?;
         }
 
         // Apply optimized transitive reduction
@@ -931,16 +964,14 @@ impl AdvancedAssemblyGraphBuilder {
         frequent_kmers: &[(u64, u32)],
     ) -> Result<()> {
         // Add nodes for frequent k-mers
-        let mut prev_hash = None;
+        // CRITICAL FIX: Do NOT create edges based on frequency order!
+        // Edges should only be created based on actual k-mer sequence overlaps
         for &(hash, count) in frequent_kmers {
             graph.add_node(hash, count);
-
-            // Add edges between consecutive k-mers
-            if let Some(prev) = prev_hash {
-                graph.add_edge(prev, hash)?;
-            }
-            prev_hash = Some(hash);
         }
+        
+        // NOTE: Proper edges will be created later during sequence processing
+        // when we have actual read context for (k-1) overlaps
         Ok(())
     }
 
@@ -1837,9 +1868,8 @@ impl AdvancedAssemblyGraphBuilder {
             );
 
             for read in chunk {
-                processor.process_sequence(&read.corrected)?;
-                let frequent_kmers = processor.get_frequent_kmers(2);
-                self.add_kmers_to_optimized_graph(&mut optimized_graph, &frequent_kmers)?;
+                // Create proper sequence-based edges instead of frequency-based ones
+                self.process_read_with_edges(&mut optimized_graph, &read.corrected)?;
             }
             
             // Add small delay to make progress updates visible
