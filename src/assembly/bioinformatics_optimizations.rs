@@ -548,9 +548,59 @@ impl StreamingGraphBuilder {
         Self { config }
     }
 
-    pub fn build_streaming_graph(&self, _reads: &[CorrectedRead]) -> Result<CacheOptimizedGraph> {
-        // TODO: implement actual streaming graph build
-        Ok(CacheOptimizedGraph::default())
+    pub fn build_streaming_graph(&self, reads: &[CorrectedRead]) -> Result<CacheOptimizedGraph> {
+        use crate::core::data_structures::{AssemblyChunk, CanonicalKmer, GraphNode, GraphEdge};
+        use crate::assembly::performance_optimizations::CacheOptimizedGraph;
+        
+        println!("🔧 StreamingGraphBuilder: Processing {} reads with connectivity fixes", reads.len());
+        
+        // Create assembly chunk with our fixed connectivity logic
+        let k_size = 15; // Use default k-mer size
+        let mut chunk = AssemblyChunk::new(0, k_size);
+        
+        // Process each read using our fixed graph construction logic
+        for read in reads {
+            // Add read to chunk - this uses our fixed process_read_to_graph logic
+            if let Err(e) = chunk.add_read(read.clone()) {
+                eprintln!("Warning: Failed to add read {}: {}", read.id, e);
+                continue;
+            }
+        }
+        
+        // Finalize the chunk to ensure all k-mer connections are established
+        chunk.finalize();
+        
+        let fragment = &chunk.graph_fragment;
+        println!("📊 StreamingGraphBuilder results: {} nodes, {} edges", 
+                fragment.nodes.len(), fragment.edges.len());
+        
+        // Convert to CacheOptimizedGraph
+        let mut cache_graph = CacheOptimizedGraph::new(fragment.nodes.len());
+        
+        // Add nodes
+        for (hash, node) in &fragment.nodes {
+            cache_graph.add_node(*hash, node.coverage);
+        }
+        
+        // Add edges with validation
+        let mut edges_added = 0;
+        for edge in &fragment.edges {
+            if let Ok(()) = cache_graph.add_edge(edge.from_hash, edge.to_hash) {
+                edges_added += 1;
+            }
+        }
+        
+        println!("✅ StreamingGraphBuilder: Created graph with {} nodes, {} edges", 
+                fragment.nodes.len(), edges_added);
+        
+        // CRITICAL: If we still have 1:1 ratio, something is wrong
+        if fragment.nodes.len() == reads.len() {
+            eprintln!("⚠️  WARNING: StreamingGraphBuilder still showing 1:1 ratio ({} nodes from {} reads)!", 
+                     fragment.nodes.len(), reads.len());
+            eprintln!("⚠️  This indicates the k-mer processing is not creating overlapping k-mers properly");
+        }
+        
+        Ok(cache_graph)
     }
 }
 

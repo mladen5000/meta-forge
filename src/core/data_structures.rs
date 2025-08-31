@@ -463,9 +463,33 @@ impl GraphFragment {
         self.update_coverage_stats();
     }
 
-    pub fn add_edge(&mut self, edge: GraphEdge) {
-        self.edges.push(edge);
+    pub fn add_edge(&mut self, edge: GraphEdge) -> Result<()> {
+        // Validate that both nodes exist before adding edge
+        if !self.nodes.contains_key(&edge.from_hash) {
+            return Err(anyhow!("Source node with hash {} not found in fragment", edge.from_hash));
+        }
+        if !self.nodes.contains_key(&edge.to_hash) {
+            return Err(anyhow!("Target node with hash {} not found in fragment", edge.to_hash));
+        }
+        
+        // Check for duplicate edges
+        let edge_exists = self.edges.iter().any(|e| 
+            e.from_hash == edge.from_hash && e.to_hash == edge.to_hash
+        );
+        
+        if edge_exists {
+            // Update weight instead of creating duplicate
+            if let Some(existing_edge) = self.edges.iter_mut().find(|e| 
+                e.from_hash == edge.from_hash && e.to_hash == edge.to_hash
+            ) {
+                existing_edge.weight += edge.weight;
+            }
+        } else {
+            self.edges.push(edge);
+        }
+        
         self.update_coverage_stats();
+        Ok(())
     }
 
     pub fn merge_with(&mut self, other: GraphFragment) -> Result<()> {
@@ -963,8 +987,9 @@ impl GraphUpdate {
         self.nodes_to_add.push((hash, node));
     }
 
-    pub fn add_edge(&mut self, edge: GraphEdge) {
+    pub fn add_edge(&mut self, edge: GraphEdge) -> Result<()> {
         self.edges_to_add.push(edge);
+        Ok(())
     }
 
     pub fn update_node(&mut self, hash: u64, update: NodeUpdate) {

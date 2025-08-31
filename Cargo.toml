@@ -56,10 +56,11 @@ candle-core = "0.9.1"
 candle-nn = "0.9.1"
 ndarray = { version = "0.16.1", features = ["serde"] }
 ort = "1.16.3"
-petgraph = "0.8.2"
+petgraph = { version = "0.8.2", features = ["serde"] }
 smartcore = "0.4.2"
 fastrand = "2.3.0"
 pathfinding = "4.14.0"
+bit-vec = "0.8.0"
 
 tracing = "0.1.41"
 clap = { version = "4.5.44", features = ["derive"] }

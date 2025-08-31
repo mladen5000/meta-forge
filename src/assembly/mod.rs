@@ -14,3 +14,4 @@ pub mod optimized_structures;
 pub mod parallel_optimizations;
 pub mod performance_optimizations;
 pub mod simd_optimizations;
+pub mod fast_transitive_reduction;
