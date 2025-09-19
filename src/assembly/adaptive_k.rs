@@ -183,13 +183,16 @@ impl AdaptiveKSelector {
     /// Apply memory constraints to k-mer selection
     fn apply_memory_constraints(&self, candidate_k: usize) -> usize {
         // Rough estimate: 4^k possible k-mers, each taking ~12 bytes
-        let estimated_memory_mb = ((4_usize.pow(candidate_k as u32) as f64) * 12.0) / (1024.0 * 1024.0);
+        // Use safe arithmetic to prevent overflow
+        let base_4_power = 4_u64.saturating_pow(candidate_k as u32);
+        let estimated_memory_mb = (base_4_power.saturating_mul(12)) as f64 / (1024.0 * 1024.0);
 
         // If estimated memory exceeds budget, reduce k
         if estimated_memory_mb > self.config.memory_budget_mb as f64 {
             // Find largest k that fits in memory budget
             for k in (self.config.min_k..=candidate_k).rev() {
-                let mem_mb = ((4_usize.pow(k as u32) as f64) * 12.0) / (1024.0 * 1024.0);
+                let base_4_power = 4_u64.saturating_pow(k as u32);
+                let mem_mb = (base_4_power.saturating_mul(12)) as f64 / (1024.0 * 1024.0);
                 if mem_mb <= self.config.memory_budget_mb as f64 {
                     return k;
                 }

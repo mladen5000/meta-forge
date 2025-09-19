@@ -12,17 +12,6 @@ readme = "README.md"
 name = "meta-forge"
 path = "src/main.rs"
 
-[[bin]]
-name = "integrated-demo"
-path = "src/bin/integrated_demo.rs"
-
-[[bin]]
-name = "kmer-benchmark"
-path = "src/bin/kmer_benchmark.rs"
-
-[[bin]]
-name = "progress-demo"
-path = "src/bin/progress_demo.rs"
 
 [lib]
 name = "meta_forge"
