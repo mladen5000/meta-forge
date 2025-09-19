@@ -466,28 +466,37 @@ impl GraphFragment {
     pub fn add_edge(&mut self, edge: GraphEdge) -> Result<()> {
         // Validate that both nodes exist before adding edge
         if !self.nodes.contains_key(&edge.from_hash) {
-            return Err(anyhow!("Source node with hash {} not found in fragment", edge.from_hash));
+            return Err(anyhow!(
+                "Source node with hash {} not found in fragment",
+                edge.from_hash
+            ));
         }
         if !self.nodes.contains_key(&edge.to_hash) {
-            return Err(anyhow!("Target node with hash {} not found in fragment", edge.to_hash));
+            return Err(anyhow!(
+                "Target node with hash {} not found in fragment",
+                edge.to_hash
+            ));
         }
-        
+
         // Check for duplicate edges
-        let edge_exists = self.edges.iter().any(|e| 
-            e.from_hash == edge.from_hash && e.to_hash == edge.to_hash
-        );
-        
+        let edge_exists = self
+            .edges
+            .iter()
+            .any(|e| e.from_hash == edge.from_hash && e.to_hash == edge.to_hash);
+
         if edge_exists {
             // Update weight instead of creating duplicate
-            if let Some(existing_edge) = self.edges.iter_mut().find(|e| 
-                e.from_hash == edge.from_hash && e.to_hash == edge.to_hash
-            ) {
+            if let Some(existing_edge) = self
+                .edges
+                .iter_mut()
+                .find(|e| e.from_hash == edge.from_hash && e.to_hash == edge.to_hash)
+            {
                 existing_edge.weight += edge.weight;
             }
         } else {
             self.edges.push(edge);
         }
-        
+
         self.update_coverage_stats();
         Ok(())
     }
@@ -821,31 +830,31 @@ impl AssemblyChunk {
 
     pub fn add_read(&mut self, read: CorrectedRead) -> Result<()> {
         let start_time = std::time::Instant::now();
-        
+
         // Fast k-mer extraction with minimal overhead
         let sequence = &read.corrected;
         if sequence.len() < self.k_size {
             // Silent skip for short reads - no logging overhead
             return Ok(());
         }
-        
+
         let sequence_bytes = sequence.as_bytes();
         let expected_kmers = sequence_bytes.len().saturating_sub(self.k_size - 1);
-        
+
         // Batch validation: check entire sequence once (only ATGC allowed)
-        let is_valid_sequence = sequence_bytes.iter().all(|&b| {
-            matches!(b, b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c')
-        });
-        
+        let is_valid_sequence = sequence_bytes
+            .iter()
+            .all(|&b| matches!(b, b'A' | b'T' | b'G' | b'C' | b'a' | b't' | b'g' | b'c'));
+
         if !is_valid_sequence {
             // Skip sequences with ambiguous bases - no per-kmer processing
             return Ok(());
         }
-        
+
         // Pre-allocate for batch operations
         let mut kmer_hashes = Vec::with_capacity(expected_kmers);
         let mut positions = Vec::with_capacity(expected_kmers);
-        
+
         // Fast k-mer extraction without individual validations
         for (i, window) in sequence_bytes.windows(self.k_size).enumerate() {
             if let Ok(kmer_str) = std::str::from_utf8(window) {
@@ -855,38 +864,38 @@ impl AssemblyChunk {
                 }
             }
         }
-        
+
         self.processing_stats.minimizers_found += kmer_hashes.len();
-        
+
         // Batch node creation - minimize HashMap operations
         for (&hash, &pos) in kmer_hashes.iter().zip(positions.iter()) {
             if let Some(existing_node) = self.graph_fragment.nodes.get_mut(&hash) {
                 existing_node.add_read_position(read.id, pos, Strand::Forward);
             } else {
                 // Minimal kmer creation for performance (empty sequence)
-                let kmer = CanonicalKmer { hash, sequence: String::new(), is_canonical: true };
+                let kmer = CanonicalKmer {
+                    hash,
+                    sequence: String::new(),
+                    is_canonical: true,
+                };
                 let mut new_node = GraphNode::new(kmer, self.k_size);
                 new_node.add_read_position(read.id, pos, Strand::Forward);
                 self.graph_fragment.add_node(new_node);
                 self.processing_stats.nodes_created += 1;
             }
         }
-        
+
         // Batch edge creation between consecutive k-mers
         for i in 1..kmer_hashes.len() {
-            let edge = GraphEdge::new(
-                kmer_hashes[i-1],
-                kmer_hashes[i],
-                self.k_size - 1,
-            );
+            let edge = GraphEdge::new(kmer_hashes[i - 1], kmer_hashes[i], self.k_size - 1);
             self.graph_fragment.add_edge(edge);
             self.processing_stats.edges_created += 1;
         }
-        
+
         self.reads.push(read);
         self.processing_stats.reads_processed += 1;
         self.processing_stats.processing_time_ms += start_time.elapsed().as_millis() as u64;
-        
+
         Ok(())
     }
 

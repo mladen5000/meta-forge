@@ -14,10 +14,10 @@
 //! AHash* structures.
 
 use crate::assembly::performance_optimizations::{CacheOptimizedGraph, OptimizationConfig};
+use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use crate::CorrectedRead;
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
-use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -89,19 +89,23 @@ impl BitPackedKmer {
                         replacement_base: 'A',
                         random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
                     };
-                    
+
                     match default_config.strategy {
                         AmbiguousBaseStrategy::Skip => {
-                            return Err(anyhow!("Ambiguous nucleotide {nucleotide} - skipping k-mer"))
-                        },
+                            return Err(anyhow!(
+                                "Ambiguous nucleotide {nucleotide} - skipping k-mer"
+                            ))
+                        }
                         AmbiguousBaseStrategy::Allow => {
                             // For Allow strategy, replace N with A for encoding
                             if nucleotide == 'N' {
                                 0b00 // Treat N as A
                             } else {
-                                return Err(anyhow!("Ambiguous nucleotide {nucleotide} - skipping k-mer"))
+                                return Err(anyhow!(
+                                    "Ambiguous nucleotide {nucleotide} - skipping k-mer"
+                                ));
                             }
-                        },
+                        }
                         AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
                         AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
                         AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
@@ -246,11 +250,11 @@ impl RollingHash {
                     replacement_base: 'A',
                     random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
                 };
-                
+
                 match default_config.strategy {
                     AmbiguousBaseStrategy::Skip => {
                         Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", n))
-                    },
+                    }
                     AmbiguousBaseStrategy::Allow => {
                         // For Allow strategy, treat N as A (most conservative)
                         if n == 'N' {
@@ -258,8 +262,8 @@ impl RollingHash {
                         } else {
                             Ok(0) // Default to A for other ambiguous bases
                         }
-                    },
-                    AmbiguousBaseStrategy::Replace => Ok(0), // Replace with A 
+                    }
+                    AmbiguousBaseStrategy::Replace => Ok(0), // Replace with A
                     AmbiguousBaseStrategy::RandomReplace => Ok(0), // Use A for simplicity
                     AmbiguousBaseStrategy::ContextReplace => Ok(0), // Use A for simplicity
                 }
@@ -549,15 +553,18 @@ impl StreamingGraphBuilder {
     }
 
     pub fn build_streaming_graph(&self, reads: &[CorrectedRead]) -> Result<CacheOptimizedGraph> {
-        use crate::core::data_structures::{AssemblyChunk, CanonicalKmer, GraphNode, GraphEdge};
         use crate::assembly::performance_optimizations::CacheOptimizedGraph;
-        
-        println!("🔧 StreamingGraphBuilder: Processing {} reads with connectivity fixes", reads.len());
-        
+        use crate::core::data_structures::{AssemblyChunk, CanonicalKmer, GraphEdge, GraphNode};
+
+        println!(
+            "🔧 StreamingGraphBuilder: Processing {} reads with connectivity fixes",
+            reads.len()
+        );
+
         // Create assembly chunk with our fixed connectivity logic
         let k_size = 15; // Use default k-mer size
         let mut chunk = AssemblyChunk::new(0, k_size);
-        
+
         // Process each read using our fixed graph construction logic
         for read in reads {
             // Add read to chunk - this uses our fixed process_read_to_graph logic
@@ -566,22 +573,25 @@ impl StreamingGraphBuilder {
                 continue;
             }
         }
-        
+
         // Finalize the chunk to ensure all k-mer connections are established
         chunk.finalize();
-        
+
         let fragment = &chunk.graph_fragment;
-        println!("📊 StreamingGraphBuilder results: {} nodes, {} edges", 
-                fragment.nodes.len(), fragment.edges.len());
-        
+        println!(
+            "📊 StreamingGraphBuilder results: {} nodes, {} edges",
+            fragment.nodes.len(),
+            fragment.edges.len()
+        );
+
         // Convert to CacheOptimizedGraph
         let mut cache_graph = CacheOptimizedGraph::new(fragment.nodes.len());
-        
+
         // Add nodes
         for (hash, node) in &fragment.nodes {
             cache_graph.add_node(*hash, node.coverage);
         }
-        
+
         // Add edges with validation
         let mut edges_added = 0;
         for edge in &fragment.edges {
@@ -589,17 +599,20 @@ impl StreamingGraphBuilder {
                 edges_added += 1;
             }
         }
-        
-        println!("✅ StreamingGraphBuilder: Created graph with {} nodes, {} edges", 
-                fragment.nodes.len(), edges_added);
-        
+
+        println!(
+            "✅ StreamingGraphBuilder: Created graph with {} nodes, {} edges",
+            fragment.nodes.len(),
+            edges_added
+        );
+
         // CRITICAL: If we still have 1:1 ratio, something is wrong
         if fragment.nodes.len() == reads.len() {
             eprintln!("⚠️  WARNING: StreamingGraphBuilder still showing 1:1 ratio ({} nodes from {} reads)!", 
                      fragment.nodes.len(), reads.len());
             eprintln!("⚠️  This indicates the k-mer processing is not creating overlapping k-mers properly");
         }
-        
+
         Ok(cache_graph)
     }
 }

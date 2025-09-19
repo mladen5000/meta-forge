@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use std::io::Write;
-use chrono::{DateTime, Utc};
+use std::path::Path;
 
 /// Kraken-style taxonomic classification result
 /// Follows the standard Kraken output format for compatibility
@@ -87,7 +87,7 @@ impl TaxonomicLineage {
     /// Convert to traditional pipe-delimited lineage string
     pub fn to_lineage_string(&self) -> String {
         let mut components = Vec::new();
-        
+
         if let Some(domain) = &self.domain {
             components.push(domain.name.clone());
         }
@@ -112,16 +112,24 @@ impl TaxonomicLineage {
         if let Some(species) = &self.species {
             components.push(species.name.clone());
         }
-        
+
         components.join("|")
     }
 
     /// Get the most specific classification available
     pub fn get_most_specific(&self) -> Option<&TaxonomicRank> {
-        [&self.species, &self.genus, &self.family, &self.order, 
-         &self.class, &self.phylum, &self.kingdom, &self.domain]
-            .iter()
-            .find_map(|rank| rank.as_ref())
+        [
+            &self.species,
+            &self.genus,
+            &self.family,
+            &self.order,
+            &self.class,
+            &self.phylum,
+            &self.kingdom,
+            &self.domain,
+        ]
+        .iter()
+        .find_map(|rank| rank.as_ref())
     }
 }
 
@@ -176,30 +184,36 @@ impl KrakenReporter {
     /// Update summary statistics
     fn update_summary_stats(&mut self) {
         self.summary_stats.total_sequences = self.classifications.len();
-        self.summary_stats.classified_sequences = self.classifications
+        self.summary_stats.classified_sequences = self
+            .classifications
             .iter()
             .filter(|c| c.classification_status == ClassificationStatus::Classified)
             .count();
-        self.summary_stats.unclassified_sequences = self.summary_stats.total_sequences - self.summary_stats.classified_sequences;
-        
+        self.summary_stats.unclassified_sequences =
+            self.summary_stats.total_sequences - self.summary_stats.classified_sequences;
+
         self.summary_stats.classification_rate = if self.summary_stats.total_sequences > 0 {
-            self.summary_stats.classified_sequences as f64 / self.summary_stats.total_sequences as f64
+            self.summary_stats.classified_sequences as f64
+                / self.summary_stats.total_sequences as f64
         } else {
             0.0
         };
 
-        let unique_taxa: std::collections::HashSet<u32> = self.classifications
+        let unique_taxa: std::collections::HashSet<u32> = self
+            .classifications
             .iter()
             .filter(|c| c.classification_status == ClassificationStatus::Classified)
             .map(|c| c.taxonomy_id)
             .collect();
         self.summary_stats.unique_taxa = unique_taxa.len();
 
-        self.summary_stats.total_kmers = self.classifications
+        self.summary_stats.total_kmers = self
+            .classifications
             .iter()
             .map(|c| c.confidence_metrics.total_kmers)
             .sum();
-        self.summary_stats.classified_kmers = self.classifications
+        self.summary_stats.classified_kmers = self
+            .classifications
             .iter()
             .map(|c| c.confidence_metrics.classified_kmers)
             .sum();
@@ -207,11 +221,16 @@ impl KrakenReporter {
 
     /// Generate standard Kraken output file
     pub fn write_kraken_output(&self, output_path: &Path) -> Result<()> {
-        let mut file = std::fs::File::create(output_path)
-            .with_context(|| format!("Failed to create Kraken output file: {}", output_path.display()))?;
+        let mut file = std::fs::File::create(output_path).with_context(|| {
+            format!(
+                "Failed to create Kraken output file: {}",
+                output_path.display()
+            )
+        })?;
 
         for classification in &self.classifications {
-            let kmer_mappings = classification.kmer_lca_mappings
+            let kmer_mappings = classification
+                .kmer_lca_mappings
                 .iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
@@ -233,23 +252,34 @@ impl KrakenReporter {
 
     /// Generate Kraken-style report with abundance information
     pub fn write_kraken_report(&self, output_path: &Path) -> Result<()> {
-        let mut file = std::fs::File::create(output_path)
-            .with_context(|| format!("Failed to create Kraken report file: {}", output_path.display()))?;
+        let mut file = std::fs::File::create(output_path).with_context(|| {
+            format!(
+                "Failed to create Kraken report file: {}",
+                output_path.display()
+            )
+        })?;
 
         // Write header
         writeln!(file, "# Kraken-style Metagenomic Classification Report")?;
         writeln!(file, "# Sample: {}", self.sample_name)?;
         writeln!(file, "# Timestamp: {}", self.timestamp.to_rfc3339())?;
-        writeln!(file, "# Total sequences: {}", self.summary_stats.total_sequences)?;
-        writeln!(file, "# Classified sequences: {} ({:.2}%)", 
-                self.summary_stats.classified_sequences, 
-                self.summary_stats.classification_rate * 100.0)?;
+        writeln!(
+            file,
+            "# Total sequences: {}",
+            self.summary_stats.total_sequences
+        )?;
+        writeln!(
+            file,
+            "# Classified sequences: {} ({:.2}%)",
+            self.summary_stats.classified_sequences,
+            self.summary_stats.classification_rate * 100.0
+        )?;
         writeln!(file, "# Unique taxa: {}", self.summary_stats.unique_taxa)?;
         writeln!(file)?;
 
         // Calculate abundance for each taxon
         let mut taxon_counts: HashMap<u32, TaxonAbundance> = HashMap::new();
-        
+
         for classification in &self.classifications {
             if classification.classification_status == ClassificationStatus::Classified {
                 let entry = taxon_counts
@@ -262,7 +292,7 @@ impl KrakenReporter {
                         lineage: classification.taxonomic_lineage.clone(),
                         confidence_sum: 0.0,
                     });
-                
+
                 entry.sequence_count += 1;
                 entry.kmer_count += classification.confidence_metrics.classified_kmers;
                 entry.total_sequence_length += classification.sequence_length;
@@ -275,13 +305,18 @@ impl KrakenReporter {
         sorted_taxa.sort_by(|a, b| b.sequence_count.cmp(&a.sequence_count));
 
         // Write report header
-        writeln!(file, "Percentage\tSequences\tK-mers\tTaxID\tRank\tName\tLineage")?;
+        writeln!(
+            file,
+            "Percentage\tSequences\tK-mers\tTaxID\tRank\tName\tLineage"
+        )?;
 
         for taxon in &sorted_taxa {
-            let percentage = (taxon.sequence_count as f64 / self.summary_stats.classified_sequences as f64) * 100.0;
+            let percentage = (taxon.sequence_count as f64
+                / self.summary_stats.classified_sequences as f64)
+                * 100.0;
             let avg_confidence = taxon.confidence_sum / taxon.sequence_count as f64;
             let most_specific = taxon.lineage.get_most_specific();
-            
+
             let (rank, name) = if let Some(specific) = most_specific {
                 (specific.rank.clone(), specific.name.clone())
             } else {
@@ -316,9 +351,13 @@ impl KrakenReporter {
 
         let json_content = serde_json::to_string_pretty(&report)
             .context("Failed to serialize enhanced Kraken report")?;
-        
-        std::fs::write(output_path, json_content)
-            .with_context(|| format!("Failed to write enhanced JSON report: {}", output_path.display()))?;
+
+        std::fs::write(output_path, json_content).with_context(|| {
+            format!(
+                "Failed to write enhanced JSON report: {}",
+                output_path.display()
+            )
+        })?;
 
         Ok(())
     }
@@ -336,7 +375,7 @@ impl KrakenReporter {
         for classification in &self.classifications {
             if classification.classification_status == ClassificationStatus::Classified {
                 let lineage = &classification.taxonomic_lineage;
-                
+
                 if let Some(domain) = &lineage.domain {
                     *domain_counts.entry(domain.name.clone()).or_insert(0) += 1;
                 }
@@ -405,10 +444,12 @@ pub struct TaxonomicSummary {
 
 /// Convert existing taxonomic classification to Kraken format
 impl From<crate::pipeline::complete_integration::TaxonomicClassification> for KrakenClassification {
-    fn from(classification: crate::pipeline::complete_integration::TaxonomicClassification) -> Self {
+    fn from(
+        classification: crate::pipeline::complete_integration::TaxonomicClassification,
+    ) -> Self {
         // Parse the lineage string (assumes format like "Kingdom|Phylum|Class")
         let lineage_parts: Vec<&str> = classification.lineage.split('|').collect();
-        
+
         let taxonomic_lineage = TaxonomicLineage {
             domain: None, // Would need to be parsed from lineage or database
             kingdom: lineage_parts.first().map(|name| TaxonomicRank {
@@ -518,9 +559,12 @@ mod tests {
             },
         };
 
-        assert_eq!(classification.classification_status, ClassificationStatus::Classified);
+        assert_eq!(
+            classification.classification_status,
+            ClassificationStatus::Classified
+        );
         assert_eq!(classification.taxonomy_id, 511145);
-        
+
         let lineage_string = classification.taxonomic_lineage.to_lineage_string();
         assert!(lineage_string.contains("Bacteria"));
         assert!(lineage_string.contains("Proteobacteria"));
@@ -650,7 +694,10 @@ mod tests {
         };
 
         let lineage_string = lineage.to_lineage_string();
-        assert_eq!(lineage_string, "Bacteria|Proteobacteria|Escherichia|Escherichia coli");
+        assert_eq!(
+            lineage_string,
+            "Bacteria|Proteobacteria|Escherichia|Escherichia coli"
+        );
 
         let most_specific = lineage.get_most_specific();
         assert!(most_specific.is_some());

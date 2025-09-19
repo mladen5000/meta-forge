@@ -12,8 +12,8 @@
 //! - Cache-efficient data layouts for better performance
 //! - Custom allocator patterns for genomic workloads
 
-use anyhow::{anyhow, Result};
 use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
+use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -91,14 +91,17 @@ impl CompactKmer {
                         replacement_base: 'A',
                         random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
                     };
-                    
+
                     match default_config.strategy {
                         AmbiguousBaseStrategy::Skip => {
-                            return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
-                        },
+                            return Err(anyhow!(
+                                "Ambiguous nucleotide {} - skipping k-mer",
+                                nucleotide
+                            ))
+                        }
                         AmbiguousBaseStrategy::Allow => {
                             0b00 // Treat all ambiguous bases as A for encoding
-                        },
+                        }
                         AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
                         AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
                         AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
@@ -351,14 +354,17 @@ impl RollingHasher {
                     replacement_base: 'A',
                     random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
                 };
-                
+
                 match default_config.strategy {
                     AmbiguousBaseStrategy::Skip => {
-                        return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
-                    },
+                        return Err(anyhow!(
+                            "Ambiguous nucleotide {} - skipping k-mer",
+                            nucleotide
+                        ))
+                    }
                     AmbiguousBaseStrategy::Allow => {
                         0 // Encode all ambiguous bases as A (0) for rolling hash
-                    },
+                    }
                     AmbiguousBaseStrategy::Replace => 0, // Replace with A
                     AmbiguousBaseStrategy::RandomReplace => 0, // Use A for simplicity
                     AmbiguousBaseStrategy::ContextReplace => 0, // Use A for simplicity

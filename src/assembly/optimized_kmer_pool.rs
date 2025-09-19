@@ -1,15 +1,15 @@
 //! Memory Pool-Based K-mer Storage
 //! ================================
-//! 
+//!
 //! Eliminates per-k-mer allocations by using pre-allocated memory pools.
 //! Expected memory reduction: 40-60% for large k-mer sets.
 //! Expected performance improvement: 2-3x faster k-mer operations.
 
-use anyhow::{anyhow, Result};
 use crate::utils::configuration::{AmbiguousBaseConfig, AmbiguousBaseStrategy};
-use std::sync::Arc;
-use std::collections::VecDeque;
+use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// Memory pool for efficient k-mer storage
 #[derive(Debug)]
@@ -51,13 +51,15 @@ impl KmerPool {
     pub fn new(estimated_kmers: usize, avg_kmer_size: usize) -> Self {
         // Optimize block size for cache efficiency (64KB blocks)
         let block_size = 8192; // 64KB / 8 bytes per u64
-        let num_blocks = (estimated_kmers * avg_kmer_size).div_ceil(block_size * 32).max(16);
-        
+        let num_blocks = (estimated_kmers * avg_kmer_size)
+            .div_ceil(block_size * 32)
+            .max(16);
+
         let mut blocks = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
             blocks.push(vec![0u64; block_size].into_boxed_slice().into());
         }
-        
+
         Self {
             blocks,
             block_size,
@@ -66,7 +68,7 @@ impl KmerPool {
             current_offset: Mutex::new(0),
         }
     }
-    
+
     /// Allocate space for k-mer data
     fn allocate_slot(&self, size_needed: usize) -> Result<SlotRef> {
         // Try to reuse freed slots first
@@ -80,49 +82,51 @@ impl KmerPool {
                 free_slots.push_back(slot);
             }
         }
-        
+
         // Allocate new slot from current block
         let mut current_block = self.current_block.lock();
         let mut current_offset = self.current_offset.lock();
-        
+
         if *current_offset + size_needed > self.block_size {
             // Move to next block
             *current_block += 1;
             *current_offset = 0;
-            
+
             if *current_block >= self.blocks.len() {
                 return Err(anyhow!("K-mer pool exhausted - increase capacity"));
             }
         }
-        
+
         let slot = SlotRef {
             block_idx: *current_block,
             offset: *current_offset,
             size: size_needed,
         };
-        
+
         *current_offset += size_needed;
         Ok(slot)
     }
-    
+
     /// Free a slot for reuse
     fn free_slot(&self, slot: SlotRef) {
         let mut free_slots = self.free_slots.lock();
         free_slots.push_back(slot);
     }
-    
+
     /// Get data slice from slot
     fn get_data(&self, slot: SlotRef) -> &[u64] {
         &self.blocks[slot.block_idx][slot.offset..slot.offset + slot.size]
     }
-    
+
     /// Get mutable data slice from slot
     fn get_data_mut(&self, slot: SlotRef) -> Result<&mut [u64]> {
         // This requires unsafe code due to shared ownership
         // In practice, you'd want to use a different approach like refcounting
-        Err(anyhow!("Mutable access requires unsafe code - use atomic operations instead"))
+        Err(anyhow!(
+            "Mutable access requires unsafe code - use atomic operations instead"
+        ))
     }
-    
+
     /// Memory usage statistics
     pub fn memory_stats(&self) -> PoolStats {
         let total_allocated = self.blocks.len() * self.block_size * 8; // 8 bytes per u64
@@ -130,7 +134,7 @@ impl KmerPool {
         let current_offset = *self.current_offset.lock();
         let used_bytes = current_block * self.block_size * 8 + current_offset * 8;
         let free_slots_count = self.free_slots.lock().len();
-        
+
         PoolStats {
             total_allocated_bytes: total_allocated,
             used_bytes,
@@ -160,26 +164,26 @@ impl PooledKmer {
         if k > 1024 {
             return Err(anyhow!("K-mer too long: {} (max 1024)", k));
         }
-        
+
         let sequence_upper = sequence.to_uppercase();
         let rc = Self::reverse_complement(&sequence_upper)?;
-        
+
         // Use canonical representation
         let canonical = if sequence_upper <= rc {
             sequence_upper
         } else {
             rc
         };
-        
+
         let packed_data = Self::pack_nucleotides(&canonical)?;
         let hash = Self::compute_hash(&packed_data);
-        
+
         // Allocate slot in pool
         let slot = pool.allocate_slot(packed_data.len())?;
-        
+
         // Copy data to pool (would need unsafe code for efficiency)
         // For now, just store the reference
-        
+
         Ok(Self {
             slot,
             pool,
@@ -187,12 +191,12 @@ impl PooledKmer {
             hash,
         })
     }
-    
+
     fn pack_nucleotides(sequence: &str) -> Result<Vec<u64>> {
         let nucleotides_per_u64 = 32;
         let num_u64s = sequence.len().div_ceil(nucleotides_per_u64);
         let mut data = vec![0u64; num_u64s];
-        
+
         for (i, nucleotide) in sequence.chars().enumerate() {
             let bits = match nucleotide.to_ascii_uppercase() {
                 'A' => 0b00,
@@ -208,14 +212,17 @@ impl PooledKmer {
                         replacement_base: 'A',
                         random_probabilities: Some([0.25, 0.25, 0.25, 0.25]),
                     };
-                    
+
                     match default_config.strategy {
                         AmbiguousBaseStrategy::Skip => {
-                            return Err(anyhow!("Ambiguous nucleotide {} - skipping k-mer", nucleotide))
-                        },
+                            return Err(anyhow!(
+                                "Ambiguous nucleotide {} - skipping k-mer",
+                                nucleotide
+                            ))
+                        }
                         AmbiguousBaseStrategy::Allow => {
                             0b00 // Treat all ambiguous bases as A for encoding
-                        },
+                        }
                         AmbiguousBaseStrategy::Replace => 0b00, // Replace with A
                         AmbiguousBaseStrategy::RandomReplace => 0b00, // Use A for simplicity
                         AmbiguousBaseStrategy::ContextReplace => 0b00, // Use A for simplicity
@@ -223,15 +230,15 @@ impl PooledKmer {
                 }
                 _ => return Err(anyhow!("Invalid nucleotide: {}", nucleotide)),
             };
-            
+
             let u64_index = i / nucleotides_per_u64;
             let bit_index = (i % nucleotides_per_u64) * 2;
             data[u64_index] |= bits << (62 - bit_index);
         }
-        
+
         Ok(data)
     }
-    
+
     fn reverse_complement(sequence: &str) -> Result<String> {
         let mut result = String::with_capacity(sequence.len());
         for nucleotide in sequence.chars().rev() {
@@ -258,26 +265,26 @@ impl PooledKmer {
         }
         Ok(result)
     }
-    
+
     fn compute_hash(data: &[u64]) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         data.hash(&mut hasher);
         hasher.finish()
     }
-    
+
     /// Get k-mer length
     pub fn len(&self) -> usize {
         self.k as usize
     }
-    
+
     /// Get pre-computed hash
     pub fn hash(&self) -> u64 {
         self.hash
     }
-    
+
     /// Memory footprint (much smaller than individual allocation)
     pub fn memory_footprint(&self) -> usize {
         std::mem::size_of::<Self>() // Only reference overhead, data is pooled
@@ -294,42 +301,42 @@ impl Drop for PooledKmer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_kmer_pool_basic_operations() {
         let pool = Arc::new(KmerPool::new(1000, 16));
-        
+
         // Test k-mer creation and memory reuse
         let kmer1 = PooledKmer::new("ATCGATCG", pool.clone()).unwrap();
         let kmer2 = PooledKmer::new("GCTAGCTA", pool.clone()).unwrap();
-        
+
         assert_eq!(kmer1.len(), 8);
         assert_eq!(kmer2.len(), 8);
         assert_ne!(kmer1.hash(), kmer2.hash());
-        
+
         // Check memory stats
         let stats = pool.memory_stats();
         assert!(stats.used_bytes > 0);
         assert_eq!(stats.blocks_used, 1);
-        
+
         println!("Pool stats: {:?}", stats);
     }
-    
+
     #[test]
     fn test_memory_efficiency() {
         let pool = Arc::new(KmerPool::new(10000, 16));
         let mut kmers = Vec::new();
-        
+
         // Create many k-mers to test memory efficiency
         for i in 0..1000 {
             let seq = format!("ATCGATCG{:04}", i % 1000);
             let kmer = PooledKmer::new(&seq[..8], pool.clone()).unwrap();
             kmers.push(kmer);
         }
-        
+
         let stats = pool.memory_stats();
         println!("Memory efficiency test - Pool stats: {:?}", stats);
-        
+
         // Memory footprint should be much smaller than individual allocations
         let total_footprint: usize = kmers.iter().map(|k| k.memory_footprint()).sum();
         assert!(total_footprint < 1000 * 100); // Much less than individual allocations

@@ -679,9 +679,8 @@ mod biological_accuracy_validation {
         let unique_seq3 = synthetic_genome_tests::generate_synthetic_genome(700, 0.48);
 
         // Insert transposon at multiple locations
-        let genome = format!(
-            "{unique_seq1}{transposon}{unique_seq2}{transposon}{unique_seq3}{transposon}"
-        );
+        let genome =
+            format!("{unique_seq1}{transposon}{unique_seq2}{transposon}{unique_seq3}{transposon}");
 
         let reads = synthetic_genome_tests::generate_synthetic_reads(&genome, 90, 18.0, 0.01);
 

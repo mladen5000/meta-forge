@@ -45,7 +45,7 @@ impl AssemblyStage {
             AssemblyStage::Complete => "Assembly completed",
         }
     }
-    
+
     pub fn icon(&self) -> &str {
         match self {
             AssemblyStage::Initialization => "🔧",
@@ -204,8 +204,15 @@ impl ProgressBar {
     }
 
     /// Update assembly-specific progress information
-    pub fn update_assembly_info(&mut self, stage: AssemblyStage, processed_reads: usize, 
-                                kmers: usize, nodes: usize, edges: usize, memory_mb: f64) {
+    pub fn update_assembly_info(
+        &mut self,
+        stage: AssemblyStage,
+        processed_reads: usize,
+        kmers: usize,
+        nodes: usize,
+        edges: usize,
+        memory_mb: f64,
+    ) {
         if let Some(info) = &mut self.assembly_info {
             info.stage = stage;
             info.processed_reads = processed_reads;
@@ -226,14 +233,18 @@ impl ProgressBar {
         if let Some(info) = &self.assembly_info {
             let stage = &info.stage;
             let elapsed = self.start_time.elapsed();
-            
+
             // Clear line and show comprehensive progress
             print!("\r\x1b[2K");
-            
+
             // Stage header with icon and description
-            println!("\n{} {} - {:.1}% complete", 
-                    stage.icon(), stage.description(), info.stage_progress);
-            
+            println!(
+                "\n{} {} - {:.1}% complete",
+                stage.icon(),
+                stage.description(),
+                info.stage_progress
+            );
+
             // Main progress bar
             let percentage = if self.total > 0 {
                 (self.current as f64 / self.total as f64) * 100.0
@@ -243,34 +254,39 @@ impl ProgressBar {
             let filled = (self.width as f64 * percentage / 100.0) as usize;
             let empty = self.width - filled;
             let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
-            
+
             // Detailed metrics line
-            print!("├─ [{}] {:.1}% | Reads: {}/{} | K-mers: {} | Nodes: {} | Edges: {}", 
-                  bar, percentage, 
-                  format_number(info.processed_reads as u64),
-                  format_number(info.total_reads as u64),
-                  format_number(info.kmers_extracted as u64),
-                  format_number(info.nodes_created as u64),
-                  format_number(info.edges_created as u64));
-            
+            print!(
+                "├─ [{}] {:.1}% | Reads: {}/{} | K-mers: {} | Nodes: {} | Edges: {}",
+                bar,
+                percentage,
+                format_number(info.processed_reads as u64),
+                format_number(info.total_reads as u64),
+                format_number(info.kmers_extracted as u64),
+                format_number(info.nodes_created as u64),
+                format_number(info.edges_created as u64)
+            );
+
             // Memory and performance info
             let memory_bar = if info.memory_used_mb > 4000.0 {
-                "🔴"  // Red for high memory usage
+                "🔴" // Red for high memory usage
             } else if info.memory_used_mb > 2000.0 {
-                "🟡"  // Yellow for medium memory usage  
+                "🟡" // Yellow for medium memory usage
             } else {
-                "🟢"  // Green for low memory usage
+                "🟢" // Green for low memory usage
             };
-            
+
             let rate = if elapsed.as_secs() > 0 {
                 info.processed_reads as f64 / elapsed.as_secs_f64()
             } else {
                 0.0
             };
-            
-            println!("\n├─ {} Memory: {:.1}MB | Rate: {:.0} reads/sec | Elapsed: {:?}", 
-                   memory_bar, info.memory_used_mb, rate, elapsed);
-            
+
+            println!(
+                "\n├─ {} Memory: {:.1}MB | Rate: {:.0} reads/sec | Elapsed: {:?}",
+                memory_bar, info.memory_used_mb, rate, elapsed
+            );
+
             // ETA if available
             if let Some(eta) = self.eta() {
                 println!("└─ ⏱️  ETA: {:?}", eta);
@@ -285,11 +301,11 @@ impl ProgressBar {
         if self.current == 0 || self.total == 0 {
             return None;
         }
-        
+
         let elapsed = self.start_time.elapsed();
         let rate = self.current as f64 / elapsed.as_secs_f64();
         let remaining = self.total - self.current;
-        
+
         if rate > 0.0 {
             Some(Duration::from_secs_f64(remaining as f64 / rate))
         } else {

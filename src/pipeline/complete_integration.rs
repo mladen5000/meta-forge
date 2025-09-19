@@ -6,7 +6,7 @@ use std::time::Instant;
 use tracing::{info, instrument};
 
 use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
-use crate::utils::kraken_reporter::{KrakenReporter, KrakenClassification};
+use crate::utils::kraken_reporter::{KrakenClassification, KrakenReporter};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 use tracing::warn;
 
@@ -283,7 +283,12 @@ pub struct MetagenomicsPipeline {
 
 impl MetagenomicsPipeline {
     /// Update assembly configuration parameters
-    pub fn set_assembly_config(&mut self, k_min: Option<usize>, k_max: Option<usize>, min_coverage: Option<u32>) {
+    pub fn set_assembly_config(
+        &mut self,
+        k_min: Option<usize>,
+        k_max: Option<usize>,
+        min_coverage: Option<u32>,
+    ) {
         if let Some(k_min) = k_min {
             self.config.assembly.k_min = k_min;
         }
@@ -1135,17 +1140,17 @@ impl MetagenomicsPipeline {
     pub async fn run_assembly(&self, reads: &[CorrectedRead]) -> Result<AssemblyResults> {
         println!("\n🧬 === Starting Metagenomic Assembly ===");
         println!("📈 Dataset: {} reads", reads.len());
-        println!("⚙️ K-mer range: {}-{}", self.config.assembly.k_min, self.config.assembly.k_max);
+        println!(
+            "⚙️ K-mer range: {}-{}",
+            self.config.assembly.k_min, self.config.assembly.k_max
+        );
         println!("🎯 Min coverage: {}", self.config.assembly.min_coverage);
         println!("🧵 Threads: {}", self.config.performance.num_threads);
         println!("═══════════════════════════════════════════════\n");
 
-        let builder = crate::assembly::graph_construction::AdvancedAssemblyGraphBuilder::new(
-            self.config.assembly.k_min,
-            self.config.assembly.k_max,
-            self.config.assembly.min_coverage,
-            self.config.performance.num_threads,
-        )?;
+        // Use laptop-optimized assembler instead of AdvancedAssemblyGraphBuilder
+        let laptop_config = crate::assembly::LaptopConfig::auto_detect();
+        let assembler = crate::assembly::LaptopAssembler::new(laptop_config);
 
         // Convert core CorrectedRead to assembly CorrectedRead for compatibility
         let assembly_reads: Vec<_> = reads
@@ -1160,38 +1165,43 @@ impl MetagenomicsPipeline {
             })
             .collect();
 
-        // Choose assembly mode based on system resources and use verbose progress
-        let assembly_graph = if self.config.performance.memory_limit_gb <= 4 {
-            println!("🔧 Low-memory mode selected ({}GB limit)", self.config.performance.memory_limit_gb);
-            builder.build_graph_low_memory(&assembly_reads)?
-        } else if self.config.performance.num_threads <= 4 {
-            println!("🔧 Low-CPU mode selected ({} threads)", self.config.performance.num_threads);
-            builder.build_graph_low_cpu(&assembly_reads)?
-        } else {
-            println!("🚀 High-performance mode selected");
-            println!("💻 Using {} threads with {}GB memory limit", 
-                    self.config.performance.num_threads, 
-                    self.config.performance.memory_limit_gb);
-            // Use our enhanced verbose progress version
-            builder.build_graph(&assembly_reads)?
+        // Use laptop assembler for all scenarios
+        println!("🚀 Using laptop-optimized assembly pipeline");
+        let contigs = assembler.assemble(&assembly_reads)?;
+
+        // Create basic assembly stats from contigs
+        let assembly_stats = AssemblyStats {
+            total_length: contigs.iter().map(|c| c.length).sum(),
+            num_contigs: contigs.len(),
+            n50: Self::calculate_n50(&contigs),
+            largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
+            gc_content: Self::calculate_average_gc(&contigs),
+            coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
         };
-        // Note: Contigs are generated during the build process
+
+        // Create basic graph fragment (simplified for laptop assembler)
+        let graph_fragment = GraphFragment {
+            nodes: vec![], // Laptop assembler doesn't expose internal graph structure
+            edges: vec![],
+            node_count: contigs.len(),
+            edge_count: 0,
+        };
 
         // Store assembly results in database if available
         if let Some(ref db) = self.database {
             let assembly_id = db.store_assembly_results(
-                &assembly_graph.assembly_stats,
+                &assembly_stats,
                 "current_sample",
                 &serde_json::to_string(&self.config)?,
             )?;
 
-            db.store_contigs(assembly_id, &assembly_graph.contigs)?;
+            db.store_contigs(assembly_id, &contigs)?;
         }
 
         Ok(AssemblyResults {
-            contigs: assembly_graph.contigs,
-            assembly_stats: assembly_graph.assembly_stats,
-            graph_fragment: assembly_graph.graph_fragment,
+            contigs,
+            assembly_stats,
+            graph_fragment,
         })
     }
 
@@ -1365,7 +1375,9 @@ impl MetagenomicsPipeline {
     /// Generate Kraken-style reports with enhanced taxonomic classification
     async fn generate_kraken_reports(&self, report: &AnalysisReport) -> Result<()> {
         // Use the proper run directory and report section for final reports
-        let report_dir = self.output_manager.get_section_dir(&PipelineSection::Report);
+        let report_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Report);
         let output_dir = &report_dir;
         let mut kraken_reporter = KrakenReporter::new(report.sample_name.clone());
 
@@ -1378,17 +1390,28 @@ impl MetagenomicsPipeline {
         // Generate standard Kraken output file
         let kraken_output_path = output_dir.join(format!("{}.kraken", report.sample_name));
         kraken_reporter.write_kraken_output(&kraken_output_path)?;
-        info!("🧬 Kraken output written to: {}", kraken_output_path.display());
+        info!(
+            "🧬 Kraken output written to: {}",
+            kraken_output_path.display()
+        );
 
         // Generate Kraken-style report with abundance information
-        let kraken_report_path = output_dir.join(format!("{}_kraken_report.txt", report.sample_name));
+        let kraken_report_path =
+            output_dir.join(format!("{}_kraken_report.txt", report.sample_name));
         kraken_reporter.write_kraken_report(&kraken_report_path)?;
-        info!("📊 Kraken report written to: {}", kraken_report_path.display());
+        info!(
+            "📊 Kraken report written to: {}",
+            kraken_report_path.display()
+        );
 
         // Generate enhanced JSON report with detailed classification
-        let enhanced_json_path = output_dir.join(format!("{}_enhanced_kraken.json", report.sample_name));
+        let enhanced_json_path =
+            output_dir.join(format!("{}_enhanced_kraken.json", report.sample_name));
         kraken_reporter.write_enhanced_json_report(&enhanced_json_path)?;
-        info!("📄 Enhanced Kraken JSON report written to: {}", enhanced_json_path.display());
+        info!(
+            "📄 Enhanced Kraken JSON report written to: {}",
+            enhanced_json_path.display()
+        );
 
         Ok(())
     }
@@ -1612,12 +1635,9 @@ impl MetagenomicsPipeline {
             "🧬 Assembly: Starting enhanced assembly with verbose progress...".to_string(),
         );
 
-        let builder = crate::assembly::graph_construction::AdvancedAssemblyGraphBuilder::new(
-            self.config.assembly.k_min,
-            self.config.assembly.k_max,
-            self.config.assembly.min_coverage,
-            self.config.performance.num_threads,
-        )?;
+        // Use laptop-optimized assembler instead of AdvancedAssemblyGraphBuilder
+        let laptop_config = crate::assembly::LaptopConfig::auto_detect();
+        let assembler = crate::assembly::LaptopAssembler::new(laptop_config);
 
         // Convert core CorrectedRead to assembly CorrectedRead for compatibility
         let assembly_reads: Vec<_> = reads
@@ -1634,18 +1654,39 @@ impl MetagenomicsPipeline {
 
         // The advanced builder provides comprehensive progress reporting internally
         multi_progress.update_line(
-            line_id, 
-            format!("🧬 Assembly: Enhanced verbose progress active for {} reads", reads.len()),
+            line_id,
+            format!(
+                "🧬 Assembly: Enhanced verbose progress active for {} reads",
+                reads.len()
+            ),
         );
-        
-        // Use our enhanced build_graph which provides detailed verbose progress
-        let assembly_graph = builder.build_graph(&assembly_reads)?;
+
+        // Use laptop assembler which provides efficient assembly
+        let contigs = assembler.assemble(&assembly_reads)?;
+
+        // Create basic assembly stats from contigs
+        let assembly_stats = AssemblyStats {
+            total_length: contigs.iter().map(|c| c.length).sum(),
+            num_contigs: contigs.len(),
+            n50: Self::calculate_n50(&contigs),
+            largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
+            gc_content: Self::calculate_average_gc(&contigs),
+            coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
+        };
+
+        // Create basic graph fragment (simplified for laptop assembler)
+        let graph_fragment = GraphFragment {
+            nodes: vec![], // Laptop assembler doesn't expose internal graph structure
+            edges: vec![],
+            node_count: contigs.len(),
+            edge_count: 0,
+        };
 
         // Store results if database available
         if let Some(ref db) = self.database {
             println!("💾 Storing assembly results in database...");
             let _assembly_id = db.store_assembly_results(
-                &assembly_graph.assembly_stats,
+                &assembly_stats,
                 "current_sample",
                 &serde_json::to_string(&self.config)?,
             )?;
@@ -1653,9 +1694,9 @@ impl MetagenomicsPipeline {
         }
 
         Ok(AssemblyResults {
-            contigs: assembly_graph.contigs.clone(),
-            assembly_stats: assembly_graph.assembly_stats.clone(),
-            graph_fragment: assembly_graph.graph_fragment.clone(),
+            contigs,
+            assembly_stats,
+            graph_fragment,
         })
     }
 
@@ -1822,6 +1863,60 @@ impl MetagenomicsPipeline {
         self.write_report_files(&report).await?;
 
         Ok(report)
+    }
+
+    /// Calculate N50 statistic for contigs
+    fn calculate_n50(contigs: &[Contig]) -> usize {
+        if contigs.is_empty() {
+            return 0;
+        }
+
+        let mut lengths: Vec<usize> = contigs.iter().map(|c| c.length).collect();
+        lengths.sort_by(|a, b| b.cmp(a)); // Sort in descending order
+
+        let total_length: usize = lengths.iter().sum();
+        let target = total_length / 2;
+
+        let mut cumulative = 0;
+        for &length in &lengths {
+            cumulative += length;
+            if cumulative >= target {
+                return length;
+            }
+        }
+
+        0
+    }
+
+    /// Calculate average GC content across all contigs
+    fn calculate_average_gc(contigs: &[Contig]) -> f64 {
+        if contigs.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_gc = 0;
+        let mut total_bases = 0;
+
+        for contig in contigs {
+            for c in contig.sequence.chars() {
+                match c.to_ascii_uppercase() {
+                    'G' | 'C' => {
+                        total_gc += 1;
+                        total_bases += 1;
+                    }
+                    'A' | 'T' => {
+                        total_bases += 1;
+                    }
+                    _ => {} // Skip ambiguous bases
+                }
+            }
+        }
+
+        if total_bases == 0 {
+            0.0
+        } else {
+            (total_gc as f64 / total_bases as f64) * 100.0
+        }
     }
 }
 

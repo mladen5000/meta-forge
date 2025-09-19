@@ -1,7 +1,7 @@
 use anyhow::Result;
 use meta_forge::utils::kraken_reporter::{
-    KrakenReporter, KrakenClassification, ClassificationStatus, 
-    ConfidenceMetrics, TaxonomicLineage, TaxonomicRank
+    ClassificationStatus, ConfidenceMetrics, KrakenClassification, KrakenReporter,
+    TaxonomicLineage, TaxonomicRank,
 };
 use std::path::Path;
 
@@ -15,7 +15,7 @@ fn main() -> Result<()> {
 
     // Create example classifications with hierarchical taxonomy
     let classifications = create_demo_classifications();
-    
+
     // Add classifications to reporter
     for classification in classifications {
         reporter.add_classification(classification);
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
 
     // Generate Kraken-style output files
     println!("\n📄 Generating Kraken-style reports...");
-    
+
     // Standard Kraken output format
     let kraken_path = Path::new("output/demo/demo_sample.kraken");
     reporter.write_kraken_output(&kraken_path)?;
@@ -106,7 +106,6 @@ fn create_demo_classifications() -> Vec<KrakenClassification> {
                 }),
             },
         },
-
         // Salmonella classification
         KrakenClassification {
             classification_status: ClassificationStatus::Classified,
@@ -160,7 +159,6 @@ fn create_demo_classifications() -> Vec<KrakenClassification> {
                 }),
             },
         },
-
         // Unclassified sequence
         KrakenClassification {
             classification_status: ClassificationStatus::Unclassified,
@@ -186,7 +184,6 @@ fn create_demo_classifications() -> Vec<KrakenClassification> {
                 species: None,
             },
         },
-
         // Bacillus classification
         KrakenClassification {
             classification_status: ClassificationStatus::Classified,

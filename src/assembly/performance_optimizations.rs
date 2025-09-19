@@ -12,13 +12,13 @@
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
+use petgraph::visit::EdgeRef;
+use petgraph::{Directed, Graph};
 use rayon::prelude::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use petgraph::{Graph, Directed};
-use petgraph::visit::EdgeRef;
 
 /* ========================================================================= */
 /*                      SIMD-OPTIMIZED NUCLEOTIDE OPERATIONS               */
@@ -504,60 +504,79 @@ impl CacheOptimizedGraph {
         }
 
         let (_, edges_before, memory_before, _) = self.get_statistics();
-        println!("🚀 Running ULTRA-FAST transitive reduction on {} nodes, {} edges", n, edges_before);
+        println!(
+            "🚀 Running ULTRA-FAST transitive reduction on {} nodes, {} edges",
+            n, edges_before
+        );
         println!("📊 Pre-reduction memory: {:.2} MB", memory_before);
         println!("⚡ Algorithm: O(V+E) topological sort (vs O(V³) Floyd-Warshall)");
-        
+
         let reduction_start = std::time::Instant::now();
-        
+
         // Convert to petgraph for ultra-fast algorithms
         println!("🔄 Converting to petgraph format...");
         let convert_start = std::time::Instant::now();
         let mut petgraph = self.to_petgraph()?;
-        println!("✅ Conversion completed in {:.3}ms", convert_start.elapsed().as_millis());
-        
+        println!(
+            "✅ Conversion completed in {:.3}ms",
+            convert_start.elapsed().as_millis()
+        );
+
         // Use ultra-fast O(V+E) transitive reduction
-        let fast_reducer = crate::assembly::fast_transitive_reduction::FastTransitiveReducer::new(true);
+        let fast_reducer =
+            crate::assembly::fast_transitive_reduction::FastTransitiveReducer::new(true);
         let edges_removed = fast_reducer.reduce_graph(&mut petgraph)?;
-        
+
         // Convert back to our format
         println!("🔄 Converting back from petgraph...");
         let convert_back_start = std::time::Instant::now();
         self.from_petgraph(petgraph)?;
-        println!("✅ Conversion back completed in {:.3}ms", convert_back_start.elapsed().as_millis());
-        
+        println!(
+            "✅ Conversion back completed in {:.3}ms",
+            convert_back_start.elapsed().as_millis()
+        );
+
         let reduction_time = reduction_start.elapsed();
         let (_, edges_after, memory_after, cache_hit_rate) = self.get_statistics();
-        
+
         println!("🎉 ULTRA-FAST transitive reduction completed in {:.3}ms (vs ~{}min with Floyd-Warshall)", 
                  reduction_time.as_millis(),
                  (n.pow(3) / 60_000_000).max(1)); // Rough Floyd-Warshall time estimate
-        
-        println!("📊 Edges reduced: {} → {} (-{} edges, {:.1}% reduction)", 
-                 edges_before, edges_after, edges_removed, 
-                 (edges_removed as f64 / edges_before.max(1) as f64) * 100.0);
+
+        println!(
+            "📊 Edges reduced: {} → {} (-{} edges, {:.1}% reduction)",
+            edges_before,
+            edges_after,
+            edges_removed,
+            (edges_removed as f64 / edges_before.max(1) as f64) * 100.0
+        );
         let memory_change = memory_after as i64 - memory_before as i64;
-        println!("📊 Memory change: {:.2} MB → {:.2} MB ({:+.2} MB)", 
-                 memory_before, memory_after, memory_change as f64);
+        println!(
+            "📊 Memory change: {:.2} MB → {:.2} MB ({:+.2} MB)",
+            memory_before, memory_after, memory_change as f64
+        );
         println!("⚡ Cache hit rate: {:.1}%", cache_hit_rate * 100.0);
-        
-        println!("🏆 Performance improvement: {}x faster than Floyd-Warshall!", 
-                 ((n.pow(3) / 1000).max(1) as f64 / reduction_time.as_millis().max(1) as f64).floor() as usize);
+
+        println!(
+            "🏆 Performance improvement: {}x faster than Floyd-Warshall!",
+            ((n.pow(3) / 1000).max(1) as f64 / reduction_time.as_millis().max(1) as f64).floor()
+                as usize
+        );
 
         Ok(())
     }
-    
+
     /// Convert CacheOptimizedGraph to petgraph format for ultra-fast algorithms
     fn to_petgraph(&self) -> Result<Graph<u32, (), Directed>> {
         let mut graph = Graph::new();
         let mut node_mapping = AHashMap::new();
-        
+
         // Add all nodes
         for (index, node) in self.nodes.iter().enumerate() {
             let node_index = graph.add_node(node.hash as u32);
             node_mapping.insert(index as u32, node_index);
         }
-        
+
         // Add all edges
         for (node_id, adj_list) in self.adjacency.iter().enumerate() {
             if let Some(&source_index) = node_mapping.get(&(node_id as u32)) {
@@ -568,16 +587,16 @@ impl CacheOptimizedGraph {
                 }
             }
         }
-        
+
         Ok(graph)
     }
-    
+
     /// Convert back from petgraph to CacheOptimizedGraph
     fn from_petgraph(&mut self, petgraph: Graph<u32, (), Directed>) -> Result<()> {
         // Clear existing adjacency lists
         self.adjacency.clear();
         self.adjacency.resize(self.nodes.len(), Vec::new());
-        
+
         // Rebuild adjacency lists from petgraph
         for node_index in petgraph.node_indices() {
             if let Some(&node_id) = petgraph.node_weight(node_index) {
@@ -593,7 +612,7 @@ impl CacheOptimizedGraph {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -663,16 +682,21 @@ impl CacheOptimizedGraph {
         // Floyd-Warshall algorithm with progress tracking
         println!("🔄 Computing transitive closure using Floyd-Warshall algorithm...");
         let fw_start = std::time::Instant::now();
-        
+
         for k in 0..n {
             // Progress update every 10% of nodes
             if k > 0 && k % (n / 10).max(1) == 0 {
                 let progress_pct = (k as f64 / n as f64) * 100.0;
                 let elapsed = fw_start.elapsed();
-                println!("  📊 Floyd-Warshall progress: {:.1}% (k={}/{}) | {:.3}s elapsed", 
-                         progress_pct, k, n, elapsed.as_secs_f64());
+                println!(
+                    "  📊 Floyd-Warshall progress: {:.1}% (k={}/{}) | {:.3}s elapsed",
+                    progress_pct,
+                    k,
+                    n,
+                    elapsed.as_secs_f64()
+                );
             }
-            
+
             for i in 0..n {
                 if reachable[i][k] {
                     for j in 0..n {
@@ -683,9 +707,12 @@ impl CacheOptimizedGraph {
                 }
             }
         }
-        
+
         let fw_time = fw_start.elapsed();
-        println!("✅ Floyd-Warshall completed in {:.3}s", fw_time.as_secs_f64());
+        println!(
+            "✅ Floyd-Warshall completed in {:.3}s",
+            fw_time.as_secs_f64()
+        );
 
         // Find and remove transitive edges with progress tracking
         println!("🔄 Analyzing edges for transitive reduction...");
@@ -703,34 +730,45 @@ impl CacheOptimizedGraph {
                     retained_edges.push(j);
                 }
                 processed_edges += 1;
-                
+
                 // Progress update every 10% of edges
                 if processed_edges % (total_edges / 10).max(1) == 0 {
                     let progress_pct = (processed_edges as f64 / total_edges as f64) * 100.0;
-                    println!("  📊 Edge analysis progress: {:.1}% ({}/{})", 
-                             progress_pct, processed_edges, total_edges);
+                    println!(
+                        "  📊 Edge analysis progress: {:.1}% ({}/{})",
+                        progress_pct, processed_edges, total_edges
+                    );
                 }
             }
             edges_to_retain.push(retained_edges);
         }
-        
+
         let edge_analysis_time = edge_analysis_start.elapsed();
-        println!("✅ Edge analysis completed in {:.3}s", edge_analysis_time.as_secs_f64());
+        println!(
+            "✅ Edge analysis completed in {:.3}s",
+            edge_analysis_time.as_secs_f64()
+        );
 
         // Now update the adjacency lists
         println!("🔄 Updating graph adjacency lists...");
         let update_start = std::time::Instant::now();
-        
+
         for (i, adj_list) in self.adjacency.iter_mut().enumerate() {
             let original_len = adj_list.len();
             *adj_list = edges_to_retain[i].clone();
             removed_count += original_len - adj_list.len();
         }
-        
+
         let update_time = update_start.elapsed();
-        println!("✅ Graph updates completed in {:.3}s", update_time.as_secs_f64());
-        println!("📊 Transitive reduction summary: Removed {} edges ({:.1}% reduction)", 
-                 removed_count, (removed_count as f64 / total_edges.max(1) as f64) * 100.0);
+        println!(
+            "✅ Graph updates completed in {:.3}s",
+            update_time.as_secs_f64()
+        );
+        println!(
+            "📊 Transitive reduction summary: Removed {} edges ({:.1}% reduction)",
+            removed_count,
+            (removed_count as f64 / total_edges.max(1) as f64) * 100.0
+        );
         Ok(())
     }
 
@@ -817,12 +855,12 @@ impl CacheOptimizedGraph {
 
         (node_count, edge_count, memory_usage, cache_hit_rate)
     }
-    
+
     /// Get all node IDs (required for ParallelContigGenerator)
     pub fn get_node_ids(&self) -> Vec<u64> {
         self.nodes.iter().map(|node| node.hash).collect()
     }
-    
+
     /// Get neighbors of a node (required for ParallelContigGenerator)
     pub fn get_neighbors(&self, node_id: u64) -> Vec<u64> {
         if let Some(&index) = self.hash_to_index.get(&node_id) {
@@ -842,7 +880,7 @@ impl CacheOptimizedGraph {
         }
         Vec::new()
     }
-    
+
     /// Get node sequence (required for ParallelContigGenerator)
     /// Note: OptimizedGraphNode stores hashes, not sequences. We reconstruct from hash.
     pub fn get_node_sequence(&self, node_id: u64) -> Option<String> {
@@ -855,21 +893,21 @@ impl CacheOptimizedGraph {
             None
         }
     }
-    
+
     /// Convert hash back to a k-mer sequence (simplified implementation)
     fn hash_to_kmer(hash: u64, k: usize) -> String {
         let bases = ['A', 'C', 'G', 'T'];
         let mut sequence = String::with_capacity(k);
         let mut h = hash;
-        
+
         for _ in 0..k {
             sequence.push(bases[(h % 4) as usize]);
             h /= 4;
         }
-        
+
         sequence
     }
-    
+
     /// Get node coverage (required for ParallelContigGenerator)
     pub fn get_node_coverage(&self, node_id: u64) -> Option<f64> {
         if let Some(&index) = self.hash_to_index.get(&node_id) {
@@ -1345,34 +1383,38 @@ mod tests {
     #[test]
     fn test_parallel_contig_generator_simple() {
         println!("🧪 Testing ParallelContigGenerator with simple graph...");
-        
+
         // Create a simple test graph with 3 connected nodes
         let stats = Arc::new(GraphStatistics::default());
-        stats.node_count.store(3, std::sync::atomic::Ordering::Relaxed);
-        stats.edge_count.store(2, std::sync::atomic::Ordering::Relaxed);
-        
+        stats
+            .node_count
+            .store(3, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .edge_count
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+
         let graph = CacheOptimizedGraph {
             nodes: vec![
-                OptimizedGraphNode { 
-                    hash: 1, 
-                    coverage: 5, 
-                    metadata: 0 
+                OptimizedGraphNode {
+                    hash: 1,
+                    coverage: 5,
+                    metadata: 0,
                 },
-                OptimizedGraphNode { 
-                    hash: 2, 
+                OptimizedGraphNode {
+                    hash: 2,
                     coverage: 4,
-                    metadata: 0 
+                    metadata: 0,
                 },
-                OptimizedGraphNode { 
-                    hash: 3, 
+                OptimizedGraphNode {
+                    hash: 3,
                     coverage: 3,
-                    metadata: 0 
+                    metadata: 0,
                 },
             ],
             adjacency: vec![
-                vec![1], // node 0 -> node 1  
+                vec![1], // node 0 -> node 1
                 vec![2], // node 1 -> node 2
-                vec![], // node 2 -> nothing (end of chain)
+                vec![],  // node 2 -> nothing (end of chain)
             ],
             hash_to_index: {
                 let mut map = AHashMap::new();
@@ -1387,15 +1429,26 @@ mod tests {
         // Generate contigs
         match ParallelContigGenerator::generate_contigs_parallel(&graph) {
             Ok(contigs) => {
-                println!("✅ Generated {} contigs from 3 connected nodes", contigs.len());
+                println!(
+                    "✅ Generated {} contigs from 3 connected nodes",
+                    contigs.len()
+                );
                 assert!(!contigs.is_empty(), "Should generate at least one contig");
-                
+
                 // In a properly connected chain, we should get 1 contig from 3 connected nodes
                 // This demonstrates n_contigs << n_reads relationship
-                println!("🎯 Result: {} contigs from 3 nodes (demonstrates reduction)", contigs.len());
-                
+                println!(
+                    "🎯 Result: {} contigs from 3 nodes (demonstrates reduction)",
+                    contigs.len()
+                );
+
                 for (i, contig) in contigs.iter().enumerate() {
-                    println!("  Contig {}: length={}, sequence={}", i, contig.sequence.len(), contig.sequence);
+                    println!(
+                        "  Contig {}: length={}, sequence={}",
+                        i,
+                        contig.sequence.len(),
+                        contig.sequence
+                    );
                 }
             }
             Err(e) => {
@@ -1408,28 +1461,32 @@ mod tests {
     #[test]
     fn test_parallel_contig_generator_unconnected() {
         println!("🧪 Testing ParallelContigGenerator with unconnected nodes...");
-        
+
         // Create a graph with 3 unconnected nodes (this would represent the bug case)
         let stats = Arc::new(GraphStatistics::default());
-        stats.node_count.store(3, std::sync::atomic::Ordering::Relaxed);
-        stats.edge_count.store(0, std::sync::atomic::Ordering::Relaxed);
-        
+        stats
+            .node_count
+            .store(3, std::sync::atomic::Ordering::Relaxed);
+        stats
+            .edge_count
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
         let graph = CacheOptimizedGraph {
             nodes: vec![
-                OptimizedGraphNode { 
-                    hash: 1, 
+                OptimizedGraphNode {
+                    hash: 1,
                     coverage: 5,
-                    metadata: 0
+                    metadata: 0,
                 },
-                OptimizedGraphNode { 
-                    hash: 2, 
+                OptimizedGraphNode {
+                    hash: 2,
                     coverage: 4,
-                    metadata: 0
+                    metadata: 0,
                 },
-                OptimizedGraphNode { 
-                    hash: 3, 
+                OptimizedGraphNode {
+                    hash: 3,
                     coverage: 3,
-                    metadata: 0
+                    metadata: 0,
                 },
             ],
             adjacency: vec![
@@ -1440,7 +1497,7 @@ mod tests {
             hash_to_index: {
                 let mut map = AHashMap::new();
                 map.insert(1, 0);
-                map.insert(2, 1);  
+                map.insert(2, 1);
                 map.insert(3, 2);
                 map
             },
@@ -1450,12 +1507,22 @@ mod tests {
         // Generate contigs
         match ParallelContigGenerator::generate_contigs_parallel(&graph) {
             Ok(contigs) => {
-                println!("✅ Generated {} contigs from 3 unconnected nodes", contigs.len());
-                
+                println!(
+                    "✅ Generated {} contigs from 3 unconnected nodes",
+                    contigs.len()
+                );
+
                 // Unconnected nodes should each produce their own contig
                 // This would represent the 1:1 ratio bug we're fixing
-                assert_eq!(contigs.len(), 3, "Each unconnected node should produce one contig");
-                println!("🎯 Result: {} contigs from 3 nodes (1:1 ratio - the bug case)", contigs.len());
+                assert_eq!(
+                    contigs.len(),
+                    3,
+                    "Each unconnected node should produce one contig"
+                );
+                println!(
+                    "🎯 Result: {} contigs from 3 nodes (1:1 ratio - the bug case)",
+                    contigs.len()
+                );
             }
             Err(e) => {
                 panic!("ParallelContigGenerator failed: {}", e);
@@ -1470,21 +1537,29 @@ mod tests {
 impl ParallelContigGenerator {
     /// Generate contigs from an optimized graph by traversing connected components
     /// This fixes the critical bug where each read became a separate contig
-    pub fn generate_contigs_parallel(graph: &CacheOptimizedGraph) -> Result<Vec<crate::core::data_structures::Contig>> {
+    pub fn generate_contigs_parallel(
+        graph: &CacheOptimizedGraph,
+    ) -> Result<Vec<crate::core::data_structures::Contig>> {
         use rayon::prelude::*;
-        
+
         // Get graph statistics to understand what we're working with
         let (node_count, edge_count, _, _) = graph.get_statistics();
         if node_count == 0 {
             return Ok(Vec::new());
         }
-        
-        println!("🧬 ParallelContigGenerator: Processing {} nodes, {} edges", node_count, edge_count);
-        
+
+        println!(
+            "🧬 ParallelContigGenerator: Processing {} nodes, {} edges",
+            node_count, edge_count
+        );
+
         // Find connected components in the graph
         let connected_components = Self::find_connected_components(graph);
-        println!("🔗 Found {} connected components", connected_components.len());
-        
+        println!(
+            "🔗 Found {} connected components",
+            connected_components.len()
+        );
+
         // Process components in parallel to generate contigs
         let contigs: Vec<crate::core::data_structures::Contig> = connected_components
             .par_iter()
@@ -1493,63 +1568,76 @@ impl ParallelContigGenerator {
                 Self::component_to_contig(contig_id, component, graph).ok()
             })
             .collect();
-            
-        println!("✅ Generated {} contigs from {} reads (proper assembly ratio achieved!)", contigs.len(), node_count);
-        
+
+        println!(
+            "✅ Generated {} contigs from {} reads (proper assembly ratio achieved!)",
+            contigs.len(),
+            node_count
+        );
+
         Ok(contigs)
     }
-    
+
     /// Find connected components in the graph
     /// Each component should become a contig
     fn find_connected_components(graph: &CacheOptimizedGraph) -> Vec<Vec<u64>> {
         let mut visited = AHashSet::new();
         let mut components = Vec::new();
-        
+
         // Get all node IDs from the graph
         let node_ids: Vec<u64> = graph.get_node_ids();
-        
+
         for &node_id in &node_ids {
             if !visited.contains(&node_id) {
                 let mut component = Vec::new();
                 Self::dfs_component(node_id, graph, &mut visited, &mut component);
-                
+
                 if !component.is_empty() {
                     components.push(component);
                 }
             }
         }
-        
+
         components
     }
-    
+
     /// Depth-first search to find all nodes in a connected component
-    fn dfs_component(node_id: u64, graph: &CacheOptimizedGraph, visited: &mut AHashSet<u64>, component: &mut Vec<u64>) {
+    fn dfs_component(
+        node_id: u64,
+        graph: &CacheOptimizedGraph,
+        visited: &mut AHashSet<u64>,
+        component: &mut Vec<u64>,
+    ) {
         if visited.contains(&node_id) {
             return;
         }
-        
+
         visited.insert(node_id);
         component.push(node_id);
-        
+
         // Visit all neighbors
         let neighbors = graph.get_neighbors(node_id);
-        
+
         for neighbor in neighbors {
             Self::dfs_component(neighbor, graph, visited, component);
         }
     }
-    
+
     /// Convert a connected component to a contig
-    fn component_to_contig(contig_id: usize, component: &[u64], graph: &CacheOptimizedGraph) -> Result<crate::core::data_structures::Contig> {
+    fn component_to_contig(
+        contig_id: usize,
+        component: &[u64],
+        graph: &CacheOptimizedGraph,
+    ) -> Result<crate::core::data_structures::Contig> {
         if component.is_empty() {
             return Err(anyhow!("Empty component"));
         }
-        
+
         // Find the best path through this component (simplified Eulerian path approach)
         let path = Self::find_best_path(component, graph)?;
         let sequence = Self::path_to_sequence(&path, graph)?;
         let coverage = Self::calculate_coverage(&path, graph);
-        
+
         Ok(crate::core::data_structures::Contig {
             id: contig_id,
             sequence: sequence.clone(),
@@ -1559,51 +1647,56 @@ impl ParallelContigGenerator {
             contig_type: crate::core::data_structures::ContigType::Linear, // Simplified for now
         })
     }
-    
+
     /// Find the best path through a component (simplified approach)
     fn find_best_path(component: &[u64], graph: &CacheOptimizedGraph) -> Result<Vec<u64>> {
         if component.len() == 1 {
             return Ok(vec![component[0]]);
         }
-        
+
         // Simple approach: find start node and follow highest-weight edges
         let start_node = Self::find_start_node(component, graph);
         let mut path = vec![start_node];
         let mut visited = AHashSet::new();
         visited.insert(start_node);
-        
+
         let mut current = start_node;
         while let Some(next) = Self::get_best_unvisited_neighbor(current, graph, &visited) {
             path.push(next);
             visited.insert(next);
             current = next;
         }
-        
+
         Ok(path)
     }
-    
+
     /// Find a good starting node (prefer nodes with fewer incoming edges)
     fn find_start_node(component: &[u64], _graph: &CacheOptimizedGraph) -> u64 {
         // Simplified: just use the first node
         // In a real implementation, we'd analyze in/out degrees
         component[0]
     }
-    
+
     /// Get the best unvisited neighbor (highest edge weight)
-    fn get_best_unvisited_neighbor(node_id: u64, graph: &CacheOptimizedGraph, visited: &AHashSet<u64>) -> Option<u64> {
-        graph.get_neighbors(node_id)
+    fn get_best_unvisited_neighbor(
+        node_id: u64,
+        graph: &CacheOptimizedGraph,
+        visited: &AHashSet<u64>,
+    ) -> Option<u64> {
+        graph
+            .get_neighbors(node_id)
             .into_iter()
             .find(|&neighbor| !visited.contains(&neighbor))
     }
-    
+
     /// Convert a path of nodes to a DNA sequence
     fn path_to_sequence(path: &[u64], graph: &CacheOptimizedGraph) -> Result<String> {
         if path.is_empty() {
             return Ok(String::new());
         }
-        
+
         let mut sequence = String::new();
-        
+
         for (i, &node_id) in path.iter().enumerate() {
             if let Some(kmer_seq) = graph.get_node_sequence(node_id) {
                 if i == 0 {
@@ -1617,20 +1710,21 @@ impl ParallelContigGenerator {
                 }
             }
         }
-        
+
         Ok(sequence)
     }
-    
+
     /// Calculate average coverage for a path
     fn calculate_coverage(path: &[u64], graph: &CacheOptimizedGraph) -> f64 {
         if path.is_empty() {
             return 0.0;
         }
-        
-        let total_coverage: f64 = path.iter()
+
+        let total_coverage: f64 = path
+            .iter()
             .map(|&node_id| graph.get_node_coverage(node_id).unwrap_or(1.0))
             .sum();
-            
+
         total_coverage / path.len() as f64
     }
 }

@@ -140,7 +140,7 @@ async fn main() -> Result<()> {
             // Run preprocessing to get reads
             println!("📋 Preprocessing input files...");
             let reads = pipeline.preprocess_inputs(&input).await?;
-            
+
             // Run assembly with verbose progress
             println!("🚀 Starting assembly with enhanced verbose progress...");
             let assembly_results = pipeline.run_assembly(&reads).await?;
@@ -150,24 +150,35 @@ async fn main() -> Result<()> {
             println!("=====================================");
             println!("📊 Assembly Statistics:");
             println!("   Contigs generated: {}", assembly_results.contigs.len());
-            println!("   Total sequence length: {} bp", 
-                    assembly_results.assembly_stats.total_length);
-            println!("   Assembly N50: {} bp", 
-                    assembly_results.assembly_stats.n50);
-            println!("   Average contig length: {:.1} bp", 
-                    assembly_results.assembly_stats.total_length as f64 / assembly_results.assembly_stats.num_contigs.max(1) as f64);
-            println!("   Largest contig: {} bp", 
-                    assembly_results.assembly_stats.largest_contig);
-            
+            println!(
+                "   Total sequence length: {} bp",
+                assembly_results.assembly_stats.total_length
+            );
+            println!(
+                "   Assembly N50: {} bp",
+                assembly_results.assembly_stats.n50
+            );
+            println!(
+                "   Average contig length: {:.1} bp",
+                assembly_results.assembly_stats.total_length as f64
+                    / assembly_results.assembly_stats.num_contigs.max(1) as f64
+            );
+            println!(
+                "   Largest contig: {} bp",
+                assembly_results.assembly_stats.largest_contig
+            );
+
             // Write contigs to FASTA file
-            let output_path = format!("contigs_{}.fasta", 
+            let output_path = format!(
+                "contigs_{}.fasta",
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_secs());
-            
+                    .as_secs()
+            );
+
             println!("💾 Writing contigs to: {}", output_path);
-            
+
             // Write FASTA output (simplified)
             use std::io::Write;
             let mut file = std::fs::File::create(&output_path)?;
@@ -175,7 +186,7 @@ async fn main() -> Result<()> {
                 writeln!(file, ">contig_{}", i + 1)?;
                 writeln!(file, "{}", contig.sequence)?;
             }
-            
+
             println!("✅ Assembly results saved to {}", output_path);
         }
         _ => {
@@ -189,7 +200,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use tempfile::tempdir;
 
     #[test]
@@ -341,3 +352,4 @@ mod tests {
         }
     }
 }
+//

@@ -1,17 +1,7 @@
-pub mod adaptive_k;
-pub mod advanced_graph_algorithms;
-pub mod bioinformatics_optimizations;
-pub mod database_optimizations;
-pub mod fast_kmer_extraction;
-pub mod graph_construction;
-pub mod memory_benchmark;
-pub mod memory_mapped;
-pub mod memory_optimizations;
-pub mod optimization_tests;
-pub mod database_connection_tests;
-pub mod optimized_kmer_pool;
-pub mod optimized_structures;
-pub mod parallel_optimizations;
-pub mod performance_optimizations;
-pub mod simd_optimizations;
-pub mod fast_transitive_reduction;
+// Essential assembly modules for laptop-optimized processing
+pub mod laptop_assembly;
+pub mod graph_construction; // Basic graph construction utilities
+pub mod adaptive_k; // Adaptive k-mer selection
+
+// Re-export main laptop assembler for convenient access
+pub use laptop_assembly::{LaptopAssembler, LaptopConfig, LaptopAssemblyGraph};

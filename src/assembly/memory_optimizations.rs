@@ -7,13 +7,13 @@
 //! - Streaming algorithms with bounded memory guarantees
 //! - Cache-efficient memory layouts for bioinformatics workloads
 
+use ahash::AHashMap;
 use anyhow::Result;
+use crossbeam::queue::SegQueue;
+use parking_lot::RwLock;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use crossbeam::queue::SegQueue;
-use parking_lot::RwLock;
-use ahash::AHashMap;
 
 /* ========================================================================= */
 /*                        ZERO-COPY KMER ARENA ALLOCATOR                   */
@@ -38,7 +38,7 @@ impl KmerArena {
     pub fn new(initial_capacity_mb: usize) -> Self {
         // Optimize block size for L3 cache (typically 8-32MB)
         let block_size = (initial_capacity_mb * 1024 * 1024) / std::mem::size_of::<u64>();
-        
+
         Self {
             blocks: Vec::new(),
             offset: AtomicUsize::new(0),
@@ -51,7 +51,7 @@ impl KmerArena {
     /// Allocate k-mer with zero-copy semantics
     pub fn allocate_kmer(&self, kmer_data: &[u64]) -> Result<KmerRef> {
         let kmer_len = kmer_data.len();
-        
+
         // Fast path: try current block
         let current_offset = self.offset.load(Ordering::Relaxed);
         if current_offset + kmer_len <= self.block_size {
@@ -66,9 +66,9 @@ impl KmerArena {
                         let ptr = block.as_ptr().add(new_offset) as *mut u64;
                         std::ptr::copy_nonoverlapping(kmer_data.as_ptr(), ptr, kmer_len);
                     }
-                    
+
                     self.allocated_kmers.fetch_add(1, Ordering::Relaxed);
-                    
+
                     return Ok(KmerRef {
                         block_id: self.blocks.len() - 1,
                         offset: new_offset,
@@ -86,7 +86,7 @@ impl KmerArena {
         // This would need proper synchronization in real implementation
         // For now, simplified approach
         let new_block = vec![0u64; self.block_size].into_boxed_slice();
-        
+
         unsafe {
             let ptr = new_block.as_ptr() as *mut u64;
             std::ptr::copy_nonoverlapping(kmer_data.as_ptr(), ptr, kmer_data.len());
@@ -94,13 +94,13 @@ impl KmerArena {
 
         let block_id = self.blocks.len();
         // Note: This is not thread-safe - would need proper synchronization
-        
+
         self.offset.store(kmer_data.len(), Ordering::Release);
         self.total_memory.fetch_add(
-            self.block_size * std::mem::size_of::<u64>(), 
-            Ordering::Relaxed
+            self.block_size * std::mem::size_of::<u64>(),
+            Ordering::Relaxed,
         );
-        
+
         Ok(KmerRef {
             block_id,
             offset: 0,
@@ -110,9 +110,9 @@ impl KmerArena {
 
     /// Get k-mer data by reference (zero-copy)
     pub fn get_kmer(&self, kmer_ref: &KmerRef) -> Option<&[u64]> {
-        self.blocks.get(kmer_ref.block_id).map(|block| {
-            &block[kmer_ref.offset..kmer_ref.offset + kmer_ref.length]
-        })
+        self.blocks
+            .get(kmer_ref.block_id)
+            .map(|block| &block[kmer_ref.offset..kmer_ref.offset + kmer_ref.length])
     }
 
     /// Memory usage statistics
@@ -128,7 +128,7 @@ impl KmerArena {
     fn calculate_utilization(&self) -> f32 {
         let used_memory = self.offset.load(Ordering::Relaxed) * std::mem::size_of::<u64>();
         let total_memory = self.total_memory.load(Ordering::Relaxed);
-        
+
         if total_memory > 0 {
             used_memory as f32 / total_memory as f32
         } else {
@@ -338,7 +338,7 @@ impl LockFreeGraphBuilder {
         let nodes_count = self.nodes.read().len();
         let node_size = std::mem::size_of::<GraphNode>();
         let queue_size = self.edge_queue.len() * std::mem::size_of::<(u64, u64, f32)>();
-        
+
         nodes_count * node_size + queue_size
     }
 }
@@ -419,7 +419,7 @@ impl Default for StreamConfig {
 impl BoundedStreamProcessor {
     pub fn new(config: StreamConfig) -> Self {
         let memory_limit = config.memory_limit_mb * 1024 * 1024;
-        
+
         Self {
             memory_limit,
             current_memory: AtomicUsize::new(0),
@@ -437,39 +437,33 @@ impl BoundedStreamProcessor {
         let mut stats = StreamingStats::default();
         let timestamp_counter = AtomicUsize::new(0);
 
-        kmer_stream
-            .for_each(|(hash, data)| {
-                stats.total_kmers_processed.fetch_add(1, Ordering::Relaxed);
-                
-                // Reservoir sampling decision
-                if fastrand::f64() > self.config.sample_rate {
-                    stats.kmers_sampled.fetch_add(1, Ordering::Relaxed);
-                    return; // Skip this k-mer
-                }
+        kmer_stream.for_each(|(hash, data)| {
+            stats.total_kmers_processed.fetch_add(1, Ordering::Relaxed);
 
-                // Check memory pressure
-                let current_mem = self.current_memory.load(Ordering::Relaxed);
-                if current_mem + data.len() > self.memory_limit {
-                    self.handle_memory_pressure(&mut stats);
-                }
+            // Reservoir sampling decision
+            if fastrand::f64() > self.config.sample_rate {
+                stats.kmers_sampled.fetch_add(1, Ordering::Relaxed);
+                return; // Skip this k-mer
+            }
 
-                // Try to add k-mer
-                if let Err(_) = self.try_add_kmer(hash, data, &timestamp_counter) {
-                    stats.insertion_failures.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    stats.kmers_stored.fetch_add(1, Ordering::Relaxed);
-                }
-            });
+            // Check memory pressure
+            let current_mem = self.current_memory.load(Ordering::Relaxed);
+            if current_mem + data.len() > self.memory_limit {
+                self.handle_memory_pressure(&mut stats);
+            }
+
+            // Try to add k-mer
+            if let Err(_) = self.try_add_kmer(hash, data, &timestamp_counter) {
+                stats.insertion_failures.fetch_add(1, Ordering::Relaxed);
+            } else {
+                stats.kmers_stored.fetch_add(1, Ordering::Relaxed);
+            }
+        });
 
         Ok(stats.into_final())
     }
 
-    fn try_add_kmer(
-        &self,
-        hash: u64,
-        data: Vec<u8>,
-        timestamp: &AtomicUsize,
-    ) -> Result<()> {
+    fn try_add_kmer(&self, hash: u64, data: Vec<u8>, timestamp: &AtomicUsize) -> Result<()> {
         let data_size = data.len();
         let current_timestamp = timestamp.fetch_add(1, Ordering::Relaxed) as u64;
 
@@ -505,8 +499,10 @@ impl BoundedStreamProcessor {
     }
 
     fn handle_memory_pressure(&self, _stats: &mut StreamingStats) {
-        self.eviction_stats.memory_pressure_events.fetch_add(1, Ordering::Relaxed);
-        
+        self.eviction_stats
+            .memory_pressure_events
+            .fetch_add(1, Ordering::Relaxed);
+
         // Trigger aggressive eviction
         let mut reservoir = self.kmer_reservoir.write();
         let target_evictions = reservoir.len() / 4; // Evict 25%
@@ -535,8 +531,11 @@ impl BoundedStreamProcessor {
         }
 
         let evicted = reservoir.swap_remove(lru_index);
-        self.current_memory.fetch_sub(evicted.data_size, Ordering::Relaxed);
-        self.eviction_stats.total_evictions.fetch_add(1, Ordering::Relaxed);
+        self.current_memory
+            .fetch_sub(evicted.data_size, Ordering::Relaxed);
+        self.eviction_stats
+            .total_evictions
+            .fetch_add(1, Ordering::Relaxed);
 
         Some(evicted)
     }
@@ -605,12 +604,12 @@ mod tests {
     fn test_kmer_arena_allocation() {
         let arena = KmerArena::new(1); // 1MB
         let kmer_data = vec![0x1234567890ABCDEF, 0xFEDCBA0987654321];
-        
+
         let kmer_ref = arena.allocate_kmer(&kmer_data).unwrap();
         let retrieved = arena.get_kmer(&kmer_ref).unwrap();
-        
+
         assert_eq!(retrieved, &kmer_data);
-        
+
         let stats = arena.memory_stats();
         assert!(stats.allocated_kmers > 0);
         assert!(stats.total_memory_bytes > 0);
@@ -620,16 +619,16 @@ mod tests {
     fn test_lock_free_graph_builder() {
         let config = BuilderConfig::default();
         let builder = LockFreeGraphBuilder::new(config);
-        
+
         let kmer_ref = KmerRef {
             block_id: 0,
             offset: 0,
             length: 2,
         };
-        
+
         builder.add_node(12345, kmer_ref).unwrap();
         builder.queue_edge(12345, 67890, 1.0);
-        
+
         let stats = builder.get_stats();
         assert!(stats.edges_queued > 0);
     }
@@ -642,10 +641,10 @@ mod tests {
             ..Default::default()
         };
         let processor = BoundedStreamProcessor::new(config);
-        
+
         let kmer_stream = (0..50).map(|i| (i as u64, vec![i as u8; 32]));
         let stats = processor.process_kmer_stream(kmer_stream).unwrap();
-        
+
         assert!(stats.total_kmers_processed > 0);
         assert!(stats.kmers_stored > 0);
     }
