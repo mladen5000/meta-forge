@@ -9,9 +9,8 @@
 //! - Progress tracking for large operations
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
@@ -19,7 +18,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{info, debug};
 
-use crate::utils::intermediate_output::{PipelineSection, OutputConfig};
+use crate::utils::intermediate_output::PipelineSection;
 
 /// High-performance async output manager
 #[derive(Debug, Clone)]
