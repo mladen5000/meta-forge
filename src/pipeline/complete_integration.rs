@@ -15,6 +15,7 @@ use tracing::warn;
 use crate::core::data_structures::*;
 use crate::database::integration::*;
 use crate::features::extraction::*;
+use ahash::AHashMap;
 // Removed import from deleted integrated module
 use crate::utils::configuration::*;
 
@@ -1174,17 +1175,19 @@ impl MetagenomicsPipeline {
             total_length: contigs.iter().map(|c| c.length).sum(),
             num_contigs: contigs.len(),
             n50: Self::calculate_n50(&contigs),
+            n90: Self::calculate_n90(&contigs),
             largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
             gc_content: Self::calculate_average_gc(&contigs),
             coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
+            coverage_std: Self::calculate_coverage_std(&contigs),
         };
 
         // Create basic graph fragment (simplified for laptop assembler)
         let graph_fragment = GraphFragment {
-            nodes: vec![], // Laptop assembler doesn't expose internal graph structure
+            nodes: AHashMap::new(), // Laptop assembler doesn't expose internal graph structure
             edges: vec![],
-            node_count: contigs.len(),
-            edge_count: 0,
+            fragment_id: 0,
+            coverage_stats: CoverageStats::default(),
         };
 
         // Store assembly results in database if available
@@ -1669,17 +1672,19 @@ impl MetagenomicsPipeline {
             total_length: contigs.iter().map(|c| c.length).sum(),
             num_contigs: contigs.len(),
             n50: Self::calculate_n50(&contigs),
+            n90: Self::calculate_n90(&contigs),
             largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
             gc_content: Self::calculate_average_gc(&contigs),
             coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
+            coverage_std: Self::calculate_coverage_std(&contigs),
         };
 
         // Create basic graph fragment (simplified for laptop assembler)
         let graph_fragment = GraphFragment {
-            nodes: vec![], // Laptop assembler doesn't expose internal graph structure
+            nodes: AHashMap::new(), // Laptop assembler doesn't expose internal graph structure
             edges: vec![],
-            node_count: contigs.len(),
-            edge_count: 0,
+            fragment_id: 0,
+            coverage_stats: CoverageStats::default(),
         };
 
         // Store results if database available
@@ -1917,6 +1922,44 @@ impl MetagenomicsPipeline {
         } else {
             (total_gc as f64 / total_bases as f64) * 100.0
         }
+    }
+
+    /// Calculate N90 statistic for contigs
+    fn calculate_n90(contigs: &[Contig]) -> usize {
+        if contigs.is_empty() {
+            return 0;
+        }
+
+        let mut lengths: Vec<usize> = contigs.iter().map(|c| c.length).collect();
+        lengths.sort_by(|a, b| b.cmp(a)); // Sort in descending order
+
+        let total_length: usize = lengths.iter().sum();
+        let target = (total_length * 9) / 10; // 90% of total length
+
+        let mut cumulative = 0;
+        for &length in &lengths {
+            cumulative += length;
+            if cumulative >= target {
+                return length;
+            }
+        }
+
+        0
+    }
+
+    /// Calculate coverage standard deviation for contigs
+    fn calculate_coverage_std(contigs: &[Contig]) -> f64 {
+        if contigs.len() <= 1 {
+            return 0.0;
+        }
+
+        let mean = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
+        let variance = contigs
+            .iter()
+            .map(|c| (c.coverage - mean).powi(2))
+            .sum::<f64>() / (contigs.len() - 1) as f64;
+
+        variance.sqrt()
     }
 }
 
