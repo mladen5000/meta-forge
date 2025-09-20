@@ -10,7 +10,6 @@
 use meta_forge::assembly::{LaptopAssembler, LaptopConfig, LaptopAssemblyGraph};
 use meta_forge::assembly::adaptive_k::{AdaptiveKSelector, AdaptiveKConfig};
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
-use anyhow::Result;
 
 /// Helper function to create test reads
 fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
@@ -168,10 +167,10 @@ fn test_adaptive_k_gc_content() {
 #[test]
 fn test_laptop_assembler_creation() {
     let config = LaptopConfig::medium_memory();
-    let assembler = LaptopAssembler::new(config.clone());
+    let _assembler = LaptopAssembler::new(config.clone());
 
     // Test auto-config assembler
-    let auto_assembler = LaptopAssembler::auto_config();
+    let _auto_assembler = LaptopAssembler::auto_config();
     // Should create successfully
 }
 
@@ -306,7 +305,7 @@ fn test_k_mer_size_validation() {
 
 #[test]
 fn test_chunk_processing() {
-    let config = LaptopConfig::custom(1024, 2, 21).unwrap();
+    let mut config = LaptopConfig::custom(1024, 2, 21).unwrap();
     config.chunk_size = 2; // Force small chunks
 
     let assembler = LaptopAssembler::new(config);

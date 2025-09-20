@@ -125,9 +125,53 @@ mod tests {
 
         let result = contextual_error();
         assert!(result.is_err());
-        let error_string = result.unwrap_err().to_string();
+        let error = result.unwrap_err();
+        let error_string = error.to_string();
+
+        // The main error message should contain the context
         assert!(error_string.contains("additional context"));
-        assert!(error_string.contains("base error"));
+
+        // To access the full error chain including the base error, we need to iterate through the chain
+        let mut found_base_error = false;
+        for cause in error.chain() {
+            if cause.to_string().contains("base error") {
+                found_base_error = true;
+                break;
+            }
+        }
+        assert!(found_base_error, "Base error should be found in the error chain");
+    }
+
+    #[test]
+    fn test_error_chain_handling() {
+        // Test complex error chains for assembly pipeline debugging
+        use anyhow::Context;
+
+        fn assembly_error() -> Result<()> {
+            Err(anyhow::anyhow!("Failed to parse k-mer: invalid nucleotide 'X'"))
+                .context("Error processing read at position 1234")
+                .context("Assembly graph construction failed")
+                .context("Pipeline execution error")?;
+            Ok(())
+        }
+
+        let result = assembly_error();
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+
+        // Collect all error messages in the chain
+        let error_chain: Vec<String> = error.chain()
+            .map(|e| e.to_string())
+            .collect();
+
+        // Should contain all levels of context
+        assert!(error_chain.iter().any(|e| e.contains("Pipeline execution error")));
+        assert!(error_chain.iter().any(|e| e.contains("Assembly graph construction failed")));
+        assert!(error_chain.iter().any(|e| e.contains("Error processing read at position 1234")));
+        assert!(error_chain.iter().any(|e| e.contains("Failed to parse k-mer: invalid nucleotide 'X'")));
+
+        // The main error should be the outermost context
+        assert!(error.to_string().contains("Pipeline execution error"));
     }
 
     #[test]
