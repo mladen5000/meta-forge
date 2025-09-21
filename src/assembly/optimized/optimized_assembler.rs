@@ -335,7 +335,7 @@ impl OptimizedAssembler {
                     contig_id += 1;
 
                     // Only keep contigs with meaningful length
-                    if contig.length >= self.config.base.min_k {
+                    if contig.length >= 15 { // Use minimum k-mer size
                         contigs.push(contig);
                     }
 
@@ -593,12 +593,14 @@ impl OptimizedAssembler {
         }
 
         // Extend in forward direction
-        while let Some(neighbors) = graph.get_neighbors(current_node) {
+        loop {
+            let neighbors_iter = graph.neighbors(current_node as u32);
+
             // Find unvisited neighbor with best overlap
             let mut best_neighbor = None;
             let mut best_overlap_score = 0;
 
-            for &neighbor_id in neighbors {
+            for neighbor_id in neighbors_iter {
                 if visited.contains(&neighbor_id) {
                     continue;
                 }

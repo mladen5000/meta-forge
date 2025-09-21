@@ -13,6 +13,9 @@ pub mod hyperlog_counter;
 pub mod streaming_pipeline;
 pub mod memory_pool;
 pub mod resource_manager;
+pub mod zero_copy_kmer;
+pub mod fast_memory_pool;
+pub mod fast_contig_builder;
 
 // Re-export main optimized components
 pub use bit_packed_kmer::{BitPackedKmer, SIMDKmerExtractor};
@@ -21,6 +24,9 @@ pub use hyperlog_counter::{HyperLogKmerCounter, CountMinSketch};
 pub use streaming_pipeline::{StreamingAssemblyPipeline, PipelineStage};
 pub use memory_pool::{AssemblyMemoryPool, PooledKmer};
 pub use resource_manager::{AdaptiveResourceManager, SystemMonitor};
+pub use zero_copy_kmer::{ZeroCopyKmerIterator, RollingKmerHash, SimdNucleotideOps, ZeroCopyKmerCounter};
+pub use fast_memory_pool::{FastAssemblyMemoryPool, PooledAllocation, PoolConfig};
+pub use fast_contig_builder::{FastContigBuilder, ContigBuilderConfig};
 
 /// Optimized assembler using new architecture
 pub mod optimized_assembler;
