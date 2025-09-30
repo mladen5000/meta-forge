@@ -7,6 +7,7 @@ use tracing::{info, instrument};
 
 use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
 use crate::utils::kraken_reporter::{KrakenClassification, KrakenReporter};
+use crate::utils::output_writers;
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
 use tracing::warn;
 
@@ -543,6 +544,29 @@ impl MetagenomicsPipeline {
             run_summary.sections.len()
         );
         info!("💾 Saved final report intermediate files");
+
+        // ===================================================================
+        // WRITE STANDARD OUTPUT FILES (User-friendly bioinformatics formats)
+        // ===================================================================
+        info!("📝 Writing standard output files...");
+        let standard_output_dir = self.output_manager.run_dir.join("final_outputs");
+
+        output_writers::write_all_standard_outputs(
+            &standard_output_dir,
+            sample_name,
+            &corrected_reads,
+            &assembly_results.contigs,
+            &assembly_results.assembly_stats,
+            &classifications,
+        )?;
+
+        info!("✅ Standard outputs written to: {}", standard_output_dir.display());
+        info!("   📄 cleaned_reads.fastq - Quality-controlled reads");
+        info!("   📄 contigs.fasta - Assembled contigs");
+        info!("   📄 assembly_stats.txt - Assembly statistics");
+        info!("   📄 classifications.tsv - Taxonomic assignments");
+        info!("   📄 abundance_summary.tsv - Taxonomic abundance table");
+        info!("   📄 ANALYSIS_SUMMARY.txt - Complete analysis summary");
 
         let total_time = start_time.elapsed();
         info!(
