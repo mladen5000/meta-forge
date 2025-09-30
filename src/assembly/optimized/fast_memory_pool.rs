@@ -7,9 +7,9 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use crossbeam_utils::CachePadded;
+use anyhow::{anyhow, Result};
 
 /// High-performance memory pool optimized for genomics workloads
 pub struct FastAssemblyMemoryPool {
@@ -86,7 +86,7 @@ pub struct PooledAllocation<T> {
 
 impl FastAssemblyMemoryPool {
     /// Create new memory pool with specified configuration
-    pub fn new(config: PoolConfig) -> Result<Arc<Self>, std::alloc::AllocError> {
+    pub fn new(config: PoolConfig) -> Result<Arc<Self>> {
         let mut chunks = Vec::with_capacity(config.initial_chunks);
 
         // Pre-allocate initial chunks

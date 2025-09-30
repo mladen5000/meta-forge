@@ -234,26 +234,52 @@ impl BoundedKmerCounter {
         }
     }
 
-    /// Remove k-mers with count = 1 to free memory (aggressive cleanup when needed)
+    /// CRITICAL FIX: Less aggressive k-mer cleanup to preserve valid low-coverage k-mers
+    /// Only removes k-mers when absolutely necessary for memory constraints
     fn cleanup_rare_kmers(&mut self) {
         let before_size = self.counts.len();
 
-        // First try removing singletons
-        self.counts.retain(|_, &mut count| count > 1);
-        let removed_singletons = before_size - self.counts.len();
+        // FIXED: Only cleanup if we're genuinely over capacity
+        // Don't automatically remove singletons - they can be valid in low-coverage regions
+        if self.counts.len() <= self.max_kmers {
+            return; // No cleanup needed
+        }
 
-        // If still over capacity, remove low-count k-mers more aggressively
-        if self.counts.len() > self.max_kmers * 9 / 10 {
-            let threshold = self.calculate_dynamic_threshold();
-            self.counts.retain(|_, &mut count| count >= threshold);
+        // If over capacity, use softer threshold - keep count >= 1 initially
+        // Only if still over capacity after that, use count >= 2
+        if self.counts.len() > self.max_kmers * 11 / 10 { // 110% threshold
+            // First pass: remove only true singletons (count == 1)
+            self.counts.retain(|_, &mut count| count >= 2);
+
+            // If STILL over capacity (rare), use dynamic threshold
+            if self.counts.len() > self.max_kmers {
+                let threshold = self.calculate_dynamic_threshold_soft();
+                self.counts.retain(|_, &mut count| count >= threshold);
+            }
         }
 
         let total_removed = before_size - self.counts.len();
         self.memory_usage.fetch_sub(total_removed * 12, Ordering::Relaxed);
 
-        if removed_singletons > 0 {
-            self.kmers_dropped.fetch_add(removed_singletons, Ordering::Relaxed);
+        if total_removed > 0 {
+            self.kmers_dropped.fetch_add(total_removed, Ordering::Relaxed);
         }
+    }
+
+    /// FIXED: Softer dynamic threshold calculation (50th percentile instead of 75th)
+    fn calculate_dynamic_threshold_soft(&self) -> u32 {
+        if self.counts.is_empty() {
+            return 2;
+        }
+
+        // Sample count distribution to find appropriate threshold
+        let mut counts: Vec<u32> = self.counts.values().copied().collect();
+        counts.sort_unstable();
+
+        // Use 50th percentile (median) as threshold to keep top 50% of k-mers
+        // This is much softer than the previous 75th percentile
+        let index = counts.len() / 2;
+        counts.get(index).copied().unwrap_or(2).max(2)
     }
 
     /// Calculate dynamic threshold based on current distribution

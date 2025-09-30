@@ -4,9 +4,10 @@
 //! High-performance k-mer processing that eliminates string allocations and
 //! uses rolling hash for O(1) k-mer hash updates, achieving 60-70% time savings.
 
-use std::arch::x86_64::*;
 use std::collections::HashMap;
-use std::simd::prelude::*;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use std::arch::x86_64::*;
 
 /// Rolling hash implementation for DNA k-mers with SIMD optimization
 /// OPTIMIZATION: Enhanced with cache-friendly design and prefetching hints

@@ -23,9 +23,8 @@ pub struct BitPackedKmer {
 
 impl BitPackedKmer {
     /// Nucleotide encoding: A=00, C=01, G=10, T=11
-    const NUCLEOTIDE_BITS: [(u8, u64); 4] = [
-        (b'A', 0b00), (b'C', 0b01), (b'G', 0b10), (b'T', 0b11)
-    ];
+    const NUCLEOTIDE_BITS: [(u8, u64); 4] =
+        [(b'A', 0b00), (b'C', 0b01), (b'G', 0b10), (b'T', 0b11)];
 
     /// Create BitPackedKmer from DNA sequence with correct bit encoding
     pub fn new(sequence: &str) -> Result<Self> {
@@ -40,10 +39,10 @@ impl BitPackedKmer {
         // CRITICAL FIX: Correct bit encoding/decoding logic
         for (i, nucleotide) in sequence.bytes().enumerate() {
             let encoded = match nucleotide.to_ascii_uppercase() {
-                b'A' => 0b00,  // A = 00
-                b'C' => 0b01,  // C = 01
-                b'G' => 0b10,  // G = 10
-                b'T' => 0b11,  // T = 11
+                b'A' => 0b00, // A = 00
+                b'C' => 0b01, // C = 01
+                b'G' => 0b10, // G = 10
+                b'T' => 0b11, // T = 11
                 b'N' => {
                     has_ambiguous = true;
                     0b00 // Default to A for ambiguous bases
@@ -74,8 +73,12 @@ impl BitPackedKmer {
 
         // Set flags
         let mut flags = 0u8;
-        if is_canonical { flags |= 0b00000001; }
-        if has_ambiguous { flags |= 0b00000010; }
+        if is_canonical {
+            flags |= 0b00000001;
+        }
+        if has_ambiguous {
+            flags |= 0b00000010;
+        }
 
         // Use canonical form (lexicographically smaller)
         if is_canonical {
@@ -94,7 +97,10 @@ impl BitPackedKmer {
     #[cfg(target_feature = "avx2")]
     pub fn from_sequence_simd(sequence: &[u8]) -> Result<Self> {
         if sequence.len() > 127 {
-            return Err(anyhow!("Sequence too long for SIMD k-mer: {}", sequence.len()));
+            return Err(anyhow!(
+                "Sequence too long for SIMD k-mer: {}",
+                sequence.len()
+            ));
         }
 
         // Use SIMD to process 32 nucleotides in parallel
@@ -152,8 +158,12 @@ impl BitPackedKmer {
         let is_canonical = data <= rc.data;
 
         let mut flags = 0u8;
-        if is_canonical { flags |= 0b00000001; }
-        if has_ambiguous { flags |= 0b00000010; }
+        if is_canonical {
+            flags |= 0b00000001;
+        }
+        if has_ambiguous {
+            flags |= 0b00000010;
+        }
 
         Ok(Self {
             data: if is_canonical { data } else { rc.data },
@@ -164,14 +174,16 @@ impl BitPackedKmer {
 
     #[cfg(target_feature = "avx2")]
     #[target_feature(enable = "avx2")]
-    unsafe fn simd_encode_nucleotides(nucleotides: std::arch::x86_64::__m256i) -> std::arch::x86_64::__m256i {
+    unsafe fn simd_encode_nucleotides(
+        nucleotides: std::arch::x86_64::__m256i,
+    ) -> std::arch::x86_64::__m256i {
         use std::arch::x86_64::*;
 
         // Create lookup table for nucleotide encoding
         // A=00, C=01, G=10, T=11, others=00
         let lut = _mm256_setr_epi8(
-            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ASCII 0-15
-            0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0   // ASCII 16-31
+            0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, // ASCII 0-15
+            0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // ASCII 16-31
         );
 
         // Mask to extract only relevant bits
@@ -211,10 +223,10 @@ impl BitPackedKmer {
             // CRITICAL FIX: Correct complement mapping
             // A(00) ↔ T(11), C(01) ↔ G(10)
             let complement = match nucleotide {
-                0b00 => 0b11,  // A -> T
-                0b01 => 0b10,  // C -> G
-                0b10 => 0b01,  // G -> C
-                0b11 => 0b00,  // T -> A
+                0b00 => 0b11, // A -> T
+                0b01 => 0b10, // C -> G
+                0b10 => 0b01, // G -> C
+                0b11 => 0b00, // T -> A
                 _ => unreachable!("Invalid 2-bit nucleotide: {}", nucleotide),
             };
 
@@ -257,10 +269,10 @@ impl BitPackedKmer {
             // CRITICAL FIX: Ensure proper bit extraction and decoding
             let nucleotide_bits = (self.data[word_index] >> bit_position) & 0b11;
             let nucleotide = match nucleotide_bits {
-                0b00 => 'A',  // 00 = A
-                0b01 => 'C',  // 01 = C
-                0b10 => 'G',  // 10 = G
-                0b11 => 'T',  // 11 = T
+                0b00 => 'A', // 00 = A
+                0b01 => 'C', // 01 = C
+                0b10 => 'G', // 10 = G
+                0b11 => 'T', // 11 = T
                 _ => unreachable!("Invalid 2-bit encoding: {}", nucleotide_bits),
             };
             result.push(nucleotide);
@@ -281,8 +293,8 @@ impl BitPackedKmer {
         if self.is_canonical() {
             if let Ok(rc) = self.reverse_complement() {
                 let rc_string = rc.to_string();
-                return original.to_uppercase() == reconstructed.to_uppercase() ||
-                       original.to_uppercase() == rc_string.to_uppercase();
+                return original.to_uppercase() == reconstructed.to_uppercase()
+                    || original.to_uppercase() == rc_string.to_uppercase();
             }
         }
 
@@ -327,7 +339,8 @@ impl BitPackedKmer {
         let k_power = BASE.pow(self.k as u32 - 1);
 
         let old_contrib = (Self::encode_nucleotide(old_nucleotide) as u64) * k_power;
-        let new_hash = (prev_hash - old_contrib) * BASE + (Self::encode_nucleotide(new_nucleotide) as u64);
+        let new_hash =
+            (prev_hash - old_contrib) * BASE + (Self::encode_nucleotide(new_nucleotide) as u64);
 
         new_hash
     }
@@ -438,8 +451,10 @@ impl RollingHashComputer {
     pub fn update_hash(&self, prev_hash: u64, old_nucleotide: u8, new_nucleotide: u8) -> u64 {
         const BASE: u64 = 4;
 
-        let old_contrib = (BitPackedKmer::encode_nucleotide(old_nucleotide) as u64) * self.base_power;
-        let new_hash = (prev_hash - old_contrib) * BASE + (BitPackedKmer::encode_nucleotide(new_nucleotide) as u64);
+        let old_contrib =
+            (BitPackedKmer::encode_nucleotide(old_nucleotide) as u64) * self.base_power;
+        let new_hash = (prev_hash - old_contrib) * BASE
+            + (BitPackedKmer::encode_nucleotide(new_nucleotide) as u64);
 
         new_hash
     }

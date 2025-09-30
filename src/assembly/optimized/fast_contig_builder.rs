@@ -4,7 +4,8 @@
 //! High-performance contig generation using cache-friendly algorithms,
 //! SIMD-optimized sequence operations, and efficient graph traversal.
 
-use crate::assembly::optimized::{CSRAssemblyGraph, BitPackedKmer, ZeroCopyKmerIterator};
+use crate::assembly::optimized::{CSRAssemblyGraph, BitPackedKmer};
+use std::sync::Arc;
 use crate::core::data_structures::{Contig, ContigType};
 use anyhow::{anyhow, Result};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -66,7 +67,7 @@ impl FastContigBuilder {
     /// Create new fast contig builder
     pub fn new(config: ContigBuilderConfig) -> Self {
         Self {
-            config,
+            config: config.clone(),
             metrics: ContigBuilderMetrics::default(),
             overlap_cache: HashMap::with_capacity(config.cache_size_limit),
         }

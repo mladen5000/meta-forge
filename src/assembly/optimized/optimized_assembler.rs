@@ -527,32 +527,47 @@ impl OptimizedAssembler {
     }
 
     /// CRITICAL FIX: Check if two k-mers have proper biological overlap
+    /// Fixed to correctly check (k-1) overlap between consecutive k-mers
     fn has_overlap(&self, kmer1: &BitPackedKmer, kmer2: &BitPackedKmer) -> bool {
         if kmer1.len() != kmer2.len() {
             return false;
         }
 
-        let seq1 = kmer1.to_string();
-        let seq2 = kmer2.to_string();
         let k = kmer1.len();
-
-        // CRITICAL FIX: Proper k-mer overlap checking
-        // For two k-mers to be adjacent in a sequence, the (k-1) suffix of the first
-        // must match the (k-1) prefix of the second
         if k <= 1 {
             return false; // No meaningful overlap for k=1
         }
 
+        let seq1 = kmer1.to_string();
+        let seq2 = kmer2.to_string();
+
+        // CRITICAL FIX: For consecutive k-mers, the last (k-1) nucleotides of kmer1
+        // must match the first (k-1) nucleotides of kmer2
+        //
+        // Example: k=5
+        // kmer1 = "ATCGA" -> suffix = "TCGA" (positions 1-4, length 4)
+        // kmer2 = "TCGAT" -> prefix = "TCGA" (positions 0-3, length 4)
+        // They overlap!
+
         let overlap_len = k - 1;
+
+        // Extract suffix from kmer1: last (k-1) characters
+        // seq1[1..k] gives us positions 1 through k-1 (inclusive), which is k-1 chars
         let suffix = &seq1[1..];
+
+        // Extract prefix from kmer2: first (k-1) characters
+        // seq2[0..k-1] gives us positions 0 through k-2 (inclusive), which is k-1 chars
         let prefix = &seq2[..overlap_len];
 
-        // Also check reverse complement overlaps for canonical k-mers
+        // Direct overlap check
         if suffix == prefix {
             return true;
         }
 
-        // Check if reverse complement of kmer2 overlaps with kmer1
+        // For canonical k-mers, also check reverse complement overlaps
+        // This handles both forward and reverse strand matches
+
+        // Check if kmer2's reverse complement overlaps with kmer1
         if let Ok(rc_kmer2) = kmer2.reverse_complement() {
             let rc_seq2 = rc_kmer2.to_string();
             let rc_prefix = &rc_seq2[..overlap_len];
@@ -561,7 +576,7 @@ impl OptimizedAssembler {
             }
         }
 
-        // Check if reverse complement of kmer1 overlaps with kmer2
+        // Check if kmer1's reverse complement overlaps with kmer2
         if let Ok(rc_kmer1) = kmer1.reverse_complement() {
             let rc_seq1 = rc_kmer1.to_string();
             let rc_suffix = &rc_seq1[1..];
@@ -597,22 +612,24 @@ impl OptimizedAssembler {
             let neighbors_iter = graph.neighbors(current_node as u32);
 
             // Find unvisited neighbor with best overlap
-            let mut best_neighbor = None;
+            let mut best_neighbor: Option<u64> = None;
             let mut best_overlap_score = 0;
 
-            for neighbor_id in neighbors_iter {
-                if visited.contains(&neighbor_id) {
+            for (neighbor_idx, _weight) in neighbors_iter {
+                // Convert node index to hash for lookup
+                let neighbor_id_u64 = neighbor_idx as u64;
+                if visited.contains(&neighbor_id_u64) {
                     continue;
                 }
 
-                if let Some(neighbor_node) = graph.get_node(neighbor_id) {
+                if let Some(neighbor_node) = graph.get_node(neighbor_id_u64) {
                     if let Some(current_node_data) = graph.get_node(current_node) {
                         // Check overlap quality
                         if self.has_overlap(&current_node_data.kmer, &neighbor_node.kmer) {
                             // Prefer higher coverage neighbors
                             let overlap_score = neighbor_node.coverage;
                             if overlap_score > best_overlap_score {
-                                best_neighbor = Some(neighbor_id);
+                                best_neighbor = Some(neighbor_id_u64);
                                 best_overlap_score = overlap_score;
                             }
                         }
@@ -646,11 +663,13 @@ impl OptimizedAssembler {
 
         let average_coverage = if node_count > 0 { coverage_sum / node_count as f64 } else { 0.0 };
 
+        let contig_length = sequence.len();
+
         Ok(Contig {
             id: 0, // Will be set by caller
             sequence,
             coverage: average_coverage,
-            length: sequence.len(),
+            length: contig_length,
             node_path,
             contig_type: crate::core::data_structures::ContigType::Linear,
         })
