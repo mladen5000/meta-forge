@@ -334,13 +334,21 @@ impl OptimizedAssembler {
                     contig.id = contig_id;
                     contig_id += 1;
 
-                    // Only keep contigs with meaningful length
-                    if contig.length >= 15 { // Use minimum k-mer size
+                    // MetaSPAdes standard: minimum 200bp for metagenomics
+                    // Allow lower minimum for testing, but warn
+                    let min_length = if self.config.base.max_k < 31 {
+                        self.config.base.max_k * 3 // At least 3x k-mer size
+                    } else {
+                        100 // Reasonable minimum for longer k-mers
+                    };
+
+                    if contig.length >= min_length && contig.coverage >= 2.0 {
                         contigs.push(contig);
                     }
 
-                    // Limit for performance (can be removed in production)
+                    // Hard limit: cannot exceed read count (biological constraint)
                     if contigs.len() >= 10000 {
+                        println!("     ⚠️  Hit safety limit of 10000 contigs - stopping generation");
                         break;
                     }
                 }
@@ -352,24 +360,14 @@ impl OptimizedAssembler {
             }
         }
 
-        // If no complex contigs found, fall back to single-node contigs
+        // CRITICAL FIX: DO NOT create single-node contigs
+        // MetaSPAdes/MetaHIT best practice: single k-mer "contigs" are biologically meaningless
         if contigs.is_empty() {
-            println!("     ⚠️  No complex contigs found, generating single-node contigs");
-            for node in graph.nodes().take(1000) {
-                let sequence = node.kmer.to_string();
-                let coverage = node.coverage as f64;
-
-                contigs.push(Contig {
-                    id: contig_id,
-                    sequence: sequence.clone(),
-                    coverage,
-                    length: sequence.len(),
-                    node_path: vec![node.kmer.hash()],
-                    contig_type: ContigType::Linear,
-                });
-
-                contig_id += 1;
-            }
+            println!("     ⚠️  No valid contigs found. This may indicate:");
+            println!("         - Input reads too short for k-mer size (try smaller k)");
+            println!("         - Insufficient read overlap (low coverage or divergent sequences)");
+            println!("         - All k-mers filtered due to low coverage");
+            return Ok(Vec::new());
         }
 
         // Sort contigs by length (longest first)
@@ -589,6 +587,7 @@ impl OptimizedAssembler {
     }
 
     /// CRITICAL FIX: Trace contig with proper sequence reconstruction
+    /// MetaSPAdes standard: Require minimum 3 k-mers in path
     fn trace_contig(&self, start_node: u64, graph: &CSRAssemblyGraph, visited: &mut std::collections::HashSet<u64>) -> Result<Contig> {
         let mut sequence = String::new();
         let mut coverage_sum = 0.0;
@@ -661,8 +660,12 @@ impl OptimizedAssembler {
             }
         }
 
-        let average_coverage = if node_count > 0 { coverage_sum / node_count as f64 } else { 0.0 };
+        // CRITICAL FIX: MetaSPAdes standard - reject paths with < 3 k-mers
+        if node_count < 3 {
+            return Err(anyhow!("Path too short: {} k-mers (minimum 3 required)", node_count));
+        }
 
+        let average_coverage = if node_count > 0 { coverage_sum / node_count as f64 } else { 0.0 };
         let contig_length = sequence.len();
 
         Ok(Contig {

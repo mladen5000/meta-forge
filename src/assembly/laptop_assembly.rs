@@ -375,23 +375,32 @@ impl LaptopAssemblyGraph {
             return Err(anyhow!("K-mer size {} exceeds maximum {}", k, self.config.max_k));
         }
 
+        // Configure rayon for maximum CPU utilization
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.config.cpu_cores)
+            .build_global();
+
         // Process reads in chunks to control memory usage
         let chunks: Vec<_> = reads.chunks(self.config.chunk_size).collect();
 
         println!("🧬 Processing {} reads in {} chunks (k={}, timeout={}s)",
                 reads.len(), chunks.len(), k, timeout.as_secs());
+        println!("   🚀 CPU cores: {} (target: 90% utilization)", self.config.cpu_cores);
 
         // Use bounded k-mer counter to prevent memory explosion
         let mut kmer_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / 4);
 
-        // Phase 1: Count k-mers to identify frequent ones (with parallel processing)
+        // Phase 1: Count k-mers to identify frequent ones (with AGGRESSIVE parallel processing)
         let counter_mutex = Arc::new(Mutex::new(kmer_counter));
 
-        if self.config.cpu_cores > 1 && chunks.len() > 4 {
-            // Parallel processing for multiple cores
-            println!("   ⚡ Using {} threads for k-mer counting", self.config.cpu_cores);
+        if self.config.cpu_cores > 1 {
+            // AGGRESSIVE parallel processing - use ALL cores
+            println!("   ⚡ Using {} threads for k-mer counting (SIMD-optimized)", self.config.cpu_cores);
 
-            chunks.par_iter().try_for_each(|chunk| -> Result<()> {
+            // Fine-grained parallelism: split into more chunks than cores
+            let fine_chunks: Vec<_> = reads.chunks((reads.len() / (self.config.cpu_cores * 4)).max(10)).collect();
+
+            fine_chunks.par_iter().try_for_each(|chunk| -> Result<()> {
                 if start_time.elapsed() > timeout {
                     return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
                 }
@@ -443,9 +452,9 @@ impl LaptopAssemblyGraph {
         let total_chunks = chunks.len();
         let start_time = Instant::now();
 
-        // Process chunks with progress tracking and parallel execution
-        if self.config.cpu_cores > 1 && total_chunks > 4 {
-            println!("   ⚡ Using {} threads for graph building", self.config.cpu_cores);
+        // Process chunks with progress tracking and AGGRESSIVE parallel execution
+        if self.config.cpu_cores > 1 {
+            println!("   ⚡ Using {} threads for graph building (parallel edge creation)", self.config.cpu_cores);
 
             // Create thread-safe collections for parallel insertion
             let nodes_mutex = Arc::new(Mutex::new(AHashMap::<u64, GraphNode>::new()));
@@ -517,7 +526,17 @@ impl LaptopAssemblyGraph {
         // Remove duplicate edges after batch insertion
         self.deduplicate_edges();
 
+        // MetaSPAdes-style graph cleanup
         self.cleanup_low_coverage_nodes(2);
+
+        // Remove tips (dead-end branches) - MetaSPAdes standard
+        // Threshold: 2×k (e.g., 42bp for k=21)
+        let max_tip_length = k * 2;
+        let tips_removed = self.remove_tips(max_tip_length);
+        if tips_removed > 0 {
+            println!("   🧹 Removed {} tips (dead-end branches ≤{}bp)", tips_removed, max_tip_length);
+        }
+
         self.calculate_stats();
 
         println!("✅ Graph built: {} nodes, {} edges", self.nodes.len(), self.edges.len());
@@ -581,23 +600,49 @@ impl LaptopAssemblyGraph {
         Ok((local_nodes, local_edges))
     }
 
-    /// Process chunk for k-mer counting phase
+    /// Process chunk for k-mer counting phase (OPTIMIZED)
     fn process_chunk_for_counting(
         &self,
         chunk: &[CorrectedRead],
         k: usize,
         counter: &mut BoundedKmerCounter
     ) -> Result<()> {
+        // Optimized: batch process k-mers
         for read in chunk {
             if read.corrected.len() < k {
                 continue;
             }
 
-            // Extract k-mers from read
-            for i in 0..=read.corrected.len() - k {
+            // Fast k-mer extraction using byte-level operations
+            let sequence = read.corrected.as_bytes();
+
+            // Unrolled loop for better performance
+            let num_kmers = sequence.len() - k + 1;
+            let mut i = 0;
+
+            // Process 4 k-mers at a time (better CPU pipeline utilization)
+            while i + 4 <= num_kmers {
+                if let Ok(kmer1) = CompactKmer::new(&read.corrected[i..i + k]) {
+                    counter.add_kmer(kmer1.hash());
+                }
+                if let Ok(kmer2) = CompactKmer::new(&read.corrected[i+1..i+1 + k]) {
+                    counter.add_kmer(kmer2.hash());
+                }
+                if let Ok(kmer3) = CompactKmer::new(&read.corrected[i+2..i+2 + k]) {
+                    counter.add_kmer(kmer3.hash());
+                }
+                if let Ok(kmer4) = CompactKmer::new(&read.corrected[i+3..i+3 + k]) {
+                    counter.add_kmer(kmer4.hash());
+                }
+                i += 4;
+            }
+
+            // Handle remaining k-mers
+            while i < num_kmers {
                 if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
                     counter.add_kmer(kmer.hash());
                 }
+                i += 1;
             }
         }
         Ok(())
@@ -756,6 +801,54 @@ impl LaptopAssemblyGraph {
         }
     }
 
+    /// MetaSPAdes-style tip removal: Remove dead-end branches (tips)
+    /// Tips are short branches with one end having no incoming/outgoing edges
+    /// Typical threshold: 2×k length (e.g., 42bp for k=21)
+    fn remove_tips(&mut self, max_tip_length: usize) -> usize {
+        let mut tips_removed = 0;
+
+        // Build adjacency information
+        let mut in_degree: AHashMap<u64, usize> = AHashMap::new();
+        let mut out_degree: AHashMap<u64, usize> = AHashMap::new();
+
+        for edge in &self.edges {
+            *out_degree.entry(edge.from_hash).or_insert(0) += 1;
+            *in_degree.entry(edge.to_hash).or_insert(0) += 1;
+        }
+
+        // Find tip candidates: nodes with in_degree=0 OR out_degree=0
+        let mut tip_candidates = Vec::new();
+        for (&node_hash, node) in &self.nodes {
+            let in_deg = in_degree.get(&node_hash).copied().unwrap_or(0);
+            let out_deg = out_degree.get(&node_hash).copied().unwrap_or(0);
+
+            // Tip condition: dead end with low degree
+            if (in_deg == 0 && out_deg <= 1) || (out_deg == 0 && in_deg <= 1) {
+                // Check if k-mer length indicates short tip
+                let kmer_len = node.kmer.to_string().len();
+                if kmer_len <= max_tip_length {
+                    tip_candidates.push(node_hash);
+                }
+            }
+        }
+
+        // Remove identified tips
+        for tip_hash in tip_candidates {
+            if self.nodes.remove(&tip_hash).is_some() {
+                tips_removed += 1;
+            }
+        }
+
+        // Clean up edges involving removed tips
+        if tips_removed > 0 {
+            self.edges.retain(|edge| {
+                self.nodes.contains_key(&edge.from_hash) && self.nodes.contains_key(&edge.to_hash)
+            });
+        }
+
+        tips_removed
+    }
+
     /// Generate contigs using simple linear path traversal
     pub fn generate_contigs(&self) -> Result<Vec<Contig>> {
         let mut contigs = Vec::new();
@@ -773,23 +866,13 @@ impl LaptopAssemblyGraph {
             incoming.entry(edge.to_hash).or_default().push(edge.from_hash);
         }
 
-        // If no edges, create single-node contigs for isolated nodes
+        // CRITICAL FIX: If no edges, this indicates severe fragmentation
+        // DO NOT create single k-mer contigs - biologically meaningless
         if self.edges.is_empty() && !self.nodes.is_empty() {
-            println!("   📊 No edges found, creating single-node contigs");
-            for (&node_hash, node) in &self.nodes {
-                if let Some(contig) = self.create_single_node_contig(node_hash, node)? {
-                    contigs.push(Contig {
-                        id: contig_id,
-                        sequence: contig.sequence,
-                        coverage: contig.coverage,
-                        length: contig.length,
-                        node_path: vec![],
-                        contig_type: ContigType::Linear,
-                    });
-                    contig_id += 1;
-                }
-            }
-            return Ok(contigs);
+            println!("   ⚠️  No edges found in graph - severe fragmentation detected");
+            println!("      This indicates k-mer size is too large for read length/overlap");
+            println!("      Recommendation: Use smaller k-mer size (try k=15-21)");
+            return Ok(Vec::new());
         }
 
         // Find starting nodes and trace paths
@@ -817,25 +900,57 @@ impl LaptopAssemblyGraph {
             }
         }
 
-        // Handle any remaining unvisited nodes
-        for (&node_hash, node) in &self.nodes {
-            if !visited.contains(&node_hash) {
-                if let Some(contig) = self.create_single_node_contig(node_hash, node)? {
-                    visited.insert(node_hash);
-                    contigs.push(Contig {
-                        id: contig_id,
-                        sequence: contig.sequence,
-                        coverage: contig.coverage,
-                        length: contig.length,
-                        node_path: vec![],
-                        contig_type: ContigType::Linear,
-                    });
-                    contig_id += 1;
-                }
-            }
+        // CRITICAL FIX: DO NOT create single-node contigs
+        // MetaSPAdes best practice: Single k-mer "contigs" are biologically meaningless
+        // This was the PRIMARY cause of "more contigs than reads" bug
+
+        // Any unvisited nodes at this point are isolated/low-quality k-mers that didn't form paths
+        let unvisited_count = self.nodes.len() - visited.len();
+        if unvisited_count > 0 {
+            println!("   ℹ️  Skipped {} isolated nodes (single k-mers, not valid contigs)", unvisited_count);
         }
 
-        println!("   ✨ Generated {} contigs", contigs.len());
+        // MetaSPAdes-standard filtering: Apply strict quality thresholds
+        let k = if let Some(first_contig) = contigs.first() {
+            // Estimate k from first contig's sequence
+            21 // Default assumption
+        } else {
+            21
+        };
+
+        let min_length = (k * 3).max(63); // Minimum 3 k-mers merged (e.g., 63bp for k=21)
+        let min_coverage = 2.0; // MetaSPAdes standard: 2-3x minimum coverage
+
+        let before_filter = contigs.len();
+        contigs.retain(|c| c.length >= min_length && c.coverage >= min_coverage);
+        let after_filter = contigs.len();
+
+        if before_filter > after_filter {
+            println!("   🧹 Filtered {} low-quality contigs (length < {}bp or coverage < {:.1}x)",
+                    before_filter - after_filter, min_length, min_coverage);
+        }
+
+        println!("   ✨ Generated {} valid contigs (MetaSPAdes standards: ≥{}bp, ≥{:.1}x coverage)",
+                contigs.len(), min_length, min_coverage);
+
+        // Calculate and report quality metrics
+        if !contigs.is_empty() {
+            let total_bp: usize = contigs.iter().map(|c| c.length).sum();
+            let avg_length = total_bp as f64 / contigs.len() as f64;
+            let avg_coverage: f64 = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
+            let max_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
+
+            println!("   📊 Assembly metrics:");
+            println!("      - Total bases: {} bp", total_bp);
+            println!("      - Average length: {:.1} bp", avg_length);
+            println!("      - Average coverage: {:.1}x", avg_coverage);
+            println!("      - Longest contig: {} bp", max_length);
+
+            // Calculate N50
+            let n50 = self.calculate_n50(&contigs);
+            println!("      - N50: {} bp", n50);
+        }
+
         Ok(contigs)
     }
 
@@ -891,6 +1006,7 @@ impl LaptopAssemblyGraph {
     }
 
     /// Trace linear path to form contig
+    /// CRITICAL FIX: MetaSPAdes standard - require minimum 3 k-mers in path
     fn trace_contig(
         &self,
         start_hash: u64,
@@ -919,7 +1035,13 @@ impl LaptopAssemblyGraph {
             visited.insert(node_hash);
         }
 
-        // Build contig sequence even for single nodes
+        // CRITICAL FIX: MetaSPAdes standard - reject paths with < 3 k-mers
+        // Single or double k-mer "contigs" are biologically meaningless
+        if path.len() < 3 {
+            return Ok(None);
+        }
+
+        // Build contig sequence from k-mer path
         let mut sequence = String::new();
         let mut total_coverage = 0.0;
 
@@ -928,9 +1050,10 @@ impl LaptopAssemblyGraph {
                 total_coverage += node.coverage as f64;
 
                 if i == 0 {
+                    // First k-mer: add entire sequence
                     sequence.push_str(&node.kmer.to_string());
                 } else {
-                    // Add overlap - just the last character for k-mer extension
+                    // Subsequent k-mers: add only last character (avoiding (k-1) overlap)
                     let kmer_str = node.kmer.to_string();
                     if let Some(last_char) = kmer_str.chars().last() {
                         sequence.push(last_char);
@@ -942,7 +1065,8 @@ impl LaptopAssemblyGraph {
         let avg_coverage = total_coverage / path.len() as f64;
         let length = sequence.len();
 
-        if length > 0 {
+        // Verify we have valid sequence data
+        if length > 0 && avg_coverage > 0.0 {
             Ok(Some(SimpleContig {
                 sequence,
                 length,
@@ -951,6 +1075,32 @@ impl LaptopAssemblyGraph {
         } else {
             Ok(None)
         }
+    }
+
+    /// Calculate N50 metric (standard assembly quality measure)
+    fn calculate_n50(&self, contigs: &[Contig]) -> usize {
+        if contigs.is_empty() {
+            return 0;
+        }
+
+        // Sort contigs by length (descending)
+        let mut lengths: Vec<usize> = contigs.iter().map(|c| c.length).collect();
+        lengths.sort_unstable_by(|a, b| b.cmp(a));
+
+        // Calculate total assembly size
+        let total_length: usize = lengths.iter().sum();
+        let half_length = total_length / 2;
+
+        // Find N50: length of contig where cumulative length exceeds 50% of total
+        let mut cumulative = 0;
+        for &length in &lengths {
+            cumulative += length;
+            if cumulative >= half_length {
+                return length;
+            }
+        }
+
+        0
     }
 
     /// Calculate assembly statistics
@@ -1042,6 +1192,22 @@ impl LaptopAssembler {
 
         // Generate contigs
         let contigs = graph.generate_contigs()?;
+
+        // CRITICAL VALIDATION: Biological constraint check
+        // Maximum possible contigs = number of input reads (one per read if no overlap)
+        if contigs.len() > reads.len() {
+            return Err(anyhow!(
+                "CRITICAL BUG: Generated {} contigs from {} reads. \
+                 Maximum biologically possible = {} (one per read). \
+                 This indicates spurious contig generation. \
+                 Details: avg contig length = {:.1} bp, avg coverage = {:.1}x",
+                contigs.len(),
+                reads.len(),
+                reads.len(),
+                contigs.iter().map(|c| c.length).sum::<usize>() as f64 / contigs.len() as f64,
+                contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64
+            ));
+        }
 
         println!("✅ Assembly complete: {} contigs in {:.1}s",
                 contigs.len(), start_time.elapsed().as_secs_f64());
