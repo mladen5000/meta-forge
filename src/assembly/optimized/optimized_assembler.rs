@@ -17,7 +17,6 @@ use rayon::prelude::*;
 /// High-performance assembler using optimized data structures and algorithms
 pub struct OptimizedAssembler {
     config: OptimizedConfig,
-    resource_manager: LocalAdaptiveResourceManager,
     performance_metrics: PerformanceMetrics,
 }
 
@@ -84,7 +83,6 @@ impl OptimizedAssembler {
     /// Create new optimized assembler
     pub fn new(config: OptimizedConfig) -> Self {
         Self {
-            resource_manager: LocalAdaptiveResourceManager::new(&config),
             config,
             performance_metrics: PerformanceMetrics::default(),
         }
@@ -474,15 +472,11 @@ impl OptimizedAssembler {
         Ok(15) // Minimum safe k
     }
 
-    /// Probabilistic k-mer counting using HyperLogLog
+    /// Probabilistic k-mer counting (simplified - uses exact counting)
+    /// TODO: Implement true HyperLogLog for memory-constrained environments
     fn count_kmers_probabilistic(&self, kmers: &[BitPackedKmer]) -> Result<Vec<u64>> {
-        let mut counter = LocalHyperLogKmerCounter::new(self.config.base.memory_budget_mb / 4);
-
-        for kmer in kmers {
-            counter.add_kmer(kmer.hash());
-        }
-
-        Ok(counter.get_frequent_kmers(2)) // Min frequency = 2
+        // For now, use exact counting (HyperLogLog implementation planned for future)
+        self.count_kmers_exact(kmers)
     }
 
     /// Exact k-mer counting (fallback)
@@ -699,44 +693,9 @@ impl OptimizedAssembler {
     }
 }
 
-/// Placeholder for AdaptiveResourceManager (local to this module)
-struct LocalAdaptiveResourceManager {
-    config: OptimizedConfig,
-}
-
-impl LocalAdaptiveResourceManager {
-    pub fn new(config: &OptimizedConfig) -> Self {
-        Self {
-            config: config.clone(),
-        }
-    }
-}
-
-/// Placeholder for HyperLogKmerCounter (local to this module)
-struct LocalHyperLogKmerCounter {
-    budget_mb: usize,
-    counts: std::collections::HashMap<u64, u32>,
-}
-
-impl LocalHyperLogKmerCounter {
-    pub fn new(budget_mb: usize) -> Self {
-        Self {
-            budget_mb,
-            counts: std::collections::HashMap::new(),
-        }
-    }
-
-    pub fn add_kmer(&mut self, hash: u64) {
-        *self.counts.entry(hash).or_insert(0) += 1;
-    }
-
-    pub fn get_frequent_kmers(&self, min_count: u32) -> Vec<u64> {
-        self.counts.iter()
-            .filter(|(_, &count)| count >= min_count)
-            .map(|(&hash, _)| hash)
-            .collect()
-    }
-}
+// REMOVED: Placeholder structs - these were temporary implementations
+// LocalAdaptiveResourceManager and LocalHyperLogKmerCounter are now removed
+// These were never used in production and served only as placeholders
 
 #[cfg(test)]
 mod tests {

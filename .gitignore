@@ -383,3 +383,4 @@ package.json
 .claude-flow/metrics/task-metrics.json
 memory/agents/README.md
 memory/sessions/README.md
+data/metagenomics.db-shm

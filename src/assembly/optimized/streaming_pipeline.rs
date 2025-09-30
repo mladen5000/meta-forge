@@ -5,7 +5,7 @@
 //! Implements adaptive chunk sizing, backpressure handling, and modular stages.
 
 use crate::assembly::optimized::{
-    BitPackedKmer, CSRAssemblyGraph, AdaptiveResourceManager, AssemblyMemoryPool
+    BitPackedKmer, CSRAssemblyGraph, AdaptiveResourceManager
 };
 use crate::core::data_structures::{CorrectedRead, Contig};
 use anyhow::{anyhow, Result};
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 pub struct StreamingAssemblyPipeline {
     config: PipelineConfig,
     resource_manager: Arc<AdaptiveResourceManager>,
-    memory_pool: Arc<AssemblyMemoryPool>,
+    // memory_pool removed - using standard allocation
     stages: Vec<Box<dyn PipelineStage>>,
     metrics: PipelineMetrics,
     shutdown_signal: Arc<AtomicBool>,
@@ -132,13 +132,12 @@ impl StreamingAssemblyPipeline {
     /// Create new streaming pipeline
     pub fn new(
         config: PipelineConfig,
-        resource_manager: Arc<AdaptiveResourceManager>,
-        memory_pool: Arc<AssemblyMemoryPool>
+        resource_manager: Arc<AdaptiveResourceManager>
     ) -> Self {
         Self {
             config,
             resource_manager,
-            memory_pool,
+            // memory_pool removed
             stages: Vec::new(),
             metrics: PipelineMetrics::default(),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
@@ -585,7 +584,7 @@ mod tests {
     fn test_pipeline_creation() {
         let config = PipelineConfig::default();
         let resource_manager = Arc::new(AdaptiveResourceManager::new(&Default::default()));
-        let memory_pool = Arc::new(AssemblyMemoryPool::new(1024));
+        // memory_pool removed - using standard allocation
 
         let mut pipeline = StreamingAssemblyPipeline::new(
             config,
@@ -607,7 +606,7 @@ mod tests {
             ..Default::default()
         };
         let resource_manager = Arc::new(AdaptiveResourceManager::new(&Default::default()));
-        let memory_pool = Arc::new(AssemblyMemoryPool::new(1024));
+        // memory_pool removed - using standard allocation
 
         let pipeline = StreamingAssemblyPipeline::new(
             config,

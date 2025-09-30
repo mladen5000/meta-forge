@@ -984,26 +984,9 @@ impl LaptopAssemblyGraph {
         Ok(())
     }
 
-    /// Create contig from single isolated node
-    fn create_single_node_contig(
-        &self,
-        node_hash: u64,
-        node: &GraphNode,
-    ) -> Result<Option<SimpleContig>> {
-        let sequence = node.kmer.to_string();
-        let length = sequence.len();
-        let coverage = node.coverage as f64;
-
-        if length > 0 {
-            Ok(Some(SimpleContig {
-                sequence,
-                length,
-                coverage,
-            }))
-        } else {
-            Ok(None)
-        }
-    }
+    // REMOVED: create_single_node_contig() - Dead code after MetaSPAdes fixes
+    // This function was the primary cause of the "more contigs than reads" bug
+    // Now unused after implementing proper 3-kmer minimum path requirement
 
     /// Trace linear path to form contig
     /// CRITICAL FIX: MetaSPAdes standard - require minimum 3 k-mers in path
