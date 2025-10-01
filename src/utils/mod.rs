@@ -4,5 +4,6 @@ pub mod intermediate_output;
 pub mod async_output_manager;
 pub mod kraken_reporter;
 pub mod output_writers;
+pub mod format_writers;
 pub mod progress_display;
 pub mod streaming_abundance;

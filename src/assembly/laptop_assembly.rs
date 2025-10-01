@@ -921,17 +921,40 @@ impl LaptopAssemblyGraph {
         let min_length = (k * 3).max(63); // Minimum 3 k-mers merged (e.g., 63bp for k=21)
         let min_coverage = 2.0; // MetaSPAdes standard: 2-3x minimum coverage
 
+        // CRITICAL FIX: Add coverage uniformity filtering
+        // Calculate median coverage for uniformity check
+        let mut coverages: Vec<f64> = contigs.iter().map(|c| c.coverage).collect();
+        coverages.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let median_coverage = if coverages.is_empty() {
+            0.0
+        } else {
+            coverages[coverages.len() / 2]
+        };
+
+        // Filter by: length, absolute coverage, AND coverage uniformity
+        // Uniformity check prevents counting outliers as separate species
+        // Based on STRONG methodology (Quince et al., 2021)
+        let coverage_tolerance = 0.5; // ±50% of median
+        let min_uniform_coverage = median_coverage * (1.0 - coverage_tolerance);
+        let max_uniform_coverage = median_coverage * (1.0 + coverage_tolerance);
+
         let before_filter = contigs.len();
-        contigs.retain(|c| c.length >= min_length && c.coverage >= min_coverage);
+        contigs.retain(|c| {
+            c.length >= min_length
+            && c.coverage >= min_coverage
+            && c.coverage >= min_uniform_coverage
+            && c.coverage <= max_uniform_coverage
+        });
         let after_filter = contigs.len();
 
         if before_filter > after_filter {
-            println!("   🧹 Filtered {} low-quality contigs (length < {}bp or coverage < {:.1}x)",
-                    before_filter - after_filter, min_length, min_coverage);
+            println!("   🧹 Filtered {} contigs (length <{}bp, coverage <{:.1}x, or outside {:.1}-{:.1}x uniform range)",
+                    before_filter - after_filter, min_length, min_coverage,
+                    min_uniform_coverage, max_uniform_coverage);
         }
 
-        println!("   ✨ Generated {} valid contigs (MetaSPAdes standards: ≥{}bp, ≥{:.1}x coverage)",
-                contigs.len(), min_length, min_coverage);
+        println!("   ✨ Generated {} valid contigs (≥{}bp, ≥{:.1}x, median {:.1}x ±50%)",
+                contigs.len(), min_length, min_coverage, median_coverage);
 
         // Calculate and report quality metrics
         if !contigs.is_empty() {
@@ -1003,14 +1026,64 @@ impl LaptopAssemblyGraph {
         let mut path = vec![start_hash];
         let mut current = start_hash;
 
-        // Follow linear path
-        while let Some(neighbors) = outgoing.get(&current) {
-            if neighbors.len() == 1 && !visited.contains(&neighbors[0]) {
-                current = neighbors[0];
+        // Follow path, extending through high-coverage branches
+        // CRITICAL FIX: Don't stop at every branch - follow best path
+        const MAX_PATH_LENGTH: usize = 100000; // Safety: prevent infinite loops (~100kb max contig)
+
+        while path.len() < MAX_PATH_LENGTH {
+            let neighbors = match outgoing.get(&current) {
+                Some(n) if !n.is_empty() => n,
+                _ => break, // No outgoing edges
+            };
+
+            if neighbors.len() == 1 {
+                // Unambiguous path - always follow
+                let next = neighbors[0];
+                if visited.contains(&next) {
+                    break; // Cycle detected
+                }
+                current = next;
                 path.push(current);
+            } else if neighbors.len() > 1 {
+                // Branch: follow highest coverage neighbor (MetaSPAdes strategy)
+                let mut best_neighbor: Option<(u64, f64)> = None;
+
+                for &neighbor in neighbors {
+                    if visited.contains(&neighbor) {
+                        continue;
+                    }
+
+                    if let Some(node) = self.nodes.get(&neighbor) {
+                        let neighbor_coverage = node.coverage as f64;
+                        match best_neighbor {
+                            None => best_neighbor = Some((neighbor, neighbor_coverage)),
+                            Some((_, best_cov)) if neighbor_coverage > best_cov => {
+                                best_neighbor = Some((neighbor, neighbor_coverage));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Follow best neighbor if coverage is sufficient (≥2x minimum)
+                if let Some((next, cov)) = best_neighbor {
+                    if cov >= 2.0 {
+                        current = next;
+                        path.push(current);
+                    } else {
+                        break; // Coverage too low, stop extension
+                    }
+                } else {
+                    break; // No valid neighbors
+                }
             } else {
-                break;
+                break; // Dead end
             }
+        }
+
+        if path.len() >= MAX_PATH_LENGTH {
+            eprintln!("   ⚠️  Path length exceeded {}bp, possible circular reference - stopping",
+                     MAX_PATH_LENGTH * 21); // Approximate bp length
         }
 
         // Mark nodes as visited
@@ -1176,8 +1249,9 @@ impl LaptopAssembler {
         // Generate contigs
         let contigs = graph.generate_contigs()?;
 
-        // CRITICAL VALIDATION: Biological constraint check
-        // Maximum possible contigs = number of input reads (one per read if no overlap)
+        // CRITICAL VALIDATION: Biological constraint checks
+
+        // Check 1: Maximum possible contigs = number of input reads (one per read if no overlap)
         if contigs.len() > reads.len() {
             return Err(anyhow!(
                 "CRITICAL BUG: Generated {} contigs from {} reads. \
@@ -1189,6 +1263,54 @@ impl LaptopAssembler {
                 reads.len(),
                 contigs.iter().map(|c| c.length).sum::<usize>() as f64 / contigs.len() as f64,
                 contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64
+            ));
+        }
+
+        // Check 2: Contig length validation (assembly should merge reads into longer sequences)
+        let avg_read_length = if !reads.is_empty() {
+            reads.iter().map(|r| r.corrected.len()).sum::<usize>() as f64 / reads.len() as f64
+        } else {
+            0.0
+        };
+
+        let avg_contig_length = if !contigs.is_empty() {
+            contigs.iter().map(|c| c.length).sum::<usize>() as f64 / contigs.len() as f64
+        } else {
+            0.0
+        };
+
+        let max_contig_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
+        let total_contig_bp: usize = contigs.iter().map(|c| c.length).sum();
+
+        println!("   📏 Assembly quality metrics:");
+        println!("      - Average read length: {:.1} bp", avg_read_length);
+        println!("      - Average contig length: {:.1} bp ({:.1}x reads)",
+                 avg_contig_length, avg_contig_length / avg_read_length.max(1.0));
+        println!("      - Longest contig: {} bp ({:.1}x reads)",
+                 max_contig_length, max_contig_length as f64 / avg_read_length.max(1.0));
+        println!("      - Total assembly: {} bp", total_contig_bp);
+
+        // Warning if contigs are suspiciously short
+        if avg_contig_length < avg_read_length * 2.0 {
+            println!("   ⚠️  WARNING: Average contig length ({:.1}bp) is less than 2x read length ({:.1}bp)",
+                     avg_contig_length, avg_read_length);
+            println!("      This suggests minimal read overlap - assembly may be highly fragmented");
+            println!("      Expected: contigs should be 5-100x longer than reads for good assembly");
+            println!("      Possible causes:");
+            println!("        - Low sequencing depth (need >10x coverage)");
+            println!("        - High error rate in reads (need better quality filtering)");
+            println!("        - Highly repetitive genome (need longer reads or different k-mer)");
+        }
+
+        // Critical failure: contigs shorter than reads (impossible for proper assembly)
+        if avg_contig_length < avg_read_length * 0.5 {
+            return Err(anyhow!(
+                "ASSEMBLY FAILURE: Contigs ({:.1}bp avg) are SHORTER than reads ({:.1}bp avg). \n\
+                 Assembly MUST merge reads into longer sequences. Current ratio: {:.2}x (should be >2x). \n\
+                 This indicates the assembly algorithm is not extending paths properly. \n\
+                 Debug info: {} contigs from {} reads, longest contig: {}bp",
+                avg_contig_length, avg_read_length, avg_contig_length / avg_read_length.max(1.0),
+                contigs.len(), reads.len(), max_contig_length
             ));
         }
 
