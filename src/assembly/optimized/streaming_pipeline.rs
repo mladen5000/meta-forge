@@ -583,13 +583,14 @@ mod tests {
     #[test]
     fn test_pipeline_creation() {
         let config = PipelineConfig::default();
-        let resource_manager = Arc::new(AdaptiveResourceManager::new(&Default::default()));
+        let laptop_config = crate::assembly::laptop_assembly::LaptopConfig::medium_memory();
+        let opt_config = crate::assembly::optimized::optimized_assembler::OptimizedConfig::from_laptop_config(laptop_config);
+        let resource_manager = Arc::new(AdaptiveResourceManager::new(&opt_config));
         // memory_pool removed - using standard allocation
 
         let mut pipeline = StreamingAssemblyPipeline::new(
             config,
             resource_manager,
-            memory_pool
         );
 
         pipeline.add_stage(Box::new(KmerExtractionStage::new(21)));
@@ -605,13 +606,14 @@ mod tests {
             base_chunk_size: 3,
             ..Default::default()
         };
-        let resource_manager = Arc::new(AdaptiveResourceManager::new(&Default::default()));
+        let laptop_config = crate::assembly::laptop_assembly::LaptopConfig::medium_memory();
+        let opt_config = crate::assembly::optimized::optimized_assembler::OptimizedConfig::from_laptop_config(laptop_config);
+        let resource_manager = Arc::new(AdaptiveResourceManager::new(&opt_config));
         // memory_pool removed - using standard allocation
 
         let pipeline = StreamingAssemblyPipeline::new(
             config,
             resource_manager,
-            memory_pool
         );
 
         let reads = vec![

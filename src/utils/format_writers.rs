@@ -240,7 +240,7 @@ fn calculate_gc_content(sequence: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::data_structures::{CorrectionMetadata, Correction};
+    use crate::core::data_structures::{CorrectionMetadata, BaseCorrection};
 
     #[test]
     fn test_gc_content_calculation() {
@@ -254,14 +254,16 @@ mod tests {
     fn test_fastq_write() {
         let reads = vec![
             CorrectedRead {
+                id: 0,
                 original: "ATCG".to_string(),
                 corrected: "ATCG".to_string(),
                 corrections: Vec::new(),
+                quality_scores: vec![40, 40, 40, 40],
                 correction_metadata: CorrectionMetadata {
                     algorithm: "test".to_string(),
-                    quality_improvement: 0.0,
-                    error_positions: Vec::new(),
-                    confidence_scores: Vec::new(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
                 },
             }
         ];

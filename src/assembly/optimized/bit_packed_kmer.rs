@@ -472,7 +472,7 @@ mod tests {
         // CRITICAL FIX: Test encoding/decoding correctness
         assert!(kmer.validate_encoding("ATCG"));
         assert_eq!(kmer.len(), 4);
-        assert!(kmer.memory_footprint() <= 17);
+        assert!(BitPackedKmer::memory_footprint() <= 17);
 
         // Test all nucleotides encode/decode correctly
         let all_nucs = BitPackedKmer::new("ACGT").unwrap();
@@ -503,8 +503,8 @@ mod tests {
         let bit_packed = BitPackedKmer::new(&string_kmer).unwrap();
 
         // BitPackedKmer should be much more memory efficient
-        assert!(bit_packed.memory_footprint() < string_kmer.len());
-        assert_eq!(bit_packed.memory_footprint(), 17);
+        assert!(BitPackedKmer::memory_footprint() < string_kmer.len());
+        assert_eq!(BitPackedKmer::memory_footprint(), 17);
     }
 
     #[test]

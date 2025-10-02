@@ -8,6 +8,7 @@ pub mod assembly;
 pub mod core;
 pub mod database;
 pub mod features;
+pub mod ml;
 pub mod pipeline;
 pub mod utils;
 

@@ -282,37 +282,49 @@ impl FastPipeline {
         Ok(features)
     }
 
-    /// Run classification (simplified for speed)
+    /// Run classification using ML-based contig binning
     async fn run_classification(
         &self,
         assembly_results: &AssemblyResults,
         _features: &FeatureCollection,
         _progress_info: &str,
     ) -> Result<Vec<TaxonomicClassification>> {
-        info!("🔍 Classifying {} contigs...", assembly_results.contigs.len());
+        info!("🔍 Classifying {} contigs using ML binning...", assembly_results.contigs.len());
 
-        // Simplified classification for speed - would use real classifier in production
+        // Use simple ML classifier for contig binning
+        use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
+
+        let classifier_config = SimpleClassifierConfig {
+            kmer_size: 4,
+            min_contig_length: 500,
+            num_bins: 10,
+            use_coverage_features: true,
+            normalization: crate::ml::simple_classifier::NormalizationMethod::ZScore,
+        };
+
+        let classifier = SimpleContigClassifier::new(classifier_config)?;
+
+        // Classify contigs into bins
+        let bin_results = classifier.classify_contigs(&assembly_results.contigs)?;
+
+        // Convert bin assignments to taxonomic classifications
         let mut classifications = Vec::new();
-        let total_contigs = assembly_results.contigs.len();
+        let total_bins = bin_results.len();
 
-        for (i, contig) in assembly_results.contigs.iter().enumerate() {
+        for bin_result in bin_results.iter() {
             let classification = TaxonomicClassification {
-                contig_id: contig.id,
-                taxonomy_id: 2, // Bacteria (placeholder)
-                taxonomy_name: "Bacteria sp.".to_string(),
-                confidence: 0.8,
-                lineage: "Bacteria;Unknown".to_string(),
-                method: "simplified".to_string(),
+                contig_id: bin_result.contig_id,
+                taxonomy_id: bin_result.bin_id as u32 + 1, // Map bin_id to taxonomy_id
+                taxonomy_name: format!("Bin_{}", bin_result.bin_id),
+                confidence: bin_result.confidence,
+                lineage: format!("Metagenome;Bin_{}", bin_result.bin_id),
+                method: "ml_kmer_clustering".to_string(),
             };
             classifications.push(classification);
-
-            // Log progress occasionally
-            if i % 1000 == 0 && i > 0 {
-                info!("📊 Classified {}/{} contigs", i, total_contigs);
-            }
         }
 
-        info!("✅ Classification completed: {} classifications", classifications.len());
+        info!("✅ ML classification completed: {} contigs assigned to {} bins",
+              classifications.len(), total_bins);
         Ok(classifications)
     }
 
