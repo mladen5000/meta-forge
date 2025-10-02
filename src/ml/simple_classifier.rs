@@ -13,8 +13,12 @@ use ahash::AHashMap;
 use anyhow::{Context, Result};
 use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 use crate::core::data_structures::Contig;
+use crate::ml::classification_reporter::{
+    ClassificationReporter, ClassificationStage, calculate_bin_metrics, BinQualityMetrics,
+};
 
 /// Configuration for the simple ML classifier
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +64,8 @@ pub struct SimpleContigClassifier {
     kmer_vocab: Vec<String>,
     /// Dimension of feature vectors
     feature_dim: usize,
+    /// Optional reporter for progress tracking
+    reporter: Option<Arc<Mutex<ClassificationReporter>>>,
 }
 
 /// Classification result for a contig
@@ -87,7 +93,14 @@ impl SimpleContigClassifier {
             config,
             kmer_vocab,
             feature_dim,
+            reporter: None,
         })
+    }
+
+    /// Attach a progress reporter
+    pub fn with_reporter(mut self, reporter: Arc<Mutex<ClassificationReporter>>) -> Self {
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Generate all possible k-mers of a given size
@@ -172,25 +185,52 @@ impl SimpleContigClassifier {
 
     /// Classify a batch of contigs into bins
     pub fn classify_contigs(&self, contigs: &[Contig]) -> Result<Vec<ContigClassification>> {
-        // Filter contigs by minimum length
+        // Stage 1: Filtering
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.start_stage(ClassificationStage::Filtering);
+            }
+        }
+
         let valid_contigs: Vec<&Contig> = contigs
             .iter()
             .filter(|c| c.sequence.len() >= self.config.min_contig_length)
             .collect();
 
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.complete_stage(ClassificationStage::Filtering, contigs.len());
+                r.set_valid_contigs(valid_contigs.len());
+            }
+        }
+
         if valid_contigs.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Extract features for all contigs
+        // Stage 2: Feature Extraction
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.start_stage(ClassificationStage::FeatureExtraction);
+            }
+        }
+
         let mut feature_matrix = Vec::new();
         let mut contig_ids = Vec::new();
+        let mut contig_refs = Vec::new();
 
-        for contig in valid_contigs.iter() {
+        for (idx, contig) in valid_contigs.iter().enumerate() {
+            if let Some(ref reporter) = self.reporter {
+                if let Ok(r) = reporter.lock() {
+                    r.log_feature_extraction_progress(idx + 1, valid_contigs.len());
+                }
+            }
+
             match self.extract_features(contig) {
                 Ok(features) => {
                     feature_matrix.push(features);
                     contig_ids.push(contig.id);
+                    contig_refs.push(*contig);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to extract features for contig {}: {}", contig.id, e);
@@ -199,15 +239,54 @@ impl SimpleContigClassifier {
             }
         }
 
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.complete_stage(ClassificationStage::FeatureExtraction, feature_matrix.len());
+            }
+        }
+
         if feature_matrix.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Normalize features
+        // Stage 3: Normalization
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.start_stage(ClassificationStage::Normalization);
+                let method = match self.config.normalization {
+                    NormalizationMethod::ZScore => "Z-Score",
+                    NormalizationMethod::MinMax => "Min-Max",
+                    NormalizationMethod::None => "None",
+                };
+                r.log_normalization(method, self.feature_dim, feature_matrix.len());
+            }
+        }
+
         let normalized_features = self.normalize_features(&feature_matrix)?;
 
-        // Perform simple k-means-like clustering
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.complete_stage(ClassificationStage::Normalization, normalized_features.len());
+            }
+        }
+
+        // Stage 4: Clustering
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.start_stage(ClassificationStage::Clustering);
+            }
+        }
+
         let bin_assignments = self.cluster_contigs(&normalized_features)?;
+
+        let num_bins = bin_assignments.iter().max().map(|&x| x + 1).unwrap_or(0);
+
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.log_clustering_complete(100, num_bins); // Max iterations is 100
+                r.complete_stage(ClassificationStage::Clustering, normalized_features.len());
+            }
+        }
 
         // Create classification results
         let mut classifications = Vec::new();
@@ -228,7 +307,59 @@ impl SimpleContigClassifier {
             });
         }
 
+        // Stage 5: Quality Assessment
+        if let Some(ref reporter) = self.reporter {
+            if let Ok(mut r) = reporter.lock() {
+                r.start_stage(ClassificationStage::QualityAssessment);
+            }
+
+            // Calculate bin metrics
+            for bin_id in 0..num_bins {
+                let bin_contigs: Vec<(String, usize, f64, f64)> = classifications
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.bin_id == bin_id)
+                    .map(|(idx, _)| {
+                        let contig = contig_refs[idx];
+                        let gc_content = Self::calculate_gc_content(&contig.sequence);
+                        (
+                            contig.sequence.clone(),
+                            contig.length,
+                            contig.coverage,
+                            gc_content,
+                        )
+                    })
+                    .collect();
+
+                let confidences: Vec<f64> = classifications
+                    .iter()
+                    .filter(|c| c.bin_id == bin_id)
+                    .map(|c| c.confidence)
+                    .collect();
+
+                if !bin_contigs.is_empty() {
+                    let metrics = calculate_bin_metrics(bin_id, &bin_contigs, &confidences);
+                    if let Ok(mut r) = reporter.lock() {
+                        r.add_bin_metrics(metrics);
+                    }
+                }
+            }
+
+            if let Ok(mut r) = reporter.lock() {
+                r.complete_stage(ClassificationStage::QualityAssessment, num_bins);
+            }
+        }
+
         Ok(classifications)
+    }
+
+    /// Calculate GC content of a sequence
+    fn calculate_gc_content(sequence: &str) -> f64 {
+        let gc_count = sequence
+            .chars()
+            .filter(|c| matches!(c, 'G' | 'C' | 'g' | 'c'))
+            .count();
+        gc_count as f64 / sequence.len() as f64
     }
 
     /// Normalize feature vectors
