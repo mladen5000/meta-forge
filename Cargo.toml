@@ -87,6 +87,9 @@ flate2 = "1.0.0"
 # --- Probabilistic Data Structures ---
 probabilistic-collections = "0.7.0"
 hyperloglog = "1.0.2"
+
+# --- System Information ---
+sysinfo = "0.32"
 crossbeam = "0.8.4"
 # sketchy = "0.3.0"  # Package not available, removing for now
 

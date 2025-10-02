@@ -55,7 +55,12 @@ async fn main() -> Result<()> {
                 init_line,
                 "🔧 Initialization: Creating pipeline...".to_string(),
             );
-            let mut pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
+            let mut pipeline = MetagenomicsPipeline::new_with_overrides(
+                cli.config.as_deref(),
+                cli.memory_mb,
+                cli.threads,
+                cli.auto_detect,
+            )?;
 
             multi_progress.update_line(init_line, "🔧 Initialization: ✅ Ready".to_string());
 

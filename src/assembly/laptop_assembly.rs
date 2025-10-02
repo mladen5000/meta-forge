@@ -80,17 +80,18 @@ impl LaptopConfig {
         }
     }
 
-    /// Detect system memory (simplified implementation)
+    /// Detect system memory using sysinfo
     fn detect_system_memory_gb() -> f64 {
-        // This is a simplified fallback implementation
-        // In a real system, you'd use platform-specific APIs
-        match std::env::var("MEMORY_GB") {
-            Ok(mem_str) => mem_str.parse().unwrap_or(8.0),
-            Err(_) => {
-                // Conservative default for unknown systems
-                8.0
-            }
-        }
+        use sysinfo::System;
+
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+
+        let total_memory_bytes = sys.total_memory();
+        let total_memory_gb = total_memory_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+        tracing::debug!("Detected system memory: {:.2} GB", total_memory_gb);
+        total_memory_gb
     }
 
     /// Create custom configuration with validation

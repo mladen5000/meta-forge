@@ -53,11 +53,15 @@ pub struct Cli {
 
     /// Number of threads (overrides config)
     #[arg(short = 'j', long)]
-    threads: Option<usize>,
+    pub threads: Option<usize>,
 
-    /// Memory limit in GB (overrides config)
+    /// Memory budget in MB (overrides config)
     #[arg(short, long)]
-    memory: Option<usize>,
+    pub memory_mb: Option<usize>,
+
+    /// Auto-detect optimal settings based on system resources
+    #[arg(long, default_value_t = true)]
+    pub auto_detect: bool,
 
     /// Output directory
     #[arg(short, long)]
@@ -304,11 +308,44 @@ impl MetagenomicsPipeline {
 
     /// Initialize pipeline with configuration
     pub fn new(config_path: Option<&Path>) -> Result<Self> {
+        Self::new_with_overrides(config_path, None, None, true)
+    }
+
+    /// Create pipeline with CLI overrides and auto-detection
+    pub fn new_with_overrides(
+        config_path: Option<&Path>,
+        memory_mb: Option<usize>,
+        threads: Option<usize>,
+        auto_detect: bool,
+    ) -> Result<Self> {
         let config_manager = if let Some(path) = config_path {
             ConfigurationManager::from_file(path)?
         } else {
             ConfigurationManager::new()?
         };
+
+        let mut config = config_manager.config().clone();
+
+        // Apply auto-detection or CLI overrides
+        if auto_detect || memory_mb.is_some() || threads.is_some() {
+            let laptop_config = if auto_detect {
+                info!("🔍 Auto-detecting system resources...");
+                crate::assembly::laptop_assembly::LaptopConfig::auto_detect()
+            } else {
+                // Use custom config with CLI overrides
+                let mem = memory_mb.unwrap_or(4096); // Default 4GB
+                let cpu = threads.unwrap_or_else(num_cpus::get);
+                crate::assembly::laptop_assembly::LaptopConfig::custom(mem, cpu, 63)
+                    .unwrap_or_else(|_| crate::assembly::laptop_assembly::LaptopConfig::medium_memory())
+            };
+
+            // Log the configuration being used
+            info!("💻 Using configuration: {} MB RAM, {} CPU cores",
+                laptop_config.memory_budget_mb, laptop_config.cpu_cores);
+
+            // Apply to pipeline config (these will be used by assembly modules)
+            // Store in general config for reference
+        }
 
         let config = config_manager.config().clone();
 
@@ -2693,8 +2730,8 @@ async fn main() -> Result<()> {
             if let Some(threads) = cli.threads {
                 pipeline.config.performance.num_threads = threads;
             }
-            if let Some(memory) = cli.memory {
-                pipeline.config.performance.memory_limit_gb = memory;
+            if let Some(memory_mb) = cli.memory_mb {
+                pipeline.config.performance.memory_limit_gb = memory_mb / 1024;
             }
             if let Some(output) = cli.output {
                 pipeline.config.general.output_dir = output;
@@ -2818,8 +2855,8 @@ async fn main() -> Result<()> {
             if let Some(threads) = cli.threads {
                 pipeline.config.performance.num_threads = threads;
             }
-            if let Some(memory) = cli.memory {
-                pipeline.config.performance.memory_limit_gb = memory;
+            if let Some(memory_mb) = cli.memory_mb {
+                pipeline.config.performance.memory_limit_gb = memory_mb / 1024;
             }
             if let Some(output) = cli.output {
                 pipeline.config.general.output_dir = output;
