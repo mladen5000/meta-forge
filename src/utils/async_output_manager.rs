@@ -122,9 +122,9 @@ impl AsyncOutputManager {
     async fn create_section_directories(&self) -> Result<()> {
         let sections = [
             PipelineSection::Preprocessing,
-            PipelineSection::QualityControl,
+            PipelineSection::Preprocessing,
             PipelineSection::Assembly,
-            PipelineSection::Features,
+            PipelineSection::Classification,
             PipelineSection::Classification,
             PipelineSection::Abundance,
             PipelineSection::Report,
@@ -431,7 +431,7 @@ mod tests {
         for section in [
             PipelineSection::Preprocessing,
             PipelineSection::Assembly,
-            PipelineSection::Features,
+            PipelineSection::Classification,
         ] {
             let section_dir = manager.get_section_dir(&section);
             assert!(section_dir.exists());

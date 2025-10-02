@@ -419,7 +419,7 @@ impl FastPipeline {
         let section = match section_name {
             "preprocessing" => PipelineSection::Preprocessing,
             "assembly" => PipelineSection::Assembly,
-            "features" => PipelineSection::Features,
+            "features" => PipelineSection::Classification,
             "classification" => PipelineSection::Classification,
             "abundance" => PipelineSection::Abundance,
             _ => PipelineSection::Report,

@@ -54,9 +54,7 @@ impl Default for OutputConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PipelineSection {
     Preprocessing,
-    QualityControl,
     Assembly,
-    Features,
     Classification,
     Abundance,
     Report,
@@ -66,9 +64,7 @@ impl PipelineSection {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Preprocessing => "preprocessing",
-            Self::QualityControl => "quality_control",
             Self::Assembly => "assembly",
-            Self::Features => "features",
             Self::Classification => "classification",
             Self::Abundance => "abundance",
             Self::Report => "report",
@@ -132,9 +128,9 @@ impl IntermediateOutputManager {
     fn create_section_directories(&self) -> Result<()> {
         let sections = [
             PipelineSection::Preprocessing,
-            PipelineSection::QualityControl,
+            PipelineSection::Preprocessing,
             PipelineSection::Assembly,
-            PipelineSection::Features,
+            PipelineSection::Classification,
             PipelineSection::Classification,
             PipelineSection::Abundance,
             PipelineSection::Report,
@@ -364,9 +360,9 @@ impl IntermediateOutputManager {
         let mut sections = std::collections::HashMap::new();
         let sections_list = [
             PipelineSection::Preprocessing,
-            PipelineSection::QualityControl,
+            PipelineSection::Preprocessing,
             PipelineSection::Assembly,
-            PipelineSection::Features,
+            PipelineSection::Classification,
             PipelineSection::Classification,
             PipelineSection::Abundance,
             PipelineSection::Report,
@@ -534,7 +530,7 @@ mod tests {
         for section in [
             PipelineSection::Preprocessing,
             PipelineSection::Assembly,
-            PipelineSection::Features,
+            PipelineSection::Classification,
             PipelineSection::Classification,
             PipelineSection::Abundance,
             PipelineSection::Report,

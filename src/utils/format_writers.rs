@@ -15,6 +15,13 @@ pub fn write_fastq<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<()> {
     let path = output_path.as_ref();
+    info!("🔍 write_fastq called with {} reads, writing to: {}", reads.len(), path.display());
+
+    if reads.is_empty() {
+        info!("⚠️  WARNING: No reads to write!");
+        return Ok(());
+    }
+
     let file = File::create(path)
         .with_context(|| format!("Failed to create FASTQ file: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
@@ -36,7 +43,7 @@ pub fn write_fastq<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("📄 Wrote {} reads to FASTQ: {}", reads.len(), path.display());
+    info!("✅ Successfully wrote {} reads to FASTQ: {}", reads.len(), path.display());
     Ok(())
 }
 

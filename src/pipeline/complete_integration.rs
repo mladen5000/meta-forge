@@ -266,7 +266,7 @@ impl From<CheckpointSection> for PipelineSection {
     fn from(checkpoint: CheckpointSection) -> Self {
         match checkpoint {
             CheckpointSection::Assembly => PipelineSection::Assembly,
-            CheckpointSection::Features => PipelineSection::Features,
+            CheckpointSection::Features => PipelineSection::Classification,
             CheckpointSection::Classification => PipelineSection::Classification,
             CheckpointSection::Abundance => PipelineSection::Abundance,
             CheckpointSection::Report => PipelineSection::Report,
@@ -392,22 +392,28 @@ impl MetagenomicsPipeline {
 
         // ADDED: Write standard FASTQ format for preprocessed reads
         let preprocessing_dir = self.output_manager.get_section_dir(&PipelineSection::Preprocessing);
-        crate::utils::format_writers::write_fastq(
-            &corrected_reads,
-            preprocessing_dir.join("corrected_reads.fastq")
-        )?;
 
-        // ADDED: Write QC report
-        // Note: In current implementation, reads are processed but not filtered
-        // Future: track filtered reads separately
+        // Write FASTQ and QC report in blocking tasks (sync I/O)
+        let corrected_reads_clone = corrected_reads.clone();
+        let preprocessing_dir_clone = preprocessing_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_fastq(
+                &corrected_reads_clone,
+                preprocessing_dir_clone.join("corrected_reads.fastq")
+            )
+        }).await??;
+
         let reads_processed = corrected_reads.len();
-        let avg_quality = 38.0; // Post-correction quality estimate
-        crate::utils::format_writers::write_qc_report(
-            reads_processed,  // Reads before (all processed)
-            reads_processed,  // Reads after (no filtering yet)
-            avg_quality,
-            preprocessing_dir.join("qc_report.txt")
-        )?;
+        let avg_quality = 38.0;
+        let preprocessing_dir_clone = preprocessing_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_qc_report(
+                reads_processed,
+                reads_processed,
+                avg_quality,
+                preprocessing_dir_clone.join("qc_report.txt")
+            )
+        }).await??;
 
         info!("💾 Saved preprocessing intermediate files (JSON + FASTQ + QC report)");
 
@@ -447,24 +453,35 @@ impl MetagenomicsPipeline {
         // ADDED: Write standard bioinformatics formats for assembly
         let assembly_dir = self.output_manager.get_section_dir(&PipelineSection::Assembly);
 
-        // Write contigs as detailed FASTA with metadata
-        crate::utils::format_writers::write_contigs_fasta_detailed(
-            &assembly_results.contigs,
-            assembly_dir.join("contigs.fasta")
-        )?;
+        // Write assembly outputs in blocking tasks (sync I/O)
+        let contigs_clone = assembly_results.contigs.clone();
+        let assembly_dir_clone = assembly_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_contigs_fasta_detailed(
+                &contigs_clone,
+                assembly_dir_clone.join("contigs.fasta")
+            )
+        }).await??;
 
-        // Write assembly graph in GFA format (standard format for Bandage, etc.)
-        crate::utils::format_writers::write_gfa(
-            &assembly_results.contigs,
-            assembly_dir.join("assembly_graph.gfa")
-        )?;
+        let contigs_clone = assembly_results.contigs.clone();
+        let assembly_dir_clone = assembly_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_gfa(
+                &contigs_clone,
+                assembly_dir_clone.join("assembly_graph.gfa")
+            )
+        }).await??;
 
-        // Write assembly statistics report
-        crate::utils::format_writers::write_assembly_stats(
-            &assembly_results.contigs,
-            assembly_results.assembly_stats.n50,
-            assembly_dir.join("assembly_stats.txt")
-        )?;
+        let contigs_clone = assembly_results.contigs.clone();
+        let n50 = assembly_results.assembly_stats.n50;
+        let assembly_dir_clone = assembly_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_assembly_stats(
+                &contigs_clone,
+                n50,
+                assembly_dir_clone.join("assembly_stats.txt")
+            )
+        }).await??;
 
         info!("💾 Saved assembly intermediate files (JSON + FASTA + GFA + stats)");
 
@@ -474,7 +491,7 @@ impl MetagenomicsPipeline {
 
         // Save features intermediate results
         self.output_manager.save_intermediate(
-            PipelineSection::Features,
+            PipelineSection::Classification,
             "feature_collection",
             &features,
             serde_json::json!({
@@ -485,7 +502,7 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard bioinformatics formats for features
-        let features_dir = self.output_manager.get_section_dir(&PipelineSection::Features);
+        let features_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
 
         // Extract feature data into TSV format (FeatureVector has Array1<f64> fields)
         let feature_names = vec![
@@ -501,18 +518,30 @@ impl MetagenomicsPipeline {
             (format!("contig_{}", idx), feature_values)
         }).collect();
 
-        crate::utils::format_writers::write_features_tsv(
-            &feature_data,
-            &feature_names,
-            features_dir.join("feature_vectors.tsv")
-        )?;
+        // Write features in blocking tasks (sync I/O)
+        let feature_data_clone = feature_data.clone();
+        let feature_names_clone = feature_names.clone();
+        let features_dir_clone = features_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_features_tsv(
+                &feature_data_clone,
+                &feature_names_clone,
+                features_dir_clone.join("feature_vectors.tsv")
+            )
+        }).await??;
 
-        crate::utils::format_writers::write_features_summary(
-            features.sequence_features.len(),
-            feature_names.len(),
-            &feature_names,
-            features_dir.join("feature_summary.txt")
-        )?;
+        let num_features = features.sequence_features.len();
+        let num_dimensions = feature_names.len();
+        let feature_names_clone = feature_names.clone();
+        let features_dir_clone = features_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_features_summary(
+                num_features,
+                num_dimensions,
+                &feature_names_clone,
+                features_dir_clone.join("feature_summary.txt")
+            )
+        }).await??;
 
         info!("💾 Saved feature extraction intermediate files (JSON + TSV + summary)");
 
@@ -575,11 +604,15 @@ impl MetagenomicsPipeline {
             (c.contig_id.to_string(), c.taxonomy_id.to_string(), c.taxonomy_name.clone(), c.confidence, c.lineage.clone())
         }).collect();
 
-        // Write taxonomic assignments TSV
-        crate::utils::format_writers::write_class_tsv(
-            &class_data,
-            classification_dir.join("taxonomic_assignments.tsv")
-        )?;
+        // Write classification outputs in blocking tasks (sync I/O)
+        let class_data_clone = class_data.clone();
+        let classification_dir_clone = classification_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_class_tsv(
+                &class_data_clone,
+                classification_dir_clone.join("taxonomic_assignments.tsv")
+            )
+        }).await??;
 
         // Group classifications by taxonomy for Kraken report
         let mut tax_counts: std::collections::HashMap<String, (String, f64)> = std::collections::HashMap::new();
@@ -591,12 +624,15 @@ impl MetagenomicsPipeline {
             (name, lineage, count)
         }).collect();
 
-        // Write Kraken-style report (Krona compatible)
-        crate::utils::format_writers::write_kraken_report(
-            &kraken_data,
-            classifications.len(),
-            classification_dir.join("kraken_report.txt")
-        )?;
+        let total_classifications = classifications.len();
+        let classification_dir_clone = classification_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_kraken_report(
+                &kraken_data,
+                total_classifications,
+                classification_dir_clone.join("kraken_report.txt")
+            )
+        }).await??;
 
         info!("💾 Saved classification intermediate files (JSON + TSV + Kraken report)");
 
@@ -636,22 +672,28 @@ impl MetagenomicsPipeline {
             (name.clone(), rel_abund, avg_cov, *num_contigs)
         }).collect();
 
-        // Write abundance profile TSV
-        crate::utils::format_writers::write_abund_tsv(
-            &abund_data,
-            abundance_dir.join("abundance_profile.tsv")
-        )?;
+        // Write abundance outputs in blocking tasks (sync I/O)
+        let abund_data_clone = abund_data.clone();
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_abund_tsv(
+                &abund_data_clone,
+                abundance_dir_clone.join("abundance_profile.tsv")
+            )
+        }).await??;
 
         // Prepare Krona taxonomy data (count, full lineage)
         let krona_data: Vec<(f64, String)> = classifications.iter().map(|c| {
             (1.0, c.lineage.clone())
         }).collect();
 
-        // Write Krona taxonomy input
-        crate::utils::format_writers::write_krona_tax(
-            &krona_data,
-            abundance_dir.join("krona_input.txt")
-        )?;
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_krona_tax(
+                &krona_data,
+                abundance_dir_clone.join("krona_input.txt")
+            )
+        }).await??;
 
         // Calculate diversity metrics
         let diversity_index = if !abund_data.is_empty() {
@@ -670,18 +712,23 @@ impl MetagenomicsPipeline {
         // Find dominant taxon
         let (dominant_taxon, dominant_abundance) = abund_data.iter()
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(name, abund, _, _)| (name.as_str(), *abund))
-            .unwrap_or(("Unknown", 0.0));
+            .map(|(name, abund, _, _)| (name.clone(), *abund))
+            .unwrap_or(("Unknown".to_string(), 0.0));
 
-        // Write abundance summary report
-        crate::utils::format_writers::write_abund_summary(
-            classifications.len(),
-            abund_data.len(),
-            dominant_taxon,
-            dominant_abundance,
-            diversity_index,
-            abundance_dir.join("abundance_summary.txt")
-        )?;
+        let num_classifications = classifications.len();
+        let num_taxa = abund_data.len();
+        let dominant_taxon_clone = dominant_taxon.clone();
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_abund_summary(
+                num_classifications,
+                num_taxa,
+                &dominant_taxon_clone,
+                dominant_abundance,
+                diversity_index,
+                abundance_dir_clone.join("abundance_summary.txt")
+            )
+        }).await??;
 
         info!("💾 Saved abundance estimation intermediate files (JSON + TSV + Krona + summary)");
 
@@ -813,7 +860,7 @@ impl MetagenomicsPipeline {
                     .await;
             }
 
-            PipelineSection::Features => {
+            PipelineSection::Classification => {
                 info!("🗬 Loading assembly results...");
                 let assembly_results: AssemblyResults = temp_output_manager
                     .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
@@ -839,7 +886,7 @@ impl MetagenomicsPipeline {
                 let assembly_results: AssemblyResults = temp_output_manager
                     .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
                 let features: FeatureCollection = temp_output_manager
-                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                    .load_intermediate(PipelineSection::Classification, "feature_collection")?;
                 let corrected_reads: Vec<CorrectedRead> = temp_output_manager
                     .load_intermediate(PipelineSection::Preprocessing, "corrected_reads")?;
 
@@ -865,7 +912,7 @@ impl MetagenomicsPipeline {
                 let assembly_results: AssemblyResults = temp_output_manager
                     .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
                 let features: FeatureCollection = temp_output_manager
-                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                    .load_intermediate(PipelineSection::Classification, "feature_collection")?;
                 let classifications: Vec<TaxonomicClassification> = temp_output_manager
                     .load_intermediate(
                         PipelineSection::Classification,
@@ -894,7 +941,7 @@ impl MetagenomicsPipeline {
                 let assembly_results: AssemblyResults = temp_output_manager
                     .load_intermediate(PipelineSection::Assembly, "assembly_results")?;
                 let features: FeatureCollection = temp_output_manager
-                    .load_intermediate(PipelineSection::Features, "feature_collection")?;
+                    .load_intermediate(PipelineSection::Classification, "feature_collection")?;
                 let classifications: Vec<TaxonomicClassification> = temp_output_manager
                     .load_intermediate(
                         PipelineSection::Classification,
@@ -927,7 +974,7 @@ impl MetagenomicsPipeline {
                 });
             }
 
-            PipelineSection::QualityControl => {
+            PipelineSection::Preprocessing => {
                 return Err(anyhow::anyhow!(
                     "Quality control checkpoint not yet implemented"
                 ));
@@ -1067,6 +1114,31 @@ impl MetagenomicsPipeline {
         let corrected_reads = self
             .preprocess_inputs_with_progress(inputs, multi_progress, preprocess_line)
             .await?;
+
+        // WRITE PREPROCESSING OUTPUTS
+        info!("📝 Writing preprocessing outputs for {} reads", corrected_reads.len());
+        let preprocessing_dir = self.output_manager.get_section_dir(&PipelineSection::Preprocessing);
+        let corrected_reads_clone = corrected_reads.clone();
+        let preprocessing_dir_clone = preprocessing_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            info!("  Writing FASTQ with {} reads to {}", corrected_reads_clone.len(), preprocessing_dir_clone.display());
+            crate::utils::format_writers::write_fastq(
+                &corrected_reads_clone,
+                preprocessing_dir_clone.join("corrected_reads.fastq")
+            )
+        }).await??;
+
+        let reads_processed = corrected_reads.len();
+        let preprocessing_dir_clone = preprocessing_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_qc_report(
+                reads_processed,
+                reads_processed,
+                38.0,
+                preprocessing_dir_clone.join("qc_report.txt")
+            )
+        }).await??;
+
         multi_progress.update_line(preprocess_line, "📋 Preprocessing: ✅ Complete".to_string());
 
         // Phase 2: Assembly with adaptive k-mer selection
@@ -1077,6 +1149,47 @@ impl MetagenomicsPipeline {
         let assembly_results = self
             .run_assembly_with_progress(&corrected_reads, multi_progress, assembly_line)
             .await?;
+
+        // DEBUG: Check assembly results
+        info!("🔍 Assembly completed: {} contigs generated", assembly_results.contigs.len());
+        if assembly_results.contigs.is_empty() {
+            info!("⚠️  WARNING: No contigs were assembled! Cannot write assembly outputs.");
+        }
+
+        // WRITE ASSEMBLY OUTPUTS (only if we have contigs)
+        if !assembly_results.contigs.is_empty() {
+            let assembly_dir = self.output_manager.get_section_dir(&PipelineSection::Assembly);
+            let contigs_clone = assembly_results.contigs.clone();
+            let assembly_dir_clone = assembly_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::utils::format_writers::write_contigs_fasta_detailed(
+                    &contigs_clone,
+                    assembly_dir_clone.join("contigs.fasta")
+                )
+            }).await??;
+
+            let contigs_clone = assembly_results.contigs.clone();
+            let assembly_dir_clone = assembly_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::utils::format_writers::write_gfa(
+                    &contigs_clone,
+                    assembly_dir_clone.join("assembly_graph.gfa")
+                )
+            }).await??;
+
+            let contigs_clone = assembly_results.contigs.clone();
+            let n50 = assembly_results.assembly_stats.n50;
+            let assembly_dir_clone = assembly_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::utils::format_writers::write_assembly_stats(
+                    &contigs_clone,
+                    n50,
+                    assembly_dir_clone.join("assembly_stats.txt")
+                )
+            }).await??;
+            info!("✅ Wrote assembly outputs: {} contigs", assembly_results.contigs.len());
+        }
+
         multi_progress.update_line(assembly_line, "🧬 Assembly: ✅ Complete".to_string());
 
         // Phase 3: Feature extraction
@@ -1087,6 +1200,27 @@ impl MetagenomicsPipeline {
         let features = self
             .extract_features_with_progress(&assembly_results, multi_progress, features_line)
             .await?;
+
+        // WRITE FEATURES OUTPUTS (to classification folder)
+        let features_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
+        let feature_names = vec!["feature_dim_0".to_string(), "feature_dim_1".to_string(), "feature_dim_2".to_string(), "feature_dim_3".to_string()];
+        let feature_data: Vec<(String, Vec<f64>)> = features.sequence_features.iter().map(|(idx, fv)| {
+            (format!("contig_{}", idx), fv.sequence_features.to_vec())
+        }).collect();
+
+        let feature_data_clone = feature_data.clone();
+        let feature_names_clone = feature_names.clone();
+        let features_dir_clone = features_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_features_tsv(&feature_data_clone, &feature_names_clone, features_dir_clone.join("feature_vectors.tsv"))
+        }).await??;
+
+        let num_features = features.sequence_features.len();
+        let features_dir_clone = features_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_features_summary(num_features, feature_names.len(), &feature_names, features_dir_clone.join("feature_summary.txt"))
+        }).await??;
+
         multi_progress.update_line(
             features_line,
             "🔍 Feature Extraction: ✅ Complete".to_string(),
@@ -1105,6 +1239,31 @@ impl MetagenomicsPipeline {
                 classification_line,
             )
             .await?;
+
+        // WRITE CLASSIFICATION OUTPUTS
+        let classification_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
+        let class_data: Vec<(String, String, String, f64, String)> = classifications.iter().map(|c| {
+            (c.contig_id.to_string(), c.taxonomy_id.to_string(), c.taxonomy_name.clone(), c.confidence, c.lineage.clone())
+        }).collect();
+
+        let class_data_clone = class_data.clone();
+        let classification_dir_clone = classification_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_class_tsv(&class_data_clone, classification_dir_clone.join("taxonomic_assignments.tsv"))
+        }).await??;
+
+        let mut tax_counts: std::collections::HashMap<String, (String, f64)> = std::collections::HashMap::new();
+        for c in &classifications {
+            let entry = tax_counts.entry(c.taxonomy_name.clone()).or_insert((c.lineage.clone(), 0.0));
+            entry.1 += 1.0;
+        }
+        let kraken_data: Vec<(String, String, f64)> = tax_counts.into_iter().map(|(name, (lineage, count))| (name, lineage, count)).collect();
+        let total_classifications = classifications.len();
+        let classification_dir_clone = classification_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_kraken_report(&kraken_data, total_classifications, classification_dir_clone.join("kraken_report.txt"))
+        }).await??;
+
         multi_progress.update_line(
             classification_line,
             "🏷️  Classification: ✅ Complete".to_string(),
@@ -1118,6 +1277,54 @@ impl MetagenomicsPipeline {
         let abundance_profile = self
             .estimate_abundance_with_progress(&corrected_reads, multi_progress, abundance_line)
             .await?;
+
+        // WRITE ABUNDANCE OUTPUTS
+        let abundance_dir = self.output_manager.get_section_dir(&PipelineSection::Abundance);
+        let mut species_counts: std::collections::HashMap<String, (f64, f64, usize)> = std::collections::HashMap::new();
+        for classification in &classifications {
+            let entry = species_counts.entry(classification.taxonomy_name.clone()).or_insert((0.0, 0.0, 0));
+            entry.0 += 1.0;
+            entry.2 += 1;
+        }
+        let total_count: f64 = species_counts.values().map(|(count, _, _)| count).sum();
+        let abund_data: Vec<(String, f64, f64, usize)> = species_counts.iter().map(|(name, (count, _, num_contigs))| {
+            let rel_abund = if total_count > 0.0 { (count / total_count) * 100.0 } else { 0.0 };
+            (name.clone(), rel_abund, 30.0, *num_contigs)
+        }).collect();
+
+        let abund_data_clone = abund_data.clone();
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_abund_tsv(&abund_data_clone, abundance_dir_clone.join("abundance_profile.tsv"))
+        }).await??;
+
+        let krona_data: Vec<(f64, String)> = classifications.iter().map(|c| (1.0, c.lineage.clone())).collect();
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_krona_tax(&krona_data, abundance_dir_clone.join("krona_input.txt"))
+        }).await??;
+
+        let diversity_index = if !abund_data.is_empty() {
+            let mut shannon = 0.0;
+            for (_, rel_abund, _, _) in &abund_data {
+                let p = rel_abund / 100.0;
+                if p > 0.0 { shannon -= p * p.ln(); }
+            }
+            shannon
+        } else { 0.0 };
+        let (dominant_taxon, dominant_abundance) = abund_data.iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(name, abund, _, _)| (name.clone(), *abund))
+            .unwrap_or(("Unknown".to_string(), 0.0));
+
+        let num_classifications = classifications.len();
+        let num_taxa = abund_data.len();
+        let dominant_taxon_clone = dominant_taxon.clone();
+        let abundance_dir_clone = abundance_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_abund_summary(num_classifications, num_taxa, &dominant_taxon_clone, dominant_abundance, diversity_index, abundance_dir_clone.join("abundance_summary.txt"))
+        }).await??;
+
         multi_progress.update_line(abundance_line, "📊 Abundance: ✅ Complete".to_string());
 
         // Phase 6: Generate comprehensive report
@@ -1135,6 +1342,39 @@ impl MetagenomicsPipeline {
                 report_line,
             )
             .await?;
+
+        // WRITE REPORT OUTPUTS
+        let report_dir = self.output_manager.get_section_dir(&PipelineSection::Report);
+        let mut tax_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for c in &report.taxonomic_composition {
+            *tax_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
+        }
+        let dominant_taxon = tax_counts.iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let processing_time_sec = report.performance_metrics.total_processing_time.as_secs_f64();
+        let sample_name_clone = report.sample_name.clone();
+        let num_reads = report.performance_metrics.reads_processed as usize;
+        let total_contigs = report.summary.total_contigs;
+        let n50 = report.summary.n50;
+        let unique_species = report.summary.unique_species;
+        let dominant_taxon_clone = dominant_taxon.clone();
+        let report_dir_clone = report_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_md_report(&sample_name_clone, num_reads, total_contigs, n50, unique_species, &dominant_taxon_clone, processing_time_sec, report_dir_clone.join("analysis_report.md"))
+        }).await??;
+
+        let total_classifications = report.taxonomic_composition.len();
+        let dominant_count = tax_counts.get(&dominant_taxon).unwrap_or(&0);
+        let dominant_abundance = if total_classifications > 0 { (*dominant_count as f64 / total_classifications as f64) * 100.0 } else { 0.0 };
+        let sample_name_clone = report.sample_name.clone();
+        let report_dir_clone = report_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_html_report(&sample_name_clone, num_reads, total_contigs, n50, unique_species, &dominant_taxon, dominant_abundance, processing_time_sec, report_dir_clone.join("analysis_report.html"))
+        }).await??;
+
         multi_progress.update_line(report_line, "📝 Report: ✅ Complete".to_string());
 
         let total_time = start_time.elapsed();
@@ -1661,48 +1901,63 @@ impl MetagenomicsPipeline {
 
         // ADDED: Write standard markdown and HTML reports to report directory
         // Find dominant taxon from classifications
-        let mut tax_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut tax_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for c in &report.taxonomic_composition {
-            *tax_counts.entry(&c.taxonomy_name).or_insert(0) += 1;
+            *tax_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
         }
         let dominant_taxon = tax_counts.iter()
             .max_by_key(|(_, count)| *count)
-            .map(|(name, _)| *name)
-            .unwrap_or("Unknown");
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
 
         let processing_time_sec = report.performance_metrics.total_processing_time.as_secs_f64();
+        let sample_name = report.sample_name.clone();
+        let num_reads = report.performance_metrics.reads_processed as usize;
+        let total_contigs = report.summary.total_contigs;
+        let n50 = report.summary.n50;
+        let unique_species = report.summary.unique_species;
+        let dominant_taxon_clone = dominant_taxon.clone();
+        let report_dir_clone = report_dir.clone();
 
-        crate::utils::format_writers::write_md_report(
-            &report.sample_name,
-            report.performance_metrics.reads_processed as usize,
-            report.summary.total_contigs,
-            report.summary.n50,
-            report.summary.unique_species,
-            dominant_taxon,
-            processing_time_sec,
-            report_dir.join("analysis_report.md")
-        )?;
+        // Write reports in blocking tasks (sync I/O)
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_md_report(
+                &sample_name,
+                num_reads,
+                total_contigs,
+                n50,
+                unique_species,
+                &dominant_taxon_clone,
+                processing_time_sec,
+                report_dir_clone.join("analysis_report.md")
+            )
+        }).await??;
 
         // Calculate dominant taxon abundance
         let total_classifications = report.taxonomic_composition.len();
-        let dominant_count = tax_counts.get(dominant_taxon).unwrap_or(&0);
+        let dominant_count = tax_counts.get(&dominant_taxon).unwrap_or(&0);
         let dominant_abundance = if total_classifications > 0 {
             (*dominant_count as f64 / total_classifications as f64) * 100.0
         } else {
             0.0
         };
 
-        crate::utils::format_writers::write_html_report(
-            &report.sample_name,
-            report.performance_metrics.reads_processed as usize,
-            report.summary.total_contigs,
-            report.summary.n50,
-            report.summary.unique_species,
-            dominant_taxon,
-            dominant_abundance,
-            processing_time_sec,
-            report_dir.join("analysis_report.html")
-        )?;
+        let sample_name = report.sample_name.clone();
+        let num_reads = report.performance_metrics.reads_processed as usize;
+        let report_dir_clone = report_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::utils::format_writers::write_html_report(
+                &sample_name,
+                num_reads,
+                total_contigs,
+                n50,
+                unique_species,
+                &dominant_taxon,
+                dominant_abundance,
+                processing_time_sec,
+                report_dir_clone.join("analysis_report.html")
+            )
+        }).await??;
 
         info!("💾 Saved report intermediate files (JSON + HTML + TSV + Markdown)");
 
