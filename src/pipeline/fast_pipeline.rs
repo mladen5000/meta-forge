@@ -282,49 +282,104 @@ impl FastPipeline {
         Ok(features)
     }
 
-    /// Run classification using ML-based contig binning
+    /// Run classification using ML-based contig binning + k-mer taxonomy
     async fn run_classification(
         &self,
         assembly_results: &AssemblyResults,
         _features: &FeatureCollection,
         _progress_info: &str,
     ) -> Result<Vec<TaxonomicClassification>> {
-        info!("🔍 Classifying {} contigs using ML binning...", assembly_results.contigs.len());
+        info!("🔍 Classifying {} contigs using hybrid ML+taxonomy approach...", assembly_results.contigs.len());
 
-        // Use simple ML classifier for contig binning
+        // Step 1: Use k-mer binning for initial clustering
         use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
 
         let classifier_config = SimpleClassifierConfig {
             kmer_size: 4,
-            min_contig_length: 500,
+            min_contig_length: 500, // CRITICAL FIX: Match this with contig filtering
             num_bins: 10,
             use_coverage_features: true,
             normalization: crate::ml::simple_classifier::NormalizationMethod::ZScore,
         };
 
         let classifier = SimpleContigClassifier::new(classifier_config)?;
-
-        // Classify contigs into bins
         let bin_results = classifier.classify_contigs(&assembly_results.contigs)?;
 
-        // Convert bin assignments to taxonomic classifications
+        info!("📦 K-mer clustering: {} contigs assigned to bins", bin_results.len());
+
+        // Step 2: Try taxonomic assignment using k-mer composition
+        use crate::ml::kmer_taxonomy::KmerTaxonomyClassifier;
+
+        let mut taxonomy_classifier = KmerTaxonomyClassifier::new(4);
+        if let Err(e) = taxonomy_classifier.load_default_references() {
+            tracing::warn!("Failed to load taxonomy references: {}, using bins only", e);
+        }
+
+        let stats = taxonomy_classifier.get_stats();
+        info!("🧬 Taxonomy classifier: {} references loaded", stats.num_references);
+
+        // Step 3: Combine binning + taxonomy for final classification
         let mut classifications = Vec::new();
-        let total_bins = bin_results.len();
 
         for bin_result in bin_results.iter() {
+            // Find the corresponding contig
+            let contig = assembly_results.contigs
+                .iter()
+                .find(|c| c.id == bin_result.contig_id);
+
+            let (taxonomy_name, lineage, method, final_confidence) = if let Some(contig) = contig {
+                // Try taxonomic assignment
+                match taxonomy_classifier.classify_sequence(&contig.sequence) {
+                    Ok(tax_assignment) if tax_assignment.is_classified() => {
+                        // Use taxonomy if confidence is high
+                        let combined_confidence = (bin_result.confidence + tax_assignment.confidence) / 2.0;
+                        let taxon_name = tax_assignment.taxon.clone();
+                        (
+                            taxon_name.clone(),
+                            format!("Bacteria;{}", taxon_name),
+                            format!("hybrid_kmer_taxonomy (bin={}, tax={:.2})", bin_result.bin_id, tax_assignment.confidence),
+                            combined_confidence,
+                        )
+                    }
+                    _ => {
+                        // Fall back to bin-only classification
+                        (
+                            format!("Bin_{}", bin_result.bin_id),
+                            format!("Metagenome;Bin_{}", bin_result.bin_id),
+                            "ml_kmer_clustering".to_string(),
+                            bin_result.confidence,
+                        )
+                    }
+                }
+            } else {
+                // Contig not found (shouldn't happen)
+                (
+                    format!("Bin_{}", bin_result.bin_id),
+                    format!("Metagenome;Bin_{}", bin_result.bin_id),
+                    "ml_kmer_clustering".to_string(),
+                    bin_result.confidence,
+                )
+            };
+
             let classification = TaxonomicClassification {
                 contig_id: bin_result.contig_id,
-                taxonomy_id: bin_result.bin_id as u32 + 1, // Map bin_id to taxonomy_id
-                taxonomy_name: format!("Bin_{}", bin_result.bin_id),
-                confidence: bin_result.confidence,
-                lineage: format!("Metagenome;Bin_{}", bin_result.bin_id),
-                method: "ml_kmer_clustering".to_string(),
+                taxonomy_id: bin_result.bin_id as u32 + 1,
+                taxonomy_name,
+                confidence: final_confidence,
+                lineage,
+                method,
             };
             classifications.push(classification);
         }
 
-        info!("✅ ML classification completed: {} contigs assigned to {} bins",
-              classifications.len(), total_bins);
+        // Count taxonomy assignments
+        let taxonomy_assigned = classifications.iter()
+            .filter(|c| c.method.contains("taxonomy"))
+            .count();
+
+        info!("✅ Classification completed: {} total ({} with taxonomy, {} bins only)",
+              classifications.len(), taxonomy_assigned, classifications.len() - taxonomy_assigned);
+
         Ok(classifications)
     }
 

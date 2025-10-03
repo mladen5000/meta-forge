@@ -111,14 +111,30 @@ impl SemiBinExecutor {
         info!("   BAM files: {}", self.config.bam_files.len());
         info!("   Output: {}", self.config.output_dir.display());
         info!("   Threads: {}", self.config.threads);
+        info!("   Min contig length: {}", self.config.min_contig_length);
+
+        if let Some(env) = &self.config.environment {
+            info!("   Environment: {}", env);
+        }
+
+        debug!("Configuration details:");
+        for (i, bam) in self.config.bam_files.iter().enumerate() {
+            debug!("   BAM[{}]: {}", i, bam.display());
+        }
+        if !self.config.extra_args.is_empty() {
+            debug!("   Extra args: {:?}", self.config.extra_args);
+        }
 
         let start_time = std::time::Instant::now();
 
         // Update reporter if available
         if let Some(reporter) = &self.reporter {
             if let Ok(mut r) = reporter.lock() {
+                info!("   Reporter attached - tracking progress");
                 r.start_stage(ClassificationStage::Clustering);
             }
+        } else {
+            debug!("   No reporter attached - minimal tracking");
         }
 
         // Build command
@@ -182,11 +198,13 @@ impl SemiBinExecutor {
         };
 
         // Wait for process completion
+        debug!("   Waiting for SemiBin2 process to complete...");
         let exit_status = child
             .wait()
             .context("Failed to wait for SemiBin2 process")?;
 
         // Wait for output threads
+        debug!("   Collecting output from threads...");
         if let Some(handle) = stdout_thread {
             let _ = handle.join();
         }
@@ -202,6 +220,7 @@ impl SemiBinExecutor {
 
         if !exit_status.success() {
             error!("❌ SemiBin2 execution failed with exit code: {}", exit_code);
+            error!("   Check stderr output above for details");
             return Err(anyhow::anyhow!(
                 "SemiBin2 failed with exit code: {}",
                 exit_code
@@ -209,6 +228,7 @@ impl SemiBinExecutor {
         }
 
         // Parse results
+        info!("   Parsing SemiBin2 output files...");
         let result = self.parse_results(execution_time, exit_code)?;
 
         // Update reporter
@@ -312,31 +332,43 @@ impl SemiBinExecutor {
 
     /// Parse SemiBin2 output files to get results
     fn parse_results(&self, execution_time: f64, exit_code: i32) -> Result<SemiBinResult> {
+        debug!("   Locating output bin directory...");
         let bin_dir = self.config.output_dir.join("output_bins");
 
         // Try multiple possible result file locations
+        debug!("   Searching for result files...");
         let result_file = if self.config.output_dir.join("output_recluster_bins.tsv").exists() {
+            debug!("   Found: output_recluster_bins.tsv");
             self.config.output_dir.join("output_recluster_bins.tsv")
         } else if self.config.output_dir.join("output_bins.tsv").exists() {
+            debug!("   Found: output_bins.tsv");
             self.config.output_dir.join("output_bins.tsv")
         } else {
+            debug!("   Using fallback: binning_results.tsv");
             self.config.output_dir.join("binning_results.tsv")
         };
 
+        info!("   Result file: {}", result_file.display());
+
         // Count bins
+        debug!("   Counting bins in: {}", bin_dir.display());
         let num_bins = if bin_dir.exists() {
-            std::fs::read_dir(&bin_dir)
+            let count = std::fs::read_dir(&bin_dir)
                 .map(|entries| entries.filter_map(Result::ok).count())
-                .unwrap_or(0)
+                .unwrap_or(0);
+            debug!("   Found {} bins", count);
+            count
         } else {
+            warn!("   Bin directory not found: {}", bin_dir.display());
             0
         };
 
         // Parse result file for contig counts
+        debug!("   Parsing result file for contig statistics...");
         let (contigs_processed, contigs_binned) = if result_file.exists() {
             Self::parse_result_file(&result_file)?
         } else {
-            warn!("Result file not found: {}", result_file.display());
+            warn!("   Result file not found: {}", result_file.display());
             (0, 0)
         };
 
@@ -357,15 +389,23 @@ impl SemiBinExecutor {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
 
-        let file = File::open(path)?;
+        debug!("   Reading result file: {}", path.display());
+        let file = File::open(path)
+            .context(format!("Failed to open result file: {}", path.display()))?;
         let reader = BufReader::new(file);
 
         let mut all_contigs = HashSet::new();
         let mut binned_contigs = HashSet::new();
+        let mut line_count = 0;
 
-        for line in reader.lines().skip(1) {
-            // Skip header
+        for (idx, line) in reader.lines().enumerate() {
+            if idx == 0 {
+                debug!("   Skipping header line");
+                continue; // Skip header
+            }
+
             if let Ok(line) = line {
+                line_count += 1;
                 let parts: Vec<&str> = line.split('\t').collect();
                 if parts.len() >= 2 {
                     let contig_id = parts[0];
@@ -376,11 +416,22 @@ impl SemiBinExecutor {
                     if bin_id != "unbinned" && !bin_id.is_empty() {
                         binned_contigs.insert(contig_id.to_string());
                     }
+                } else if !line.trim().is_empty() {
+                    warn!("   Malformed line {} in result file", idx + 1);
                 }
             }
         }
 
-        Ok((all_contigs.len(), binned_contigs.len()))
+        let total = all_contigs.len();
+        let binned = binned_contigs.len();
+        debug!("   Parsed {} lines from result file", line_count);
+        debug!("   Total contigs: {}, Binned: {}", total, binned);
+
+        if total == 0 {
+            warn!("   No contigs found in result file");
+        }
+
+        Ok((total, binned))
     }
 }
 

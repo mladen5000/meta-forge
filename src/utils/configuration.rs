@@ -657,8 +657,8 @@ impl ConfigurationManager {
             general: GeneralConfig {
                 name: "metagenomics-pipeline".to_string(),
                 version: "1.0.0".to_string(),
-                work_dir: PathBuf::from("./output/work"),
-                temp_dir: PathBuf::from("./output/tmp"),
+                work_dir: PathBuf::from("./output"),
+                temp_dir: std::env::temp_dir(),
                 output_dir: PathBuf::from("./output"),
                 debug_mode: false,
                 random_seed: None,
@@ -1015,8 +1015,8 @@ impl Default for GeneralConfig {
         Self {
             name: "metagenomics-pipeline".to_string(),
             version: "1.0.0".to_string(),
-            work_dir: PathBuf::from("./output/work"),
-            temp_dir: PathBuf::from("./output/tmp"),
+            work_dir: PathBuf::from("./output"),
+            temp_dir: std::env::temp_dir(),
             output_dir: PathBuf::from("./output"),
             debug_mode: false,
             random_seed: None,

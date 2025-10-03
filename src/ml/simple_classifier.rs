@@ -159,6 +159,17 @@ impl SimpleContigClassifier {
         let k = self.config.kmer_size;
         let mut kmer_counts = AHashMap::new();
         let mut total_kmers = 0;
+        let mut ambiguous_kmers = 0;
+
+        // CRITICAL: Check if sequence is long enough
+        if sequence.len() < k {
+            tracing::warn!(
+                "Sequence too short for k-mer extraction: {} < {}",
+                sequence.len(),
+                k
+            );
+            return Ok(AHashMap::new());
+        }
 
         // Count k-mers
         for window in sequence.as_bytes().windows(k) {
@@ -168,17 +179,40 @@ impl SimpleContigClassifier {
                 if kmer_upper.chars().all(|c| matches!(c, 'A' | 'C' | 'G' | 'T')) {
                     *kmer_counts.entry(kmer_upper).or_insert(0) += 1;
                     total_kmers += 1;
+                } else {
+                    ambiguous_kmers += 1;
                 }
             }
         }
 
+        // CRITICAL DEBUG: Log k-mer extraction stats
+        if ambiguous_kmers > 0 {
+            tracing::debug!(
+                "K-mer extraction: {} valid, {} ambiguous (seq_len={}bp, k={})",
+                total_kmers,
+                ambiguous_kmers,
+                sequence.len(),
+                k
+            );
+        }
+
+        if total_kmers == 0 {
+            tracing::warn!(
+                "No valid k-mers extracted from sequence (len={}bp, k={}, ambiguous={})",
+                sequence.len(),
+                k,
+                ambiguous_kmers
+            );
+            return Ok(AHashMap::new());
+        }
+
         // Convert counts to frequencies
         let mut kmer_freqs = AHashMap::new();
-        if total_kmers > 0 {
-            for (kmer, count) in kmer_counts.iter() {
-                kmer_freqs.insert(kmer.clone(), *count as f64 / total_kmers as f64);
-            }
+        for (kmer, count) in kmer_counts.iter() {
+            kmer_freqs.insert(kmer.clone(), *count as f64 / total_kmers as f64);
         }
+
+        tracing::trace!("Extracted {} unique k-mers from sequence", kmer_freqs.len());
 
         Ok(kmer_freqs)
     }
@@ -192,10 +226,21 @@ impl SimpleContigClassifier {
             }
         }
 
+        // CRITICAL DEBUG: Track filtering
+        tracing::debug!("Classification input: {} total contigs", contigs.len());
+        tracing::debug!("Min contig length filter: {} bp", self.config.min_contig_length);
+
         let valid_contigs: Vec<&Contig> = contigs
             .iter()
             .filter(|c| c.sequence.len() >= self.config.min_contig_length)
             .collect();
+
+        tracing::info!(
+            "Filtered contigs: {} valid out of {} total (min_length={}bp)",
+            valid_contigs.len(),
+            contigs.len(),
+            self.config.min_contig_length
+        );
 
         if let Some(ref reporter) = self.reporter {
             if let Ok(mut r) = reporter.lock() {
@@ -205,6 +250,7 @@ impl SimpleContigClassifier {
         }
 
         if valid_contigs.is_empty() {
+            tracing::warn!("No contigs passed filtering - all shorter than {}bp", self.config.min_contig_length);
             return Ok(Vec::new());
         }
 
@@ -226,18 +272,34 @@ impl SimpleContigClassifier {
                 }
             }
 
+            // CRITICAL DEBUG: Track feature extraction failures
+            tracing::trace!(
+                "Extracting features for contig {} (len={}bp)",
+                contig.id,
+                contig.sequence.len()
+            );
+
             match self.extract_features(contig) {
                 Ok(features) => {
+                    tracing::trace!("Successfully extracted {} features for contig {}", features.len(), contig.id);
                     feature_matrix.push(features);
                     contig_ids.push(contig.id);
                     contig_refs.push(*contig);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to extract features for contig {}: {}", contig.id, e);
+                    tracing::warn!("Failed to extract features for contig {} (len={}bp): {}",
+                                   contig.id, contig.sequence.len(), e);
                     continue;
                 }
             }
         }
+
+        // CRITICAL DEBUG: Check if feature extraction worked
+        tracing::info!(
+            "Feature extraction complete: {} features extracted from {} valid contigs",
+            feature_matrix.len(),
+            valid_contigs.len()
+        );
 
         if let Some(ref reporter) = self.reporter {
             if let Ok(mut r) = reporter.lock() {

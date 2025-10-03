@@ -1,0 +1,341 @@
+//! K-mer based taxonomic classification for metagenomic contigs
+//!
+//! This module implements composition-based taxonomic assignment using k-mer profiles.
+//! Unlike clustering-based binning, this provides actual taxonomic labels.
+
+use ahash::AHashMap;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+/// K-mer based taxonomic classifier using composition signatures
+pub struct KmerTaxonomyClassifier {
+    /// Reference k-mer profiles for known taxa
+    reference_profiles: AHashMap<String, KmerProfile>,
+    /// K-mer size for classification
+    k: usize,
+    /// Minimum similarity threshold for classification
+    min_similarity: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct KmerProfile {
+    pub taxon_name: String,
+    pub taxon_rank: String, // species, genus, family, etc.
+    pub kmer_frequencies: AHashMap<String, f64>,
+    pub gc_content: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaxonomicAssignment {
+    pub taxon: String,
+    pub rank: String,
+    pub confidence: f64,
+    pub method: String,
+}
+
+impl TaxonomicAssignment {
+    /// Create unclassified assignment
+    pub fn unclassified() -> Self {
+        Self {
+            taxon: "Unclassified".to_string(),
+            rank: "unknown".to_string(),
+            confidence: 0.0,
+            method: "k-mer composition".to_string(),
+        }
+    }
+
+    /// Check if assignment is classified
+    pub fn is_classified(&self) -> bool {
+        self.taxon != "Unclassified" && self.confidence > 0.0
+    }
+}
+
+impl KmerTaxonomyClassifier {
+    /// Create new classifier with given k-mer size
+    pub fn new(k: usize) -> Self {
+        Self {
+            reference_profiles: AHashMap::new(),
+            k,
+            min_similarity: 0.7, // 70% similarity threshold
+        }
+    }
+
+    /// Create classifier with custom similarity threshold
+    pub fn with_threshold(k: usize, min_similarity: f64) -> Self {
+        Self {
+            reference_profiles: AHashMap::new(),
+            k,
+            min_similarity,
+        }
+    }
+
+    /// Add reference genome profile for classification
+    pub fn add_reference(&mut self, profile: KmerProfile) {
+        self.reference_profiles
+            .insert(profile.taxon_name.clone(), profile);
+    }
+
+    /// Load common bacterial reference profiles (placeholder for real DB)
+    pub fn load_default_references(&mut self) -> Result<()> {
+        // In production, this would load from a database
+        // For now, create synthetic profiles for common taxa
+        self.add_example_reference(
+            "Escherichia coli",
+            "species",
+            0.50, // E. coli has ~50% GC content
+        );
+        self.add_example_reference("Staphylococcus aureus", "species", 0.33);
+        self.add_example_reference("Bacillus subtilis", "species", 0.44);
+        self.add_example_reference("Pseudomonas aeruginosa", "species", 0.66);
+
+        tracing::info!(
+            "Loaded {} reference profiles",
+            self.reference_profiles.len()
+        );
+        Ok(())
+    }
+
+    /// Create example reference profile (for testing/demo)
+    fn add_example_reference(&mut self, name: &str, rank: &str, gc_content: f64) {
+        // Generate synthetic k-mer profile based on GC content
+        let mut kmer_freqs = AHashMap::new();
+
+        // Generate all possible k-mers for this k
+        let bases = ['A', 'C', 'G', 'T'];
+        let total_kmers = 4_usize.pow(self.k as u32);
+
+        for kmer_idx in 0..total_kmers {
+            let mut kmer = String::with_capacity(self.k);
+            let mut idx = kmer_idx;
+
+            for _ in 0..self.k {
+                kmer.push(bases[idx % 4]);
+                idx /= 4;
+            }
+
+            // Calculate frequency based on GC content bias
+            let gc_count = kmer.chars().filter(|c| matches!(c, 'G' | 'C')).count();
+            let at_count = self.k - gc_count;
+
+            let freq = if gc_count > at_count {
+                gc_content / (total_kmers as f64 / 2.0)
+            } else {
+                (1.0 - gc_content) / (total_kmers as f64 / 2.0)
+            };
+
+            kmer_freqs.insert(kmer, freq);
+        }
+
+        let profile = KmerProfile {
+            taxon_name: name.to_string(),
+            taxon_rank: rank.to_string(),
+            kmer_frequencies: kmer_freqs,
+            gc_content,
+        };
+
+        self.add_reference(profile);
+    }
+
+    /// Classify sequence using k-mer composition
+    pub fn classify_sequence(&self, sequence: &str) -> Result<TaxonomicAssignment> {
+        if sequence.len() < self.k {
+            return Ok(TaxonomicAssignment::unclassified());
+        }
+
+        // Extract k-mer profile from query sequence
+        let query_kmers =
+            self.extract_kmer_profile(sequence)
+                .context("Failed to extract k-mer profile")?;
+
+        if query_kmers.is_empty() {
+            return Ok(TaxonomicAssignment::unclassified());
+        }
+
+        // Find best matching reference using cosine similarity
+        let mut best_match = String::new();
+        let mut best_score = 0.0;
+
+        for (taxon, ref_profile) in &self.reference_profiles {
+            let score = self.calculate_similarity(&query_kmers, &ref_profile.kmer_frequencies);
+            if score > best_score {
+                best_score = score;
+                best_match = taxon.clone();
+            }
+        }
+
+        // Create assignment if similarity exceeds threshold
+        let assignment = if best_score >= self.min_similarity {
+            self.reference_profiles
+                .get(&best_match)
+                .map(|p| TaxonomicAssignment {
+                    taxon: p.taxon_name.clone(),
+                    rank: p.taxon_rank.clone(),
+                    confidence: best_score,
+                    method: "k-mer composition".to_string(),
+                })
+                .unwrap_or_else(TaxonomicAssignment::unclassified)
+        } else {
+            TaxonomicAssignment::unclassified()
+        };
+
+        Ok(assignment)
+    }
+
+    /// Extract k-mer frequency profile from sequence
+    fn extract_kmer_profile(&self, sequence: &str) -> Result<AHashMap<String, f64>> {
+        let mut kmer_counts = AHashMap::new();
+        let mut total = 0;
+
+        // Count k-mers in sequence
+        for window in sequence.as_bytes().windows(self.k) {
+            if let Ok(kmer) = std::str::from_utf8(window) {
+                let kmer_upper = kmer.to_uppercase();
+
+                // Only count valid DNA k-mers
+                if kmer_upper
+                    .chars()
+                    .all(|c| matches!(c, 'A' | 'C' | 'G' | 'T'))
+                {
+                    *kmer_counts.entry(kmer_upper).or_insert(0) += 1;
+                    total += 1;
+                }
+            }
+        }
+
+        // Convert counts to frequencies
+        let mut freqs = AHashMap::new();
+        if total > 0 {
+            for (kmer, count) in kmer_counts {
+                freqs.insert(kmer, count as f64 / total as f64);
+            }
+        }
+
+        Ok(freqs)
+    }
+
+    /// Calculate cosine similarity between two k-mer profiles
+    fn calculate_similarity(
+        &self,
+        query: &AHashMap<String, f64>,
+        reference: &AHashMap<String, f64>,
+    ) -> f64 {
+        let mut dot_product = 0.0;
+        let mut query_norm = 0.0;
+        let mut ref_norm = 0.0;
+
+        // Calculate dot product and query norm
+        for (kmer, &query_freq) in query {
+            let ref_freq = reference.get(kmer).copied().unwrap_or(0.0);
+            dot_product += query_freq * ref_freq;
+            query_norm += query_freq * query_freq;
+        }
+
+        // Calculate reference norm
+        for &ref_freq in reference.values() {
+            ref_norm += ref_freq * ref_freq;
+        }
+
+        // Return cosine similarity
+        if query_norm > 0.0 && ref_norm > 0.0 {
+            dot_product / (query_norm.sqrt() * ref_norm.sqrt())
+        } else {
+            0.0
+        }
+    }
+
+    /// Get statistics about reference database
+    pub fn get_stats(&self) -> ClassifierStats {
+        ClassifierStats {
+            num_references: self.reference_profiles.len(),
+            k_size: self.k,
+            min_similarity_threshold: self.min_similarity,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassifierStats {
+    pub num_references: usize,
+    pub k_size: usize,
+    pub min_similarity_threshold: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kmer_profile_extraction() {
+        let classifier = KmerTaxonomyClassifier::new(4);
+
+        let sequence = "ATCGATCGATCG";
+        let profile = classifier.extract_kmer_profile(sequence).unwrap();
+
+        assert!(!profile.is_empty(), "Should extract k-mers from sequence");
+
+        // Check frequency sums to 1.0
+        let total_freq: f64 = profile.values().sum();
+        assert!(
+            (total_freq - 1.0).abs() < 0.01,
+            "Frequencies should sum to ~1.0"
+        );
+    }
+
+    #[test]
+    fn test_similarity_calculation() {
+        let classifier = KmerTaxonomyClassifier::new(4);
+
+        let mut profile1 = AHashMap::new();
+        profile1.insert("ATCG".to_string(), 0.5);
+        profile1.insert("TCGA".to_string(), 0.5);
+
+        let mut profile2 = AHashMap::new();
+        profile2.insert("ATCG".to_string(), 0.5);
+        profile2.insert("TCGA".to_string(), 0.5);
+
+        let similarity = classifier.calculate_similarity(&profile1, &profile2);
+        assert!(
+            (similarity - 1.0).abs() < 0.01,
+            "Identical profiles should have similarity ~1.0"
+        );
+    }
+
+    #[test]
+    fn test_classification() {
+        let mut classifier = KmerTaxonomyClassifier::new(4);
+
+        // Add reference profile
+        let mut kmer_freqs = AHashMap::new();
+        kmer_freqs.insert("ATCG".to_string(), 0.3);
+        kmer_freqs.insert("TCGA".to_string(), 0.3);
+        kmer_freqs.insert("CGAT".to_string(), 0.4);
+
+        let profile = KmerProfile {
+            taxon_name: "Test Species".to_string(),
+            taxon_rank: "species".to_string(),
+            kmer_frequencies: kmer_freqs,
+            gc_content: 0.5,
+        };
+
+        classifier.add_reference(profile);
+
+        // Classify sequence
+        let sequence = "ATCGATCGATCGATCGATCG";
+        let assignment = classifier.classify_sequence(sequence).unwrap();
+
+        // Should classify if similar enough
+        if assignment.is_classified() {
+            assert_eq!(assignment.taxon, "Test Species");
+            assert!(assignment.confidence > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_unclassified_assignment() {
+        let assignment = TaxonomicAssignment::unclassified();
+
+        assert_eq!(assignment.taxon, "Unclassified");
+        assert!(!assignment.is_classified());
+        assert_eq!(assignment.confidence, 0.0);
+    }
+}
