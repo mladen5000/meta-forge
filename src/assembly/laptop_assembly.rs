@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
+use indicatif::{ProgressBar, ProgressStyle};
+use colored::Colorize;
 
 /// Memory budget targets for different laptop configurations
 #[derive(Debug, Clone)]
@@ -456,9 +458,10 @@ impl LaptopAssemblyGraph {
         // Process reads in chunks to control memory usage
         let chunks: Vec<_> = reads.chunks(self.config.chunk_size).collect();
 
-        println!("🧬 Processing {} reads in {} chunks (k={}, timeout={}s)",
-                reads.len(), chunks.len(), k, timeout.as_secs());
-        println!("   🚀 CPU cores: {} (target: 90% utilization)", self.config.cpu_cores);
+        eprintln!("{} Processing {} reads in {} chunks (k={}, timeout={}s)",
+                "🧬".bright_cyan(), reads.len(), chunks.len(), k, timeout.as_secs());
+        eprintln!("   {} CPU cores: {} (target: 90% utilization)",
+                "🚀".bright_green(), self.config.cpu_cores);
 
         // Use bounded k-mer counter to prevent memory explosion
         let mut kmer_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / 4);
@@ -466,12 +469,24 @@ impl LaptopAssemblyGraph {
         // Phase 1: Count k-mers to identify frequent ones (with AGGRESSIVE parallel processing)
         let counter_mutex = Arc::new(Mutex::new(kmer_counter));
 
+        // Create progress bar for k-mer counting
+        let pb_kmer = ProgressBar::new(reads.len() as u64);
+        pb_kmer.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reads ({percent}%) {msg}")
+                .unwrap()
+                .progress_chars("█▓▒░ ")
+        );
+        pb_kmer.set_message("Counting k-mers");
+
         if self.config.cpu_cores > 1 {
             // AGGRESSIVE parallel processing - use ALL cores
-            println!("   ⚡ Using {} threads for k-mer counting (SIMD-optimized)", self.config.cpu_cores);
+            eprintln!("   {} Using {} threads for k-mer counting (rolling hash)",
+                    "⚡".bright_yellow(), self.config.cpu_cores);
 
             // Fine-grained parallelism: split into more chunks than cores
             let fine_chunks: Vec<_> = reads.chunks((reads.len() / (self.config.cpu_cores * 4)).max(10)).collect();
+            let pb_kmer_clone = pb_kmer.clone();
 
             fine_chunks.par_iter().try_for_each(|chunk| -> Result<()> {
                 if start_time.elapsed() > timeout {
@@ -480,6 +495,9 @@ impl LaptopAssemblyGraph {
 
                 let mut local_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / (4 * self.config.cpu_cores));
                 self.process_chunk_for_counting(chunk, k, &mut local_counter)?;
+
+                // Update progress
+                pb_kmer_clone.inc(chunk.len() as u64);
 
                 // Merge into main counter
                 let mut main_counter = counter_mutex.lock().unwrap();
@@ -499,20 +517,28 @@ impl LaptopAssemblyGraph {
 
                 let mut counter = counter_mutex.lock().unwrap();
                 self.process_chunk_for_counting(chunk, k, &mut counter)?;
+                pb_kmer.inc(chunk.len() as u64);
             }
         }
+
+        pb_kmer.finish_with_message("K-mer counting complete");
 
         let mut kmer_counter = Arc::try_unwrap(counter_mutex).unwrap().into_inner().unwrap();
 
         let (unique_kmers, total_seen, dropped, memory_used) = kmer_counter.get_stats();
-        println!("📊 K-mer counting: {} unique, {} total, {} dropped, {:.1} MB used",
-                unique_kmers, total_seen, dropped, memory_used as f64 / (1024.0 * 1024.0));
+        eprintln!("{} K-mer counting: {} unique, {} total, {} dropped, {:.1} MB used",
+                "📊".bright_blue(),
+                unique_kmers.to_string().bright_white(),
+                total_seen.to_string().bright_white(),
+                dropped.to_string().bright_yellow(),
+                (memory_used as f64 / (1024.0 * 1024.0)));
 
         // Phase 2: Build graph using frequent k-mers
         let frequent_kmers = kmer_counter.get_frequent_kmers(2); // Min coverage of 2
         let frequent_set: AHashSet<u64> = frequent_kmers.iter().map(|(hash, _)| *hash).collect();
 
-        println!("🔗 Building graph with {} frequent k-mers", frequent_set.len());
+        eprintln!("{} Building graph with {} frequent k-mers",
+                "🔗".bright_green(), frequent_set.len().to_string().bright_white());
 
         // Pre-allocate edge capacity to reduce allocations
         let estimated_edges = frequent_set.len() * 2; // Conservative estimate
@@ -525,28 +551,36 @@ impl LaptopAssemblyGraph {
         let total_chunks = chunks.len();
         let start_time = Instant::now();
 
+        // Create progress bar for graph building
+        let pb_graph = ProgressBar::new(total_chunks as u64);
+        pb_graph.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.green/blue}] {pos}/{len} chunks ({percent}%) {msg}")
+                .unwrap()
+                .progress_chars("█▓▒░ ")
+        );
+        pb_graph.set_message("Building assembly graph");
+
         // Process chunks with progress tracking and AGGRESSIVE parallel execution
         if self.config.cpu_cores > 1 {
-            println!("   ⚡ Using {} threads for graph building (lock-free parallel edge creation)", self.config.cpu_cores);
+            eprintln!("   {} Using {} threads for graph building (lock-free parallel edge creation)",
+                    "⚡".bright_yellow(), self.config.cpu_cores);
 
             // Create lock-free collections for parallel insertion using DashMap
             let nodes_map = Arc::new(DashMap::<u64, GraphNode>::new());
             let edges_map = Arc::new(DashMap::<(u64, u64), u32>::new()); // edge -> weight counter
+            let pb_graph_clone = pb_graph.clone();
 
             chunks.par_iter().enumerate().try_for_each(|(chunk_idx, chunk)| -> Result<()> {
                 if start_time.elapsed() > timeout {
                     return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
                 }
 
-                if chunk_idx % 10 == 0 || chunk_idx == total_chunks - 1 {
-                    let elapsed = start_time.elapsed();
-                    let progress = (chunk_idx + 1) as f64 / total_chunks as f64 * 100.0;
-                    println!("   🔄 Graph building: {:.1}% ({}/{} chunks, {:.1}s elapsed)",
-                            progress, chunk_idx + 1, total_chunks, elapsed.as_secs_f64());
-                }
-
                 // Process chunk locally
                 let (local_nodes, local_edges) = self.process_chunk_parallel(chunk, k, &frequent_vec)?;
+
+                // Update progress
+                pb_graph_clone.inc(1);
 
                 // Merge results into shared collections (lock-free)
                 for (hash, node) in local_nodes {
@@ -583,41 +617,35 @@ impl LaptopAssemblyGraph {
                     return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
                 }
 
-                if chunk_idx % 10 == 0 || chunk_idx == total_chunks - 1 {
-                    let elapsed = start_time.elapsed();
-                    let progress = (chunk_idx + 1) as f64 / total_chunks as f64 * 100.0;
-                    let eta = if chunk_idx > 0 {
-                        let remaining_chunks = total_chunks - chunk_idx - 1;
-                        let avg_time_per_chunk = elapsed / (chunk_idx + 1) as u32;
-                        avg_time_per_chunk * remaining_chunks as u32
-                    } else {
-                        Duration::from_secs(0)
-                    };
-                    println!("   🔄 Graph building: {:.1}% ({}/{} chunks, ETA: {:.1}s)",
-                            progress, chunk_idx + 1, total_chunks, eta.as_secs_f64());
-                }
-
                 self.process_chunk_for_graph_building_optimized(chunk, k, &frequent_vec)?;
+                pb_graph.inc(1);
             }
         }
+
+        pb_graph.finish_with_message("Graph building complete");
 
         // Remove duplicate edges after batch insertion
         self.deduplicate_edges();
 
         // MetaSPAdes-style graph cleanup
+        eprintln!("{} Cleaning up low-coverage nodes...", "🧹".bright_magenta());
         self.cleanup_low_coverage_nodes(2);
 
         // Remove tips (dead-end branches) - MetaSPAdes standard
         // Threshold: 2×k (e.g., 42bp for k=21)
         let max_tip_length = k * 2;
+        eprintln!("{} Removing tips (dead-end branches ≤{}bp)...", "✂️".bright_magenta(), max_tip_length);
         let tips_removed = self.remove_tips(max_tip_length);
         if tips_removed > 0 {
-            println!("   🧹 Removed {} tips (dead-end branches ≤{}bp)", tips_removed, max_tip_length);
+            eprintln!("   {} Removed {} tips", "✓".bright_green(), tips_removed.to_string().bright_white());
         }
 
         self.calculate_stats();
 
-        println!("✅ Graph built: {} nodes, {} edges", self.nodes.len(), self.edges.len());
+        eprintln!("{} Graph built: {} nodes, {} edges",
+                "✅".bright_green(),
+                self.nodes.len().to_string().bright_white(),
+                self.edges.len().to_string().bright_white());
 
         Ok(())
     }
@@ -637,40 +665,65 @@ impl LaptopAssemblyGraph {
                 continue;
             }
 
-            let mut prev_kmer: Option<CompactKmer> = None;
+            let sequence = read.corrected.as_bytes();
+            let mut rolling_hash = RollingKmerHash::new(k);
+            let mut prev_kmer_data: Option<(CompactKmer, u64)> = None;
 
-            for i in 0..=read.corrected.len() - k {
-                if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
-                    let kmer_hash = kmer.hash();
+            // Initialize rolling hash with first k-mer
+            if sequence.len() >= k {
+                if let Ok(kmer) = CompactKmer::new(&read.corrected[0..k]) {
+                    let kmer_hash = rolling_hash.init(&sequence[0..k]);
 
-                    if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
-                        prev_kmer = None;
-                        continue;
+                    if frequent_kmers_sorted.binary_search(&kmer_hash).is_ok() {
+                        match local_nodes.get_mut(&kmer_hash) {
+                            Some(node) => node.coverage = node.coverage.saturating_add(1),
+                            None => {
+                                local_nodes.insert(kmer_hash, GraphNode {
+                                    kmer: kmer.clone(),
+                                    coverage: 1,
+                                    in_degree: 0,
+                                    out_degree: 0,
+                                });
+                            }
+                        }
+                        prev_kmer_data = Some((kmer, kmer_hash));
                     }
+                }
 
-                    // Add/update node locally
-                    match local_nodes.get_mut(&kmer_hash) {
-                        Some(node) => node.coverage = node.coverage.saturating_add(1),
-                        None => {
-                            local_nodes.insert(kmer_hash, GraphNode {
-                                kmer: kmer.clone(),
-                                coverage: 1,
-                                in_degree: 0,
-                                out_degree: 0,
+                // Roll through remaining k-mers
+                for i in k..sequence.len() {
+                    if let Ok(kmer) = CompactKmer::new(&read.corrected[i - k + 1..i + 1]) {
+                        let kmer_hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+
+                        if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
+                            prev_kmer_data = None;
+                            continue;
+                        }
+
+                        // Add/update node locally
+                        match local_nodes.get_mut(&kmer_hash) {
+                            Some(node) => node.coverage = node.coverage.saturating_add(1),
+                            None => {
+                                local_nodes.insert(kmer_hash, GraphNode {
+                                    kmer: kmer.clone(),
+                                    coverage: 1,
+                                    in_degree: 0,
+                                    out_degree: 0,
+                                });
+                            }
+                        }
+
+                        // Add edge if we have previous k-mer
+                        if let Some((_, prev_hash)) = prev_kmer_data {
+                            local_edges.push(GraphEdge {
+                                from_hash: prev_hash,
+                                to_hash: kmer_hash,
+                                weight: 1,
                             });
                         }
-                    }
 
-                    // Add edge if we have previous k-mer
-                    if let Some(prev) = &prev_kmer {
-                        local_edges.push(GraphEdge {
-                            from_hash: prev.hash(),
-                            to_hash: kmer_hash,
-                            weight: 1,
-                        });
+                        prev_kmer_data = Some((kmer, kmer_hash));
                     }
-
-                    prev_kmer = Some(kmer);
                 }
             }
         }
@@ -678,55 +731,40 @@ impl LaptopAssemblyGraph {
         Ok((local_nodes, local_edges))
     }
 
-    /// Process chunk for k-mer counting phase (OPTIMIZED)
+    /// Process chunk for k-mer counting phase (OPTIMIZED with rolling hash)
     fn process_chunk_for_counting(
         &self,
         chunk: &[CorrectedRead],
         k: usize,
         counter: &mut BoundedKmerCounter
     ) -> Result<()> {
-        // Optimized: batch process k-mers
+        // OPTIMIZED: Use rolling hash to avoid allocations
         for read in chunk {
             if read.corrected.len() < k {
                 continue;
             }
 
-            // Fast k-mer extraction using byte-level operations
             let sequence = read.corrected.as_bytes();
 
-            // Unrolled loop for better performance
-            let num_kmers = sequence.len() - k + 1;
-            let mut i = 0;
+            // Initialize rolling hash for this read
+            let mut rolling_hash = RollingKmerHash::new(k);
 
-            // Process 4 k-mers at a time (better CPU pipeline utilization)
-            while i + 4 <= num_kmers {
-                if let Ok(kmer1) = CompactKmer::new(&read.corrected[i..i + k]) {
-                    counter.add_kmer(kmer1.hash());
-                }
-                if let Ok(kmer2) = CompactKmer::new(&read.corrected[i+1..i+1 + k]) {
-                    counter.add_kmer(kmer2.hash());
-                }
-                if let Ok(kmer3) = CompactKmer::new(&read.corrected[i+2..i+2 + k]) {
-                    counter.add_kmer(kmer3.hash());
-                }
-                if let Ok(kmer4) = CompactKmer::new(&read.corrected[i+3..i+3 + k]) {
-                    counter.add_kmer(kmer4.hash());
-                }
-                i += 4;
-            }
+            // Initialize with first k-mer
+            if sequence.len() >= k {
+                let hash = rolling_hash.init(&sequence[0..k]);
+                counter.add_kmer(hash);
 
-            // Handle remaining k-mers
-            while i < num_kmers {
-                if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
-                    counter.add_kmer(kmer.hash());
+                // Roll through remaining k-mers - O(1) per k-mer
+                for i in k..sequence.len() {
+                    let hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+                    counter.add_kmer(hash);
                 }
-                i += 1;
             }
         }
         Ok(())
     }
 
-    /// Process chunk for graph building phase (optimized version)
+    /// Process chunk for graph building phase (optimized version with rolling hash)
     fn process_chunk_for_graph_building_optimized(
         &mut self,
         chunk: &[CorrectedRead],
@@ -742,35 +780,48 @@ impl LaptopAssemblyGraph {
                 continue;
             }
 
-            // Extract consecutive k-mers and create edges
-            let mut prev_kmer: Option<CompactKmer> = None;
+            let sequence = read.corrected.as_bytes();
+            let mut rolling_hash = RollingKmerHash::new(k);
+            let mut prev_kmer_data: Option<(CompactKmer, u64)> = None;
 
-            for i in 0..=read.corrected.len() - k {
-                if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
-                    let kmer_hash = kmer.hash();
+            // Initialize with first k-mer
+            if sequence.len() >= k {
+                if let Ok(kmer) = CompactKmer::new(&read.corrected[0..k]) {
+                    let kmer_hash = rolling_hash.init(&sequence[0..k]);
 
-                    // Use binary search on sorted array (O(log n) vs O(1) but better cache)
-                    if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
-                        prev_kmer = None;
-                        continue;
+                    if frequent_kmers_sorted.binary_search(&kmer_hash).is_ok() {
+                        new_nodes.push(kmer.clone());
+                        prev_kmer_data = Some((kmer, kmer_hash));
                     }
+                }
 
-                    // Batch node for later insertion
-                    new_nodes.push(kmer.clone());
+                // Roll through remaining k-mers
+                for i in k..sequence.len() {
+                    if let Ok(kmer) = CompactKmer::new(&read.corrected[i - k + 1..i + 1]) {
+                        let kmer_hash = rolling_hash.roll(sequence[i - k], sequence[i]);
 
-                    // Batch edge if we have previous k-mer
-                    if let Some(prev) = &prev_kmer {
-                        new_edges.push((prev.hash(), kmer_hash));
+                        if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
+                            prev_kmer_data = None;
+                            continue;
+                        }
+
+                        // Batch node for later insertion
+                        new_nodes.push(kmer.clone());
+
+                        // Batch edge if we have previous k-mer
+                        if let Some((_, prev_hash)) = prev_kmer_data {
+                            new_edges.push((prev_hash, kmer_hash));
+                        }
+
+                        prev_kmer_data = Some((kmer, kmer_hash));
                     }
-
-                    prev_kmer = Some(kmer);
                 }
             }
         }
 
         // Batch insert nodes
         for kmer in new_nodes {
-            self.add_or_update_node(kmer);
+            self.add_or_update_node_with_rolling_hash(kmer);
         }
 
         // Batch insert edges
@@ -779,6 +830,30 @@ impl LaptopAssemblyGraph {
         }
 
         Ok(())
+    }
+
+    /// Add or update node using rolling hash
+    fn add_or_update_node_with_rolling_hash(&mut self, kmer: CompactKmer) {
+        // Compute rolling hash for consistency
+        let sequence = kmer.to_string();
+        let bytes = sequence.as_bytes();
+        let mut rolling_hash = RollingKmerHash::new(kmer.k as usize);
+        let hash = rolling_hash.init(bytes);
+
+        match self.nodes.get_mut(&hash) {
+            Some(node) => {
+                node.coverage = node.coverage.saturating_add(1);
+            }
+            None => {
+                let node = GraphNode {
+                    kmer,
+                    coverage: 1,
+                    in_degree: 0,
+                    out_degree: 0,
+                };
+                self.nodes.insert(hash, node);
+            }
+        }
     }
 
     /// Legacy method for backward compatibility
@@ -854,7 +929,7 @@ impl LaptopAssemblyGraph {
 
         let removed = before_count - self.edges.len();
         if removed > 0 {
-            println!("   🧹 Removed {} duplicate edges", removed);
+            eprintln!("   {} Removed {} duplicate edges", "🧹".bright_magenta(), removed.to_string().bright_white());
         }
     }
 
@@ -875,7 +950,10 @@ impl LaptopAssemblyGraph {
         let removed_edges = before_edges - self.edges.len();
 
         if removed_nodes > 0 {
-            println!("   🧹 Removed {} low-coverage nodes and {} orphaned edges", removed_nodes, removed_edges);
+            eprintln!("   {} Removed {} low-coverage nodes and {} orphaned edges",
+                    "🧹".bright_magenta(),
+                    removed_nodes.to_string().bright_white(),
+                    removed_edges.to_string().bright_white());
         }
     }
 
@@ -929,11 +1007,35 @@ impl LaptopAssemblyGraph {
 
     /// Generate contigs using simple linear path traversal
     pub fn generate_contigs(&self) -> Result<Vec<Contig>> {
+        self.generate_contigs_internal(None)
+    }
+
+    /// Internal contig generation with optional progress bar
+    fn generate_contigs_internal(&self, pb_opt: Option<&ProgressBar>) -> Result<Vec<Contig>> {
         let mut contigs = Vec::new();
         let mut visited = AHashSet::new();
         let mut contig_id = 0;
 
-        println!("   🔍 Generating contigs from {} nodes, {} edges", self.nodes.len(), self.edges.len());
+        eprintln!("{} Generating contigs from {} nodes, {} edges",
+                "🔍".bright_cyan(),
+                self.nodes.len().to_string().bright_white(),
+                self.edges.len().to_string().bright_white());
+
+        // Create progress bar for contig generation if not provided
+        let pb_owned;
+        let pb = if let Some(pb) = pb_opt {
+            pb
+        } else {
+            pb_owned = ProgressBar::new(self.nodes.len() as u64);
+            pb_owned.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.magenta/blue}] {pos}/{len} nodes ({percent}%) {msg}")
+                    .unwrap()
+                    .progress_chars("█▓▒░ ")
+            );
+            pb_owned.set_message("Tracing contig paths");
+            &pb_owned
+        };
 
         // Build adjacency information
         let mut outgoing: AHashMap<u64, Vec<u64>> = AHashMap::new();
@@ -947,14 +1049,17 @@ impl LaptopAssemblyGraph {
         // CRITICAL FIX: If no edges, this indicates severe fragmentation
         // DO NOT create single k-mer contigs - biologically meaningless
         if self.edges.is_empty() && !self.nodes.is_empty() {
-            println!("   ⚠️  No edges found in graph - severe fragmentation detected");
-            println!("      This indicates k-mer size is too large for read length/overlap");
-            println!("      Recommendation: Use smaller k-mer size (try k=15-21)");
+            pb.println(format!("   {} No edges found in graph - severe fragmentation detected", "⚠️".bright_red()));
+            pb.println("      This indicates k-mer size is too large for read length/overlap".to_string());
+            pb.println(format!("      {}: Use smaller k-mer size (try k=15-21)", "Recommendation".bright_yellow()));
+            pb.finish_and_clear();
             return Ok(Vec::new());
         }
 
         // Find starting nodes and trace paths
         for (&node_hash, _node) in &self.nodes {
+            pb.inc(1);
+
             if visited.contains(&node_hash) {
                 continue;
             }
@@ -964,7 +1069,7 @@ impl LaptopAssemblyGraph {
 
             // Start from nodes that are likely contig starts or isolated nodes
             if in_count == 0 || out_count != 1 || in_count != 1 {
-                if let Some(contig) = self.trace_contig(node_hash, &outgoing, &mut visited)? {
+                if let Some(contig) = self.trace_contig_with_pb(node_hash, &outgoing, &mut visited, pb)? {
                     contigs.push(Contig {
                         id: contig_id,
                         sequence: contig.sequence,
@@ -978,6 +1083,8 @@ impl LaptopAssemblyGraph {
             }
         }
 
+        pb.finish_with_message("Contig path tracing complete");
+
         // CRITICAL FIX: DO NOT create single-node contigs
         // MetaSPAdes best practice: Single k-mer "contigs" are biologically meaningless
         // This was the PRIMARY cause of "more contigs than reads" bug
@@ -985,7 +1092,8 @@ impl LaptopAssemblyGraph {
         // Any unvisited nodes at this point are isolated/low-quality k-mers that didn't form paths
         let unvisited_count = self.nodes.len() - visited.len();
         if unvisited_count > 0 {
-            println!("   ℹ️  Skipped {} isolated nodes (single k-mers, not valid contigs)", unvisited_count);
+            eprintln!("   {} Skipped {} isolated nodes (single k-mers, not valid contigs)",
+                    "ℹ️".bright_blue(), unvisited_count.to_string().bright_white());
         }
 
         // MetaSPAdes-standard filtering: Apply strict quality thresholds
@@ -1026,13 +1134,17 @@ impl LaptopAssemblyGraph {
         let after_filter = contigs.len();
 
         if before_filter > after_filter {
-            println!("   🧹 Filtered {} contigs (length <{}bp, coverage <{:.1}x, or outside {:.1}-{:.1}x uniform range)",
-                    before_filter - after_filter, min_length, min_coverage,
+            eprintln!("   {} Filtered {} contigs (length <{}bp, coverage <{:.1}x, or outside {:.1}-{:.1}x uniform range)",
+                    "🧹".bright_magenta(),
+                    (before_filter - after_filter).to_string().bright_white(),
+                    min_length, min_coverage,
                     min_uniform_coverage, max_uniform_coverage);
         }
 
-        println!("   ✨ Generated {} valid contigs (≥{}bp, ≥{:.1}x, median {:.1}x ±50%)",
-                contigs.len(), min_length, min_coverage, median_coverage);
+        eprintln!("   {} Generated {} valid contigs (≥{}bp, ≥{:.1}x, median {:.1}x ±50%)",
+                "✨".bright_green(),
+                contigs.len().to_string().bright_white(),
+                min_length, min_coverage, median_coverage);
 
         // Calculate and report quality metrics
         if !contigs.is_empty() {
@@ -1041,15 +1153,15 @@ impl LaptopAssemblyGraph {
             let avg_coverage: f64 = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
             let max_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
 
-            println!("   📊 Assembly metrics:");
-            println!("      - Total bases: {} bp", total_bp);
-            println!("      - Average length: {:.1} bp", avg_length);
-            println!("      - Average coverage: {:.1}x", avg_coverage);
-            println!("      - Longest contig: {} bp", max_length);
+            eprintln!("   {} Assembly metrics:", "📊".bright_blue());
+            eprintln!("      - Total bases: {}", total_bp.to_string().bright_white());
+            eprintln!("      - Average length: {:.1} bp", avg_length);
+            eprintln!("      - Average coverage: {:.1}x", avg_coverage);
+            eprintln!("      - Longest contig: {} bp", max_length.to_string().bright_white());
 
             // Calculate N50
             let n50 = self.calculate_n50(&contigs);
-            println!("      - N50: {} bp", n50);
+            eprintln!("      - N50: {} bp", n50.to_string().bright_white());
         }
 
         Ok(contigs)
@@ -1089,13 +1201,35 @@ impl LaptopAssemblyGraph {
     // This function was the primary cause of the "more contigs than reads" bug
     // Now unused after implementing proper 3-kmer minimum path requirement
 
-    /// Trace linear path to form contig
+    /// Trace linear path to form contig (public API, no progress bar)
     /// CRITICAL FIX: MetaSPAdes standard - require minimum 3 k-mers in path
     fn trace_contig(
         &self,
         start_hash: u64,
         outgoing: &AHashMap<u64, Vec<u64>>,
         visited: &mut AHashSet<u64>,
+    ) -> Result<Option<SimpleContig>> {
+        self.trace_contig_internal(start_hash, outgoing, visited, None)
+    }
+
+    /// Trace linear path to form contig with progress bar support
+    fn trace_contig_with_pb(
+        &self,
+        start_hash: u64,
+        outgoing: &AHashMap<u64, Vec<u64>>,
+        visited: &mut AHashSet<u64>,
+        pb: &ProgressBar,
+    ) -> Result<Option<SimpleContig>> {
+        self.trace_contig_internal(start_hash, outgoing, visited, Some(pb))
+    }
+
+    /// Internal trace contig implementation
+    fn trace_contig_internal(
+        &self,
+        start_hash: u64,
+        outgoing: &AHashMap<u64, Vec<u64>>,
+        visited: &mut AHashSet<u64>,
+        pb_opt: Option<&ProgressBar>,
     ) -> Result<Option<SimpleContig>> {
         if visited.contains(&start_hash) {
             return Ok(None);
@@ -1160,8 +1294,14 @@ impl LaptopAssemblyGraph {
         }
 
         if path.len() >= MAX_PATH_LENGTH {
-            eprintln!("   ⚠️  Path length exceeded {}bp, possible circular reference - stopping",
-                     MAX_PATH_LENGTH * 21); // Approximate bp length
+            let msg = format!("   {} Path length exceeded {}bp, possible circular reference - stopping",
+                             "⚠️".bright_yellow(),
+                             MAX_PATH_LENGTH * 21); // Approximate bp length
+            if let Some(pb) = pb_opt {
+                pb.println(msg);
+            } else {
+                eprintln!("{}", msg);
+            }
         }
 
         // Mark nodes as visited
@@ -1346,22 +1486,22 @@ impl LaptopAssembler {
     pub fn assemble_with_timeout(&self, reads: &[CorrectedRead], timeout: Duration) -> Result<Vec<Contig>> {
         let start_time = Instant::now();
 
-        println!("🚀 Starting laptop-optimized assembly");
-        println!("   📊 Input: {} reads", reads.len());
-        println!("   💾 Memory budget: {} MB", self.config.memory_budget_mb);
-        println!("   ⚙️  CPU cores: {}", self.config.cpu_cores);
-        println!("   ⏱️  Timeout: {} seconds", timeout.as_secs());
+        eprintln!("{} Starting laptop-optimized assembly", "🚀".bright_cyan());
+        eprintln!("   {} Input: {} reads", "📊".bright_blue(), reads.len().to_string().bright_white());
+        eprintln!("   {} Memory budget: {} MB", "💾".bright_blue(), self.config.memory_budget_mb.to_string().bright_white());
+        eprintln!("   {} CPU cores: {}", "⚙️".bright_blue(), self.config.cpu_cores.to_string().bright_white());
+        eprintln!("   {} Timeout: {} seconds", "⏱️".bright_blue(), timeout.as_secs().to_string().bright_white());
 
         // Auto-select k-mer size based on read characteristics
         let k = self.select_optimal_k(reads)?;
-        println!("   🧬 Selected k-mer size: {}", k);
+        eprintln!("   {} Selected k-mer size: {}", "🧬".bright_green(), k.to_string().bright_white());
 
         // Build graph with timeout
         let mut graph = LaptopAssemblyGraph::new(self.config.clone());
 
         match graph.build_from_reads_with_timeout(reads, k, timeout) {
             Err(e) if e.to_string().contains("timeout") => {
-                println!("⚠️  Assembly timed out, attempting recovery...");
+                eprintln!("{} Assembly timed out, attempting recovery...", "⚠️".bright_red());
 
                 // Try emergency cleanup and continue with partial data
                 graph.emergency_cleanup()?;
@@ -1370,14 +1510,15 @@ impl LaptopAssembler {
                     return Err(anyhow!("Assembly failed: no data after timeout and cleanup"));
                 }
 
-                println!("🔄 Continuing with partial graph: {} nodes", graph.nodes.len());
+                eprintln!("{} Continuing with partial graph: {} nodes",
+                        "🔄".bright_yellow(), graph.nodes.len().to_string().bright_white());
             }
             Err(e) => return Err(e),
             Ok(()) => {}
         }
 
-        println!("   📈 Memory usage: {:.1} MB", graph.memory_usage_mb());
-        println!("   🕐️  Build time: {:.1}s", start_time.elapsed().as_secs_f64());
+        eprintln!("   {} Memory usage: {:.1} MB", "📈".bright_blue(), graph.memory_usage_mb());
+        eprintln!("   {} Build time: {:.1}s", "🕐".bright_blue(), start_time.elapsed().as_secs_f64());
 
         // Generate contigs
         let contigs = graph.generate_contigs()?;
@@ -1415,24 +1556,24 @@ impl LaptopAssembler {
         let max_contig_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
         let total_contig_bp: usize = contigs.iter().map(|c| c.length).sum();
 
-        println!("   📏 Assembly quality metrics:");
-        println!("      - Average read length: {:.1} bp", avg_read_length);
-        println!("      - Average contig length: {:.1} bp ({:.1}x reads)",
+        eprintln!("   {} Assembly quality metrics:", "📏".bright_blue());
+        eprintln!("      - Average read length: {:.1} bp", avg_read_length);
+        eprintln!("      - Average contig length: {:.1} bp ({:.1}x reads)",
                  avg_contig_length, avg_contig_length / avg_read_length.max(1.0));
-        println!("      - Longest contig: {} bp ({:.1}x reads)",
+        eprintln!("      - Longest contig: {} bp ({:.1}x reads)",
                  max_contig_length, max_contig_length as f64 / avg_read_length.max(1.0));
-        println!("      - Total assembly: {} bp", total_contig_bp);
+        eprintln!("      - Total assembly: {} bp", total_contig_bp.to_string().bright_white());
 
         // Warning if contigs are suspiciously short
         if avg_contig_length < avg_read_length * 2.0 {
-            println!("   ⚠️  WARNING: Average contig length ({:.1}bp) is less than 2x read length ({:.1}bp)",
-                     avg_contig_length, avg_read_length);
-            println!("      This suggests minimal read overlap - assembly may be highly fragmented");
-            println!("      Expected: contigs should be 5-100x longer than reads for good assembly");
-            println!("      Possible causes:");
-            println!("        - Low sequencing depth (need >10x coverage)");
-            println!("        - High error rate in reads (need better quality filtering)");
-            println!("        - Highly repetitive genome (need longer reads or different k-mer)");
+            eprintln!("   {} WARNING: Average contig length ({:.1}bp) is less than 2x read length ({:.1}bp)",
+                     "⚠️".bright_red(), avg_contig_length, avg_read_length);
+            eprintln!("      This suggests minimal read overlap - assembly may be highly fragmented");
+            eprintln!("      {}: contigs should be 5-100x longer than reads for good assembly", "Expected".bright_yellow());
+            eprintln!("      Possible causes:");
+            eprintln!("        - Low sequencing depth (need >10x coverage)");
+            eprintln!("        - High error rate in reads (need better quality filtering)");
+            eprintln!("        - Highly repetitive genome (need longer reads or different k-mer)");
         }
 
         // Critical failure: contigs shorter than reads (impossible for proper assembly)
@@ -1447,8 +1588,10 @@ impl LaptopAssembler {
             ));
         }
 
-        println!("✅ Assembly complete: {} contigs in {:.1}s",
-                contigs.len(), start_time.elapsed().as_secs_f64());
+        eprintln!("{} Assembly complete: {} contigs in {:.1}s",
+                "✅".bright_green(),
+                contigs.len().to_string().bright_white(),
+                start_time.elapsed().as_secs_f64());
 
         Ok(contigs)
     }

@@ -64,6 +64,8 @@ tui-input = "0.14.0"
 ratatui = "0.29.0"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 tui-textarea = "0.7.0"
+indicatif = "0.17"
+colored = "2.1"
 
 # --- Bioinformatics ---
 bio = "2.3.0"
