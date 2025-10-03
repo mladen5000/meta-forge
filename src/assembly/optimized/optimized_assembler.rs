@@ -2,11 +2,10 @@
 //! ==================================
 //!
 //! High-performance assembler using the new architectural optimizations.
-//! Demonstrates integration of BitPackedKmer, CSRAssemblyGraph, and streaming pipeline.
+//! Demonstrates integration of CompactKmer, CSRAssemblyGraph, and streaming pipeline.
 
-use crate::assembly::optimized::{
-    BitPackedKmer, CSRAssemblyGraph, SIMDKmerExtractor
-};
+use crate::assembly::optimized::CSRAssemblyGraph;
+use crate::assembly::laptop_assembly::CompactKmer;
 use std::sync::{Arc, Mutex, atomic::{AtomicU32, AtomicU64, Ordering}};
 use crate::core::data_structures::{CorrectedRead, Contig, ContigType, AssemblyStats};
 use crate::assembly::laptop_assembly::LaptopConfig;
@@ -183,7 +182,7 @@ impl OptimizedAssembler {
     }
 
     /// High-performance k-mer extraction with SIMD optimization
-    fn extract_kmers_optimized(&mut self, reads: &[CorrectedRead], k: usize) -> Result<Vec<BitPackedKmer>> {
+    fn extract_kmers_optimized(&mut self, reads: &[CorrectedRead], k: usize) -> Result<Vec<CompactKmer>> {
         let start_time = Instant::now();
         println!("   ⚡ Extracting k-mers with SIMD optimization...");
 
@@ -195,7 +194,7 @@ impl OptimizedAssembler {
             let chunk_size = self.config.streaming_chunk_size;
             let chunks: Vec<_> = reads.chunks(chunk_size).collect();
 
-            let kmers_per_chunk: Result<Vec<Vec<BitPackedKmer>>> = chunks
+            let kmers_per_chunk: Result<Vec<Vec<CompactKmer>>> = chunks
                 .par_iter()
                 .map(|chunk| {
                     let mut local_extractor = SIMDKmerExtractor::new(k);
@@ -243,7 +242,7 @@ impl OptimizedAssembler {
     }
 
     /// Memory-efficient k-mer counting using probabilistic data structures
-    fn count_kmers_optimized(&mut self, kmers: &[BitPackedKmer]) -> Result<Vec<u64>> {
+    fn count_kmers_optimized(&mut self, kmers: &[CompactKmer]) -> Result<Vec<u64>> {
         let start_time = Instant::now();
         println!("   📊 Counting k-mer frequencies...");
 
@@ -264,7 +263,7 @@ impl OptimizedAssembler {
     }
 
     /// Cache-optimized graph construction
-    fn build_graph_optimized(&mut self, kmers: &[BitPackedKmer], frequent_kmers: &[u64]) -> Result<CSRAssemblyGraph> {
+    fn build_graph_optimized(&mut self, kmers: &[CompactKmer], frequent_kmers: &[u64]) -> Result<CSRAssemblyGraph> {
         let start_time = Instant::now();
         println!("   🔗 Building assembly graph with CSR optimization...");
 
@@ -456,7 +455,7 @@ impl OptimizedAssembler {
     fn calculate_memory_optimal_k(&self) -> Result<usize> {
         let budget_mb = self.config.base.memory_budget_mb as f64;
 
-        // Rough estimate: 4^k possible k-mers, each taking ~8 bytes with BitPackedKmer
+        // Rough estimate: 4^k possible k-mers, each taking ~8 bytes with CompactKmer
         // Use 50% of budget for k-mer storage
         let available_bytes = budget_mb * 1024.0 * 1024.0 * 0.5;
 
@@ -474,13 +473,13 @@ impl OptimizedAssembler {
 
     /// Probabilistic k-mer counting (simplified - uses exact counting)
     /// TODO: Implement true HyperLogLog for memory-constrained environments
-    fn count_kmers_probabilistic(&self, kmers: &[BitPackedKmer]) -> Result<Vec<u64>> {
+    fn count_kmers_probabilistic(&self, kmers: &[CompactKmer]) -> Result<Vec<u64>> {
         // For now, use exact counting (HyperLogLog implementation planned for future)
         self.count_kmers_exact(kmers)
     }
 
     /// Exact k-mer counting (fallback)
-    fn count_kmers_exact(&self, kmers: &[BitPackedKmer]) -> Result<Vec<u64>> {
+    fn count_kmers_exact(&self, kmers: &[CompactKmer]) -> Result<Vec<u64>> {
         let mut counts = std::collections::HashMap::new();
 
         for kmer in kmers {
@@ -497,7 +496,7 @@ impl OptimizedAssembler {
     fn build_edges_for_chunk(
         &self,
         graph: &mut CSRAssemblyGraph,
-        chunk: &[BitPackedKmer],
+        chunk: &[CompactKmer],
         frequent_set: &std::collections::HashSet<u64>
     ) -> Result<()> {
         for i in 0..chunk.len().saturating_sub(1) {
@@ -520,7 +519,7 @@ impl OptimizedAssembler {
 
     /// CRITICAL FIX: Check if two k-mers have proper biological overlap
     /// Fixed to correctly check (k-1) overlap between consecutive k-mers
-    fn has_overlap(&self, kmer1: &BitPackedKmer, kmer2: &BitPackedKmer) -> bool {
+    fn has_overlap(&self, kmer1: &CompactKmer, kmer2: &CompactKmer) -> bool {
         if kmer1.len() != kmer2.len() {
             return false;
         }

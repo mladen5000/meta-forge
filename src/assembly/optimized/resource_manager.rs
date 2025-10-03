@@ -4,7 +4,7 @@
 //! Dynamic system resource management with memory pressure detection,
 //! CPU utilization monitoring, and adaptive workload balancing.
 
-use crate::assembly::optimized::optimized_assembler::OptimizedConfig;
+use crate::assembly::laptop_assembly::LaptopConfig as OptimizedConfig;
 use anyhow::Result;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,8 +26,8 @@ impl AdaptiveResourceManager {
     /// Create new adaptive resource manager
     pub fn new(config: &OptimizedConfig) -> Self {
         let system_monitor = Arc::new(SystemMonitor::new());
-        let memory_manager = Arc::new(MemoryManager::new(config.base.memory_budget_mb));
-        let cpu_manager = Arc::new(CpuManager::new(config.base.cpu_cores));
+        let memory_manager = Arc::new(MemoryManager::new(config.memory_budget_mb));
+        let cpu_manager = Arc::new(CpuManager::new(config.cpu_cores));
 
         let monitoring_active = Arc::new(AtomicBool::new(true));
 
@@ -90,9 +90,9 @@ impl AdaptiveResourceManager {
         let memory_safety_ratio = (1.0 - memory_pressure).max(0.2);
 
         let optimal_ratio = available_cpu_ratio.min(memory_safety_ratio);
-        let optimal_workers = (self.config.base.cpu_cores as f64 * optimal_ratio) as usize;
+        let optimal_workers = (self.config.cpu_cores as f64 * optimal_ratio) as usize;
 
-        optimal_workers.max(1).min(self.config.base.cpu_cores)
+        optimal_workers.max(1).min(self.config.cpu_cores)
     }
 
     /// Request memory allocation with tracking

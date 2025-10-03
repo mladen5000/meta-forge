@@ -5,8 +5,9 @@
 //! Implements adaptive chunk sizing, backpressure handling, and modular stages.
 
 use crate::assembly::optimized::{
-    BitPackedKmer, CSRAssemblyGraph, AdaptiveResourceManager
+    CSRAssemblyGraph, AdaptiveResourceManager
 };
+use crate::assembly::laptop_assembly::CompactKmer;
 use crate::core::data_structures::{CorrectedRead, Contig};
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -99,7 +100,7 @@ pub struct ReadBatch {
 #[derive(Debug)]
 pub struct ProcessedBatch {
     pub id: usize,
-    pub kmers: Vec<BitPackedKmer>,
+    pub kmers: Vec<CompactKmer>,
     pub graph_fragment: Option<CSRAssemblyGraph>,
     pub contigs: Vec<Contig>,
     pub processing_time: Duration,
@@ -449,7 +450,7 @@ impl PipelineStage for KmerExtractionStage {
             if read.corrected.len() >= self.k {
                 for i in 0..=read.corrected.len() - self.k {
                     let kmer_seq = &read.corrected[i..i + self.k];
-                    match BitPackedKmer::new(kmer_seq) {
+                    match CompactKmer::new(kmer_seq) {
                         Ok(kmer) => all_kmers.push(kmer),
                         Err(_) => continue, // Skip invalid k-mers
                     }
@@ -458,7 +459,7 @@ impl PipelineStage for KmerExtractionStage {
         }
 
         let processing_time = start_time.elapsed();
-        let memory_used = all_kmers.len() * BitPackedKmer::memory_footprint();
+        let memory_used = all_kmers.len() * std::mem::size_of::<CompactKmer>();
 
         self.memory_usage.store(memory_used, Ordering::Relaxed);
         self.metrics.batches_processed += 1;
@@ -485,7 +486,7 @@ impl PipelineStage for KmerExtractionStage {
 
     fn can_process(&self, memory_budget: usize) -> bool {
         // Estimate memory needed for processing
-        let estimated_memory = self.k * 1000 * BitPackedKmer::memory_footprint(); // Rough estimate
+        let estimated_memory = self.k * 1000 * std::mem::size_of::<CompactKmer>(); // Rough estimate
         estimated_memory <= memory_budget
     }
 

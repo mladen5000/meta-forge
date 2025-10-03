@@ -1,16 +1,23 @@
 //! Assembly modules for laptop-optimized processing
-//! Includes both the original laptop-optimized implementation and new architectural optimizations
+//!
+//! **Production Code**: `laptop_assembly.rs` - Optimized assembler with all features integrated
+//! **Experimental**: `optimized/` - Alternative implementations for benchmarking
 
-// Original laptop-optimized implementation
+// Production assembler
 pub mod laptop_assembly;
-pub mod graph_construction; // Basic graph construction utilities
 pub mod adaptive_k; // Adaptive k-mer selection
 
-// New optimized architecture (experimental/high-performance)
-pub mod optimized; // Re-enabling optimized modules
+// Experimental optimized architecture (for benchmarking only)
+pub mod optimized;
 
-// Re-export main components for convenient access
-pub use laptop_assembly::{LaptopAssembler, LaptopConfig, LaptopAssemblyGraph};
+// Re-export production components
+pub use laptop_assembly::{
+    LaptopAssembler,
+    LaptopConfig,
+    LaptopAssemblyGraph,
+    CompactKmer,
+    RollingKmerHash,
+};
 
-// Re-export optimized components for advanced users
-pub use optimized::OptimizedAssembler;
+// Re-export experimental components (OptimizedAssembler disabled - needs refactoring)
+// pub use optimized::OptimizedAssembler;
