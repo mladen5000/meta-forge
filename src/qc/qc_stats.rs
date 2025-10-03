@@ -353,3 +353,35 @@ impl QCReport {
         Ok(())
     }
 }
+
+// Implement Display for QCStats
+impl std::fmt::Display for QCStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "QC Stats: {}/{} passed ({:.1}%), {} failed",
+            self.reads_passed,
+            self.reads_input,
+            if self.reads_input > 0 {
+                (self.reads_passed as f64 / self.reads_input as f64) * 100.0
+            } else {
+                0.0
+            },
+            self.reads_failed
+        )
+    }
+}
+
+// Implement Display for AdapterMatch
+impl std::fmt::Display for super::adapter_trimmer::AdapterMatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Adapter '{}' at pos {} ({}bp, {:.1}% error)",
+            self.adapter,
+            self.position,
+            self.length,
+            self.error_rate * 100.0
+        )
+    }
+}
