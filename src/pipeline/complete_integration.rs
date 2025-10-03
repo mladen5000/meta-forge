@@ -2138,6 +2138,18 @@ impl MetagenomicsPipeline {
     }
 
     fn detect_file_format(&self, file_path: &Path) -> Result<FileFormat> {
+        // First check if this looks like a CLI flag (starts with -)
+        let path_str = file_path.to_string_lossy();
+        if path_str.starts_with('-') {
+            return Err(anyhow::anyhow!(
+                "Invalid input: '{}' looks like a command-line flag. \
+                Global flags like -m, -j, -o must come BEFORE the subcommand.\n\
+                Correct: meta-forge -m 4096 -j 8 analyze input.fastq\n\
+                Wrong: meta-forge analyze input.fastq -m 4096",
+                path_str
+            ));
+        }
+
         let extension = file_path
             .extension()
             .and_then(|ext| ext.to_str())

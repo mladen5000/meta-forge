@@ -241,6 +241,7 @@ fn calculate_gc_content(sequence: &str) -> f64 {
 mod tests {
     use super::*;
     use crate::core::data_structures::{CorrectionMetadata, BaseCorrection};
+    use crate::pipeline::complete_integration::TaxonomicClassification;
 
     #[test]
     fn test_gc_content_calculation() {
@@ -277,6 +278,82 @@ mod tests {
         assert!(content.contains("@read_0"));
         assert!(content.contains("ATCG"));
         assert!(content.contains("IIII")); // Quality scores
+    }
+
+    #[test]
+    fn test_classification_tsv_write() {
+        let classifications = vec![
+            TaxonomicClassification {
+                contig_id: 1,
+                taxonomy_id: 100,
+                taxonomy_name: "Escherichia coli".to_string(),
+                confidence: 0.95,
+                lineage: "Bacteria;Proteobacteria;Gammaproteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia;Escherichia coli".to_string(),
+                method: "hybrid_kmer_taxonomy".to_string(),
+            },
+            TaxonomicClassification {
+                contig_id: 2,
+                taxonomy_id: 101,
+                taxonomy_name: "Salmonella enterica".to_string(),
+                confidence: 0.87,
+                lineage: "Bacteria;Proteobacteria;Gammaproteobacteria;Enterobacterales;Enterobacteriaceae;Salmonella;Salmonella enterica".to_string(),
+                method: "ml_kmer_clustering".to_string(),
+            },
+        ];
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("test_classifications.tsv");
+
+        write_classification_tsv(&classifications, &output_path).unwrap();
+
+        let content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(content.contains("contig_id\tbin_id\ttaxonomy_name")); // Header
+        assert!(content.contains("Escherichia coli"));
+        assert!(content.contains("Salmonella enterica"));
+        assert!(content.contains("0.9500")); // Confidence format
+        assert!(content.contains("hybrid_kmer_taxonomy"));
+    }
+
+    #[test]
+    fn test_classification_summary_write() {
+        let classifications = vec![
+            TaxonomicClassification {
+                contig_id: 1,
+                taxonomy_id: 100,
+                taxonomy_name: "Escherichia coli".to_string(),
+                confidence: 0.95,
+                lineage: "Bacteria;Proteobacteria".to_string(),
+                method: "hybrid_kmer_taxonomy".to_string(),
+            },
+            TaxonomicClassification {
+                contig_id: 2,
+                taxonomy_id: 100,
+                taxonomy_name: "Escherichia coli".to_string(),
+                confidence: 0.92,
+                lineage: "Bacteria;Proteobacteria".to_string(),
+                method: "hybrid_kmer_taxonomy".to_string(),
+            },
+            TaxonomicClassification {
+                contig_id: 3,
+                taxonomy_id: 101,
+                taxonomy_name: "Salmonella enterica".to_string(),
+                confidence: 0.87,
+                lineage: "Bacteria;Proteobacteria".to_string(),
+                method: "ml_kmer_clustering".to_string(),
+            },
+        ];
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("test_classification_summary.txt");
+
+        write_classification_summary(&classifications, &output_path).unwrap();
+
+        let content = std::fs::read_to_string(&output_path).unwrap();
+        assert!(content.contains("Total Contigs: 3"));
+        assert!(content.contains("Taxa Distribution"));
+        assert!(content.contains("Escherichia coli: 2 contigs (66.7%)")); // Most abundant
+        assert!(content.contains("Salmonella enterica: 1 contigs (33.3%)"));
+        assert!(content.contains("Classification Methods"));
     }
 }
 
@@ -473,6 +550,88 @@ pub fn write_abund_summary<P: AsRef<Path>>(
 
     writer.flush()?;
     info!("📊 Wrote abundance summary: {}", path.display());
+    Ok(())
+}
+
+/// Write taxonomic classifications to TSV format (compatible with MetaBAT2/MaxBin2)
+pub fn write_classification_tsv<P: AsRef<Path>>(
+    classifications: &[crate::pipeline::complete_integration::TaxonomicClassification],
+    output_path: P,
+) -> Result<()> {
+    let path = output_path.as_ref();
+    info!("📊 Writing {} classifications to TSV: {}", classifications.len(), path.display());
+
+    if classifications.is_empty() {
+        info!("⚠️  WARNING: No classifications to write!");
+        return Ok(());
+    }
+
+    let file = File::create(path)
+        .with_context(|| format!("Failed to create classification TSV: {}", path.display()))?;
+    let mut writer = BufWriter::new(file);
+
+    // TSV Header
+    writeln!(writer, "contig_id\tbin_id\ttaxonomy_name\tconfidence\tlineage\tmethod")?;
+
+    // Write each classification
+    for classification in classifications {
+        writeln!(
+            writer,
+            "{}\t{}\t{}\t{:.4}\t{}\t{}",
+            classification.contig_id,
+            classification.taxonomy_id,
+            classification.taxonomy_name,
+            classification.confidence,
+            classification.lineage,
+            classification.method
+        )?;
+    }
+
+    writer.flush()?;
+    info!("✅ Successfully wrote {} classifications to: {}", classifications.len(), path.display());
+    Ok(())
+}
+
+/// Write human-readable classification summary
+pub fn write_classification_summary<P: AsRef<Path>>(
+    classifications: &[crate::pipeline::complete_integration::TaxonomicClassification],
+    output_path: P,
+) -> Result<()> {
+    use std::collections::HashMap;
+
+    let path = output_path.as_ref();
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    // Count taxa
+    let mut taxa_counts: HashMap<String, usize> = HashMap::new();
+    let mut method_counts: HashMap<String, usize> = HashMap::new();
+
+    for c in classifications {
+        *taxa_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
+        *method_counts.entry(c.method.clone()).or_insert(0) += 1;
+    }
+
+    writeln!(writer, "# Classification Summary")?;
+    writeln!(writer, "Total Contigs: {}\n", classifications.len())?;
+
+    writeln!(writer, "## Taxa Distribution")?;
+    let mut taxa_vec: Vec<_> = taxa_counts.into_iter().collect();
+    taxa_vec.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+
+    for (taxon, count) in taxa_vec {
+        let pct = (count as f64 / classifications.len() as f64) * 100.0;
+        writeln!(writer, "{}: {} contigs ({:.1}%)", taxon, count, pct)?;
+    }
+
+    writeln!(writer, "\n## Classification Methods")?;
+    for (method, count) in method_counts {
+        let pct = (count as f64 / classifications.len() as f64) * 100.0;
+        writeln!(writer, "{}: {} contigs ({:.1}%)", method, count, pct)?;
+    }
+
+    writer.flush()?;
+    info!("✅ Wrote classification summary to: {}", path.display());
     Ok(())
 }
 

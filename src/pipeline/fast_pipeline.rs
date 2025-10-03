@@ -135,6 +135,19 @@ impl FastPipeline {
         info!("🔍 Step {}/{}: Classification", step, total_steps);
         let classifications = self.run_classification(&assembly_results, &features, &main_progress).await?;
 
+        // Write classification outputs (always write these, they're critical results)
+        use crate::utils::format_writers::{write_classification_tsv, write_classification_summary};
+
+        let classification_tsv = self.config.output_dir.join("classifications.tsv");
+        write_classification_tsv(&classifications, &classification_tsv)?;
+
+        let classification_summary = self.config.output_dir.join("classification_summary.txt");
+        write_classification_summary(&classifications, &classification_summary)?;
+
+        info!("📊 Classification outputs written:");
+        info!("   - TSV: {}", classification_tsv.display());
+        info!("   - Summary: {}", classification_summary.display());
+
         if !self.config.skip_intermediates {
             self.save_with_progress("classification", "taxonomic_classifications", &classifications).await?;
         }
