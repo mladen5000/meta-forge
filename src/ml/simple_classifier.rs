@@ -925,6 +925,9 @@ mod tests {
             kmer_size: 4,
             num_bins: 2,
             min_contig_length: 10,
+            auto_detect_bins: false,  // Use fixed num_bins for test
+            max_bins: 10,
+            coverage_variance_threshold: 0.05,
             use_coverage_features: true,
             normalization: NormalizationMethod::ZScore,
         };

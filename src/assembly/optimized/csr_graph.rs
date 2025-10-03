@@ -15,18 +15,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Debug)]
 pub struct CSRAssemblyGraph {
     /// Node data in structure-of-arrays layout for cache efficiency
-    node_hashes: Vec<u64>,       // Sorted for binary search
-    node_coverage: Vec<u32>,     // Aligned with hashes
-    node_metadata: Vec<u8>,      // Packed: in_degree(4) + out_degree(4)
+    node_hashes: Vec<u64>, // Sorted for binary search
+    node_coverage: Vec<u32>,      // Aligned with hashes
+    node_metadata: Vec<u8>,       // Packed: in_degree(4) + out_degree(4)
     node_kmers: Vec<CompactKmer>, // Optional: store actual k-mer data
 
     /// CSR edge representation
-    edge_offsets: Vec<u32>,      // Cumulative edge counts per node
-    edge_targets: Vec<u32>,      // Target node indices
-    edge_weights: Vec<u16>,      // Edge weights (coverage)
+    edge_offsets: Vec<u32>, // Cumulative edge counts per node
+    edge_targets: Vec<u32>, // Target node indices
+    edge_weights: Vec<u16>, // Edge weights (coverage)
 
     /// Fast lookup structures
-    hash_to_index: AHashMap<u64, u32>,  // Hash → node index mapping
+    hash_to_index: AHashMap<u64, u32>, // Hash → node index mapping
 
     /// Statistics and metadata
     num_nodes: usize,
@@ -79,18 +79,25 @@ impl CSRAssemblyGraph {
         self.num_nodes += 1;
 
         // Update memory usage
-        let node_size = std::mem::size_of::<u64>() + std::mem::size_of::<u32>() +
-                       std::mem::size_of::<u8>() + std::mem::size_of::<CompactKmer>();
-        self.memory_usage.fetch_add(node_size as u64, Ordering::Relaxed);
+        let node_size = std::mem::size_of::<u64>()
+            + std::mem::size_of::<u32>()
+            + std::mem::size_of::<u8>()
+            + std::mem::size_of::<CompactKmer>();
+        self.memory_usage
+            .fetch_add(node_size as u64, Ordering::Relaxed);
 
         Ok(node_index)
     }
 
     /// Add edge between nodes
     pub fn add_edge(&mut self, from_hash: u64, to_hash: u64, weight: u16) -> Result<()> {
-        let from_index = *self.hash_to_index.get(&from_hash)
+        let from_index = *self
+            .hash_to_index
+            .get(&from_hash)
             .ok_or_else(|| anyhow!("Source node not found: {}", from_hash))?;
-        let to_index = *self.hash_to_index.get(&to_hash)
+        let to_index = *self
+            .hash_to_index
+            .get(&to_hash)
             .ok_or_else(|| anyhow!("Target node not found: {}", to_hash))?;
 
         // For now, store edges in temporary format
@@ -115,7 +122,8 @@ impl CSRAssemblyGraph {
 
         // Update memory usage
         let edge_size = std::mem::size_of::<u32>() + std::mem::size_of::<u16>();
-        self.memory_usage.fetch_add(edge_size as u64, Ordering::Relaxed);
+        self.memory_usage
+            .fetch_add(edge_size as u64, Ordering::Relaxed);
 
         Ok(())
     }
@@ -254,17 +262,18 @@ impl CSRAssemblyGraph {
         self.hash_to_index.shrink_to_fit();
 
         // Recalculate memory usage
-        let total_memory =
-            self.node_hashes.capacity() * std::mem::size_of::<u64>() +
-            self.node_coverage.capacity() * std::mem::size_of::<u32>() +
-            self.node_metadata.capacity() * std::mem::size_of::<u8>() +
-            self.node_kmers.capacity() * std::mem::size_of::<CompactKmer>() +
-            self.edge_offsets.capacity() * std::mem::size_of::<u32>() +
-            self.edge_targets.capacity() * std::mem::size_of::<u32>() +
-            self.edge_weights.capacity() * std::mem::size_of::<u16>() +
-            self.hash_to_index.capacity() * (std::mem::size_of::<u64>() + std::mem::size_of::<u32>());
+        let total_memory = self.node_hashes.capacity() * std::mem::size_of::<u64>()
+            + self.node_coverage.capacity() * std::mem::size_of::<u32>()
+            + self.node_metadata.capacity() * std::mem::size_of::<u8>()
+            + self.node_kmers.capacity() * std::mem::size_of::<CompactKmer>()
+            + self.edge_offsets.capacity() * std::mem::size_of::<u32>()
+            + self.edge_targets.capacity() * std::mem::size_of::<u32>()
+            + self.edge_weights.capacity() * std::mem::size_of::<u16>()
+            + self.hash_to_index.capacity()
+                * (std::mem::size_of::<u64>() + std::mem::size_of::<u32>());
 
-        self.memory_usage.store(total_memory as u64, Ordering::Relaxed);
+        self.memory_usage
+            .store(total_memory as u64, Ordering::Relaxed);
 
         Ok(())
     }
@@ -272,7 +281,7 @@ impl CSRAssemblyGraph {
     /// Convert from existing adjacency list representation
     pub fn from_adjacency_lists(
         nodes: Vec<(u64, CompactKmer, u32)>,
-        edges: Vec<(u64, u64, u16)>
+        edges: Vec<(u64, u64, u16)>,
     ) -> Result<Self> {
         let mut graph = Self::new(nodes.len(), edges.len());
 
@@ -396,7 +405,7 @@ impl GraphStats {
 mod tests {
     use super::*;
 
-    fn create_test_kmer(seq: &str) -> BitPackedKmer {
+    fn create_test_kmer(seq: &str) -> CompactKmer {
         CompactKmer::new(seq).unwrap()
     }
 
@@ -430,7 +439,9 @@ mod tests {
         graph.add_node(kmer2.clone(), 15).unwrap();
 
         // Add edge
-        graph.add_edge(kmer1.rolling_hash(), kmer2.rolling_hash(), 5).unwrap();
+        graph
+            .add_edge(kmer1.rolling_hash(), kmer2.rolling_hash(), 5)
+            .unwrap();
         graph.finalize().unwrap();
 
         assert_eq!(graph.num_edges, 1);

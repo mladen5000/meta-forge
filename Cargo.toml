@@ -100,6 +100,11 @@ crossbeam = "0.8.4"
 bench = ["criterion"]
 
 [dev-dependencies]
-criterion = "0.7.0"
+criterion = { version = "0.7.0", features = ["html_reports"] }
 anyhow = "1.0.99"
 thiserror = "2.0.14"
+rand = "0.8"
+
+[[bench]]
+name = "assembly_benchmarks"
+harness = false

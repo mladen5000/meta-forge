@@ -7,3 +7,4 @@ pub mod output_writers;
 pub mod format_writers;
 pub mod progress_display;
 pub mod streaming_abundance;
+pub mod assembly_profiler;
