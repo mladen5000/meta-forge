@@ -1545,37 +1545,51 @@ impl MetagenomicsPipeline {
 
     async fn process_fastq_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
         use bio::io::fastq;
+        use crate::qc::{QCPipeline, QCPipelineConfig};
 
         let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
 
-        let mut corrected_reads = Vec::new();
+        // Create QC pipeline
+        let qc_config = QCPipelineConfig::default();
+        let mut qc_pipeline = QCPipeline::new(qc_config);
 
+        let mut raw_reads = Vec::new();
+
+        // First pass: read all sequences
         for (read_id, record_result) in reader.records().enumerate() {
             let record = record_result?;
             let sequence = std::str::from_utf8(record.seq())?;
             let quality_scores = record.qual().to_vec();
 
-            // For now, assume no errors (would implement actual error correction)
-            let corrected_read = CorrectedRead {
+            let read = CorrectedRead {
                 id: read_id,
                 original: sequence.to_string(),
                 corrected: sequence.to_string(),
                 corrections: Vec::new(),
                 quality_scores,
                 correction_metadata: CorrectionMetadata {
-                    algorithm: "none".to_string(),
+                    algorithm: "qc".to_string(),
                     confidence_threshold: 0.0,
                     context_window: 0,
                     correction_time_ms: 0,
                 },
             };
 
-            corrected_reads.push(corrected_read);
+            raw_reads.push(read);
 
             if read_id % 10000 == 0 && read_id > 0 {
-                info!("  Processed {} reads", read_id);
+                info!("  Read {} reads", read_id);
             }
         }
+
+        // Second pass: QC filtering and trimming
+        info!("  Applying quality control...");
+        let corrected_reads = qc_pipeline.process_reads(&raw_reads);
+
+        // Get and display QC stats
+        let qc_stats = qc_pipeline.stats();
+        let report = qc_stats.generate_report();
+        report.print_summary();
 
         Ok(corrected_reads)
     }

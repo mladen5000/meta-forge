@@ -10,6 +10,7 @@ pub mod database;
 pub mod features;
 pub mod ml;
 pub mod pipeline;
+pub mod qc;
 pub mod utils;
 
 // Re-export commonly used types at crate level
