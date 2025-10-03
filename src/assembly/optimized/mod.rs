@@ -1,20 +1,16 @@
-//! Optimized Assembly Architecture
-//! =============================
+//! Optimized Assembly Components
+//! ============================
 //!
-//! Experimental high-performance assembly components.
+//! Experimental data structures for benchmarking and research.
 //!
-//! NOTE: Production code uses `laptop_assembly.rs` which has all optimizations
-//! integrated. This module contains experimental alternatives for benchmarking.
+//! **Production assembler**: Use `laptop_assembly::LaptopAssembler` instead.
+//! This module contains experimental alternatives not used in the main pipeline.
 
 pub mod csr_graph;
 pub mod streaming_pipeline;
 pub mod resource_manager;
 
-// Re-export experimental components (for benchmarking only)
+// Re-export experimental components (for benchmarking/research only)
 pub use csr_graph::{CSRAssemblyGraph, NeighborIterator};
 pub use streaming_pipeline::{StreamingAssemblyPipeline, PipelineStage};
 pub use resource_manager::{AdaptiveResourceManager, SystemMonitor};
-
-// Experimental optimized assembler (DISABLED - needs refactoring to use CompactKmer)
-// pub mod optimized_assembler;
-// pub use optimized_assembler::OptimizedAssembler;

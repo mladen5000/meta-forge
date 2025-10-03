@@ -27,8 +27,14 @@ pub struct SimpleClassifierConfig {
     pub kmer_size: usize,
     /// Minimum contig length to classify
     pub min_contig_length: usize,
-    /// Number of bins/clusters to create
+    /// Number of bins/clusters to create (ignored if auto_detect_bins = true)
     pub num_bins: usize,
+    /// Auto-detect optimal number of bins using elbow method
+    pub auto_detect_bins: bool,
+    /// Maximum bins when auto-detecting (prevents over-binning)
+    pub max_bins: usize,
+    /// Minimum coverage variance to prevent merging distinct bins
+    pub coverage_variance_threshold: f64,
     /// Include coverage features
     pub use_coverage_features: bool,
     /// Normalization method
@@ -51,6 +57,9 @@ impl Default for SimpleClassifierConfig {
             kmer_size: 4, // Tetranucleotide frequencies
             min_contig_length: 1000,
             num_bins: 10,
+            auto_detect_bins: true,  // FIX: Enable adaptive binning by default
+            max_bins: 50,            // FIX: Reasonable upper limit
+            coverage_variance_threshold: 0.05,  // FIX: 5% coverage variance threshold
             use_coverage_features: true,
             normalization: NormalizationMethod::ZScore,
         }
@@ -412,6 +421,113 @@ impl SimpleContigClassifier {
             }
         }
 
+        // FIX 2: Merge bins with identical coverage (fixes 1 strain → 10 species bug)
+        let merged_classifications = self.merge_bins_by_coverage(classifications, &contig_refs)?;
+
+        Ok(merged_classifications)
+    }
+
+    /// FIX 2: Merge bins that have identical/similar coverage profiles
+    /// Prevents over-splitting of single strains into multiple species
+    fn merge_bins_by_coverage(
+        &self,
+        mut classifications: Vec<ContigClassification>,
+        contigs: &[&Contig],
+    ) -> Result<Vec<ContigClassification>> {
+        if !self.config.use_coverage_features {
+            return Ok(classifications);
+        }
+
+        // Group contigs by bin
+        let num_bins = classifications.iter().map(|c| c.bin_id).max().unwrap_or(0) + 1;
+        let mut bin_coverages: Vec<Vec<f64>> = vec![Vec::new(); num_bins];
+
+        for (idx, classification) in classifications.iter().enumerate() {
+            bin_coverages[classification.bin_id].push(contigs[idx].coverage);
+        }
+
+        // Calculate mean coverage and variance for each bin
+        let mut bin_stats: Vec<(f64, f64)> = Vec::new(); // (mean, variance)
+        for coverages in bin_coverages.iter() {
+            if coverages.is_empty() {
+                bin_stats.push((0.0, 0.0));
+                continue;
+            }
+
+            let mean = coverages.iter().sum::<f64>() / coverages.len() as f64;
+            let variance = coverages.iter()
+                .map(|c| (c - mean).powi(2))
+                .sum::<f64>() / coverages.len() as f64;
+
+            bin_stats.push((mean, variance));
+        }
+
+        // Find bins to merge (similar coverage profiles)
+        let mut merge_map: Vec<usize> = (0..num_bins).collect(); // bin_id -> canonical_bin_id
+
+        for i in 0..num_bins {
+            if bin_coverages[i].is_empty() {
+                continue;
+            }
+
+            for j in (i + 1)..num_bins {
+                if bin_coverages[j].is_empty() {
+                    continue;
+                }
+
+                let (mean_i, var_i) = bin_stats[i];
+                let (mean_j, var_j) = bin_stats[j];
+
+                // Calculate coverage similarity
+                let mean_diff = (mean_i - mean_j).abs() / mean_i.max(mean_j).max(1.0);
+                let var_similarity = (var_i - var_j).abs() / var_i.max(var_j).max(1.0);
+
+                // Merge if coverage profiles are very similar
+                if mean_diff < self.config.coverage_variance_threshold
+                    && var_similarity < self.config.coverage_variance_threshold * 2.0
+                {
+                    tracing::info!(
+                        "Merging bin {} into bin {} (coverage similarity: mean_diff={:.4}, var_diff={:.4})",
+                        j, i, mean_diff, var_similarity
+                    );
+                    merge_map[j] = i;
+                }
+            }
+        }
+
+        // Apply merges
+        let mut merged_count = 0;
+        for classification in classifications.iter_mut() {
+            let original_bin = classification.bin_id;
+            classification.bin_id = merge_map[original_bin];
+            if original_bin != classification.bin_id {
+                merged_count += 1;
+            }
+        }
+
+        // Renumber bins to be contiguous (0, 1, 2, ... instead of 0, 2, 5, ...)
+        let unique_bins: std::collections::BTreeSet<usize> =
+            classifications.iter().map(|c| c.bin_id).collect();
+        let bin_renumber: AHashMap<usize, usize> = unique_bins
+            .iter()
+            .enumerate()
+            .map(|(new_id, &old_id)| (old_id, new_id))
+            .collect();
+
+        for classification in classifications.iter_mut() {
+            classification.bin_id = bin_renumber[&classification.bin_id];
+        }
+
+        let final_bins = unique_bins.len();
+        if merged_count > 0 {
+            tracing::info!(
+                "Coverage-based merging: {} bins → {} bins ({} contigs reassigned)",
+                num_bins,
+                final_bins,
+                merged_count
+            );
+        }
+
         Ok(classifications)
     }
 
@@ -516,9 +632,76 @@ impl SimpleContigClassifier {
     }
 
     /// Simple k-means clustering algorithm
+    /// FIX 1: Estimate optimal number of bins using elbow method
+    /// Prevents over-binning (1 strain → 10 species bug)
+    fn estimate_optimal_bins(&self, features: &[Array1<f64>]) -> usize {
+        let n_samples = features.len();
+        if n_samples <= 2 {
+            return 1;
+        }
+
+        let max_k = self.config.max_bins.min(n_samples / 3).max(2);
+        let mut inertias = Vec::new();
+
+        // Try different k values
+        for k in 2..=max_k {
+            let mut total_inertia = 0.0;
+
+            // Quick k-means run
+            let mut centroids = Vec::new();
+            for i in 0..k {
+                centroids.push(features[i * n_samples / k].clone());
+            }
+
+            // Single iteration assignment
+            let mut assignments = vec![0; n_samples];
+            for (i, feature) in features.iter().enumerate() {
+                let mut min_dist = f64::INFINITY;
+                for (cluster_id, centroid) in centroids.iter().enumerate() {
+                    let dist = Self::euclidean_distance(feature, centroid);
+                    if dist < min_dist {
+                        min_dist = dist;
+                        assignments[i] = cluster_id;
+                    }
+                }
+            }
+
+            // Calculate inertia (within-cluster sum of squares)
+            for (i, feature) in features.iter().enumerate() {
+                let dist = Self::euclidean_distance(feature, &centroids[assignments[i]]);
+                total_inertia += dist * dist;
+            }
+
+            inertias.push(total_inertia);
+        }
+
+        // Find elbow point (maximum rate of decrease)
+        let mut best_k = 2;
+        let mut max_decrease = 0.0;
+        for i in 1..inertias.len() {
+            let decrease = inertias[i - 1] - inertias[i];
+            if decrease > max_decrease {
+                max_decrease = decrease;
+                best_k = i + 2; // +2 because we start at k=2
+            }
+        }
+
+        tracing::info!("Auto-detected optimal bins: {} (tested k=2 to k={})", best_k, max_k);
+        best_k
+    }
+
     fn cluster_contigs(&self, features: &[Array1<f64>]) -> Result<Vec<usize>> {
         let n_samples = features.len();
-        let k = self.config.num_bins.min(n_samples);
+
+        // FIX: Use adaptive bin count if enabled
+        let k = if self.config.auto_detect_bins {
+            self.estimate_optimal_bins(features).min(n_samples)
+        } else {
+            self.config.num_bins.min(n_samples)
+        };
+
+        tracing::info!("Clustering {} contigs into {} bins (auto_detect={})",
+                      n_samples, k, self.config.auto_detect_bins);
 
         if n_samples == 0 {
             return Ok(Vec::new());

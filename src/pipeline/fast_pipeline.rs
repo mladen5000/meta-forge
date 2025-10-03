@@ -365,11 +365,14 @@ impl FastPipeline {
         // Step 1: Use k-mer binning for initial clustering
         use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
 
-        eprintln!("   {} Initializing k-mer clustering (k=4)...", "⚙️".bright_blue());
+        eprintln!("   {} Initializing k-mer clustering (k=4) with adaptive binning...", "⚙️".bright_blue());
         let classifier_config = SimpleClassifierConfig {
             kmer_size: 4,
             min_contig_length: 500, // CRITICAL FIX: Match this with contig filtering
-            num_bins: 10,
+            num_bins: 10,  // Ignored when auto_detect_bins = true
+            auto_detect_bins: true,  // FIX: Enable adaptive binning
+            max_bins: 50,            // FIX: Prevent over-binning
+            coverage_variance_threshold: 0.05,  // FIX: 5% coverage similarity threshold
             use_coverage_features: true,
             normalization: crate::ml::simple_classifier::NormalizationMethod::ZScore,
         };

@@ -1,13 +1,13 @@
 //! Assembly modules for laptop-optimized processing
 //!
-//! **Production Code**: `laptop_assembly.rs` - Optimized assembler with all features integrated
-//! **Experimental**: `optimized/` - Alternative implementations for benchmarking
+//! **Production Code**: `laptop_assembly.rs` - Complete assembler with all optimizations
+//! **Experimental**: `optimized/` - Research data structures for benchmarking
 
 // Production assembler
 pub mod laptop_assembly;
-pub mod adaptive_k; // Adaptive k-mer selection
+pub mod adaptive_k;
 
-// Experimental optimized architecture (for benchmarking only)
+// Experimental data structures (not used in production pipeline)
 pub mod optimized;
 
 // Re-export production components
@@ -18,6 +18,3 @@ pub use laptop_assembly::{
     CompactKmer,
     RollingKmerHash,
 };
-
-// Re-export experimental components (OptimizedAssembler disabled - needs refactoring)
-// pub use optimized::OptimizedAssembler;
