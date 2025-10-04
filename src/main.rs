@@ -8,9 +8,14 @@ use meta_forge::utils::progress_display::MultiProgress;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging only if not already set
+    // Initialize env_logger for log crate (used by QC modules)
+    let log_level = if cli.verbose { "debug" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
+        .format_timestamp_millis()
+        .init();
+
+    // Initialize tracing for other modules (if not already set)
     if !tracing::dispatcher::has_been_set() {
-        let log_level = if cli.verbose { "debug" } else { "info" };
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
             .init();

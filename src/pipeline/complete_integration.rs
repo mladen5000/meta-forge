@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
 use crate::utils::kraken_reporter::{KrakenClassification, KrakenReporter};
@@ -1546,7 +1546,9 @@ impl MetagenomicsPipeline {
     async fn process_fastq_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
         use bio::io::fastq;
         use crate::qc::{QCPipeline, QCPipelineConfig};
+        use colored::Colorize;
 
+        info!("{}", "📖 Reading FASTQ file...".bright_cyan());
         let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
 
         // Create QC pipeline
@@ -1577,19 +1579,69 @@ impl MetagenomicsPipeline {
 
             raw_reads.push(read);
 
-            if read_id % 10000 == 0 && read_id > 0 {
-                info!("  Read {} reads", read_id);
+            if read_id % 50000 == 0 && read_id > 0 {
+                info!("  {} {}", "📊 Loaded".bright_blue(), format!("{} reads", read_id).white());
             }
         }
 
+        info!("{} {}", "✅ Loaded".bright_green(), format!("{} total reads", raw_reads.len()).white().bold());
+
         // Second pass: QC filtering and trimming
-        info!("  Applying quality control...");
+        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+
+        // Debug: Check first few reads
+        if let Some(first_read) = raw_reads.first() {
+            let avg_qual = first_read.quality_scores.iter().map(|&q| q as f64).sum::<f64>() / first_read.quality_scores.len() as f64;
+            debug!("  First read: len={}, avg_qual_raw={:.1}", first_read.original.len(), avg_qual);
+        }
+
         let corrected_reads = qc_pipeline.process_reads(&raw_reads);
 
         // Get and display QC stats
         let qc_stats = qc_pipeline.stats();
-        let report = qc_stats.generate_report();
-        report.print_summary();
+
+        // Print detailed QC statistics with colors
+        println!("\n{}", "═══════════════════════════════════════════".bright_cyan());
+        println!("{}", "   QUALITY CONTROL STATISTICS".bright_cyan().bold());
+        println!("{}", "═══════════════════════════════════════════".bright_cyan());
+
+        let pass_rate = if qc_stats.reads_input > 0 {
+            (qc_stats.reads_passed as f64 / qc_stats.reads_input as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        println!("\n{}", "📊 Input/Output Summary:".bright_blue().bold());
+        println!("  {} {}", "Input reads:".white(), format!("{:>10}", qc_stats.reads_input).yellow());
+        println!("  {} {}", "Passed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate).bright_green().bold());
+        println!("  {} {}", "Failed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red());
+
+        if qc_stats.reads_failed > 0 {
+            println!("\n{}", "❌ Failure Reasons:".bright_red().bold());
+            println!("  {} {:>10}", "Quality:".white(), qc_stats.reads_failed_quality.to_string().red());
+            println!("  {} {:>10}", "Length: ".white(), qc_stats.reads_failed_length.to_string().red());
+        }
+
+        if qc_stats.adapters_detected > 0 {
+            println!("\n{}", "✂️  Adapter Trimming:".bright_magenta().bold());
+            println!("  {} {:>10}", "Adapters detected:".white(), qc_stats.adapters_detected.to_string().magenta());
+            println!("  {} {:>10}", "Bases removed:   ".white(), qc_stats.bases_trimmed_adapter.to_string().magenta());
+        }
+
+        println!("\n{}", "📏 Length Statistics:".bright_blue().bold());
+        println!("  {} {:>10.1} bp", "Before:".white(), qc_stats.mean_length_before);
+        println!("  {} {:>10.1} bp", "After: ".white(), qc_stats.mean_length_after);
+
+        println!("\n{}", "⭐ Quality Metrics:".bright_blue().bold());
+        println!("  {} Q{:.1}  →  Q{:.1}", "Average:".white(), qc_stats.mean_quality_before, qc_stats.mean_quality_after);
+        println!("  {} {:.1}%  →  {:.1}%", "Q20:    ".white(), qc_stats.q20_percentage_before, qc_stats.q20_percentage_after);
+        println!("  {} {:.1}%  →  {:.1}%", "Q30:    ".white(), qc_stats.q30_percentage_before, qc_stats.q30_percentage_after);
+
+        println!("\n{}", "═══════════════════════════════════════════\n".bright_cyan());
+
+        if qc_stats.reads_passed == 0 && qc_stats.reads_input > 0 {
+            warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
+        }
 
         Ok(corrected_reads)
     }
@@ -2240,42 +2292,116 @@ impl MetagenomicsPipeline {
         line_id: usize,
     ) -> Result<Vec<CorrectedRead>> {
         use bio::io::fastq;
+        use crate::qc::{QCPipeline, QCPipelineConfig};
+        use colored::Colorize;
 
+        info!("{}", "📖 Reading FASTQ file...".bright_cyan());
         let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
-        let mut corrected_reads = Vec::new();
+
+        // Create QC pipeline
+        let qc_config = QCPipelineConfig::default();
+        let mut qc_pipeline = QCPipeline::new(qc_config);
+
+        let mut raw_reads = Vec::new();
         let mut pb = ProgressBar::new(0, "Reading sequences"); // Start as indeterminate
 
+        // First pass: read all sequences
         for (read_id, record_result) in reader.records().enumerate() {
             let record = record_result?;
             let sequence = std::str::from_utf8(record.seq())?;
             let quality_scores = record.qual().to_vec();
 
-            let corrected_read = CorrectedRead {
+            let read = CorrectedRead {
                 id: read_id,
                 original: sequence.to_string(),
                 corrected: sequence.to_string(),
                 corrections: Vec::new(),
                 quality_scores,
                 correction_metadata: CorrectionMetadata {
-                    algorithm: "none".to_string(),
+                    algorithm: "qc".to_string(),
                     confidence_threshold: 0.0,
                     context_window: 0,
                     correction_time_ms: 0,
                 },
             };
 
-            corrected_reads.push(corrected_read);
+            raw_reads.push(read);
 
             if read_id % 1000 == 0 {
                 pb.update(read_id as u64);
                 multi_progress.update_line(
                     line_id,
-                    format!("📋 Preprocessing: {read_id} reads processed"),
+                    format!("📋 Preprocessing: {} reads loaded", read_id),
                 );
             }
         }
 
         pb.finish();
+        multi_progress.update_line(
+            line_id,
+            format!("📋 Preprocessing: ✅ Loaded {} reads", raw_reads.len()),
+        );
+
+        // Second pass: QC filtering and trimming
+        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+        multi_progress.update_line(
+            line_id,
+            "📋 Preprocessing: 🔬 Applying QC filters...".to_string(),
+        );
+
+        let corrected_reads = qc_pipeline.process_reads(&raw_reads);
+
+        // Get and display QC stats
+        let qc_stats = qc_pipeline.stats();
+
+        // Print detailed QC statistics with colors
+        println!("\n{}", "═══════════════════════════════════════════".bright_cyan());
+        println!("{}", "   QUALITY CONTROL STATISTICS".bright_cyan().bold());
+        println!("{}", "═══════════════════════════════════════════".bright_cyan());
+
+        let pass_rate = if qc_stats.reads_input > 0 {
+            (qc_stats.reads_passed as f64 / qc_stats.reads_input as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        println!("\n{}", "📊 Input/Output Summary:".bright_blue().bold());
+        println!("  {} {}", "Input reads:".white(), format!("{:>10}", qc_stats.reads_input).yellow());
+        println!("  {} {}", "Passed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate).bright_green().bold());
+        println!("  {} {}", "Failed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red());
+
+        if qc_stats.reads_failed > 0 {
+            println!("\n{}", "❌ Failure Reasons:".bright_red().bold());
+            println!("  {} {:>10}", "Quality:".white(), qc_stats.reads_failed_quality.to_string().red());
+            println!("  {} {:>10}", "Length: ".white(), qc_stats.reads_failed_length.to_string().red());
+        }
+
+        if qc_stats.adapters_detected > 0 {
+            println!("\n{}", "✂️  Adapter Trimming:".bright_magenta().bold());
+            println!("  {} {:>10}", "Adapters detected:".white(), qc_stats.adapters_detected.to_string().magenta());
+            println!("  {} {:>10}", "Bases removed:   ".white(), qc_stats.bases_trimmed_adapter.to_string().magenta());
+        }
+
+        println!("\n{}", "📏 Length Statistics:".bright_blue().bold());
+        println!("  {} {:>10.1} bp", "Before:".white(), qc_stats.mean_length_before);
+        println!("  {} {:>10.1} bp", "After: ".white(), qc_stats.mean_length_after);
+
+        println!("\n{}", "⭐ Quality Metrics:".bright_blue().bold());
+        println!("  {} Q{:.1}  →  Q{:.1}", "Average:".white(), qc_stats.mean_quality_before, qc_stats.mean_quality_after);
+        println!("  {} {:.1}%  →  {:.1}%", "Q20:    ".white(), qc_stats.q20_percentage_before, qc_stats.q20_percentage_after);
+        println!("  {} {:.1}%  →  {:.1}%", "Q30:    ".white(), qc_stats.q30_percentage_before, qc_stats.q30_percentage_after);
+
+        println!("\n{}", "═══════════════════════════════════════════\n".bright_cyan());
+
+        if qc_stats.reads_passed == 0 && qc_stats.reads_input > 0 {
+            warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
+        }
+
+        multi_progress.update_line(
+            line_id,
+            format!("📋 Preprocessing: ✅ QC Complete ({}/{} passed)", corrected_reads.len(), raw_reads.len()),
+        );
+
         Ok(corrected_reads)
     }
 

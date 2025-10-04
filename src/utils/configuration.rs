@@ -591,8 +591,10 @@ impl ConfigurationManager {
                 }
             }
             _ => {
-                // "pretty" or default
-                let layer = fmt::layer().pretty();
+                // "pretty" or default - without timestamps for cleaner console output
+                let layer = fmt::layer()
+                    .without_time()  // Remove timestamp
+                    .with_target(false);  // Remove target path for cleaner output
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),
@@ -870,8 +872,6 @@ impl ResourceMonitor {
         if !self.config.enabled {
             return Ok(());
         }
-
-        info!("🔍 Starting resource monitoring...");
 
         // This would start a background thread for monitoring
         // For now, just log the baseline values

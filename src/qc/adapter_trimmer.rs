@@ -63,20 +63,30 @@ impl AdapterTrimmer {
     }
 
     /// Detect adapter in sequence and return trim position
+    /// Optimized: Only search the last 50bp of the read where adapters typically occur
     pub fn detect_adapter(&self, sequence: &str) -> Option<AdapterMatch> {
         let seq_bytes = sequence.as_bytes();
+
+        // Optimization 1: Only search last 50bp where adapters typically are
+        let search_start = seq_bytes.len().saturating_sub(50);
 
         for adapter in &self.config.adapters {
             let adapter_bytes = adapter.as_bytes();
 
-            // Try all possible overlaps
-            for overlap in
-                (self.config.min_overlap..=adapter_bytes.len().min(seq_bytes.len())).rev()
-            {
-                // Check if adapter starts at various positions in read
-                for read_pos in 0..=seq_bytes.len().saturating_sub(overlap) {
+            // Optimization 2: Use Boyer-Moore-like approach - check largest overlaps first
+            // and only in the region where adapters appear (3' end)
+            for overlap in (self.config.min_overlap..=adapter_bytes.len().min(seq_bytes.len())).rev() {
+                // Only search in the likely adapter region (last 50bp)
+                let search_end = seq_bytes.len().saturating_sub(overlap) + 1;
+
+                for read_pos in search_start..search_end {
                     let read_segment = &seq_bytes[read_pos..read_pos + overlap];
                     let adapter_segment = &adapter_bytes[0..overlap];
+
+                    // Quick check: if first byte doesn't match and error rate is 0, skip
+                    if self.config.max_error_rate == 0.0 && read_segment[0] != adapter_segment[0] {
+                        continue;
+                    }
 
                     let mismatches = Self::count_mismatches(read_segment, adapter_segment);
                     let error_rate = mismatches as f64 / overlap as f64;

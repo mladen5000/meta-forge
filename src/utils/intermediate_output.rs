@@ -101,7 +101,7 @@ impl IntermediateOutputManager {
     /// Create a new intermediate output manager with timestamp-based run directory
     pub fn new(base_output_dir: PathBuf, config: OutputConfig) -> Result<Self> {
         let now = Utc::now();
-        let run_id = now.format("%d%m%y_%H%M%S").to_string();
+        let run_id = now.format("%Y%m%d_%H%M%S").to_string();
         let run_dir = base_output_dir.join(format!("run_{run_id}"));
 
         // Create base directories

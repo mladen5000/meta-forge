@@ -45,7 +45,7 @@ impl Default for QualityFilterConfig {
 
 /// Quality filter for reads
 pub struct QualityFilter {
-    config: QualityFilterConfig,
+    pub config: QualityFilterConfig,
 }
 
 impl QualityFilter {

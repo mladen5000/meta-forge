@@ -3,9 +3,10 @@
 //! Combines quality filtering, adapter trimming, and statistics
 
 use super::qc_stats::FailureReason;
-use super::{AdapterConfig, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig};
+use super::{AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig};
 use crate::core::data_structures::CorrectedRead;
 use anyhow::Result;
+use log::{debug, info, warn};
 
 /// Complete QC pipeline configuration
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ pub struct QCPipeline {
     adapter_trimmer: AdapterTrimmer,
     config: QCPipelineConfig,
     stats: QCStats,
+    reads_processed: usize,
 }
 
 impl QCPipeline {
@@ -53,11 +55,14 @@ impl QCPipeline {
             adapter_trimmer: AdapterTrimmer::new(config.adapter_config.clone()),
             config,
             stats: QCStats::new(),
+            reads_processed: 0,
         }
     }
 
     /// Process a single read through the QC pipeline
     pub fn process_read(&mut self, read: &CorrectedRead) -> Option<CorrectedRead> {
+        self.reads_processed += 1;
+
         let mut sequence = read.corrected.clone();
         let mut quality = read.quality_scores.clone();
         let original_length = sequence.len();
@@ -65,7 +70,16 @@ impl QCPipeline {
         // Record input
         self.stats.record_input(sequence.len(), &quality);
 
+        // Debug first few reads
+        if read.id < 3 && self.config.verbose {
+            let avg_qual_raw = quality.iter().map(|&q| q as f64).sum::<f64>() / quality.len() as f64;
+            let avg_qual_phred = quality.iter().map(|&q| (q.saturating_sub(33)) as f64).sum::<f64>() / quality.len() as f64;
+            debug!("Read {}: len={}, avg_qual_raw={:.1}, avg_qual_phred={:.1}",
+                   read.id, sequence.len(), avg_qual_raw, avg_qual_phred);
+        }
+
         // Step 1: Adapter trimming (if enabled)
+        let mut adapter_info: Option<(usize, AdapterMatch)> = None;
         if self.config.enable_adapter_trimming {
             let (trimmed_seq, trimmed_qual, adapter_match) = self
                 .adapter_trimmer
@@ -76,11 +90,17 @@ impl QCPipeline {
                 self.stats
                     .record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
 
+                // Store adapter info for debug output
+                adapter_info = Some((bases_trimmed, adapter.clone()));
+
                 if self.config.verbose {
-                    eprintln!(
-                        "  Adapter trimmed from read {}: {} bp ({:.1}% error)",
+                    debug!(
+                        "Adapter trimmed from read {}: {} bp (adapter '{}' at pos {}, length {}, {:.1}% error)",
                         read.id,
                         bases_trimmed,
+                        &adapter.adapter[..adapter.adapter.len().min(10)],
+                        adapter.position,
+                        adapter.length,
                         adapter.error_rate * 100.0
                     );
                 }
@@ -91,6 +111,7 @@ impl QCPipeline {
         }
 
         // Step 2: Quality filtering and trimming (if enabled)
+        let mut quality_trimmed_bases = 0;
         if self.config.enable_quality_filter {
             // First check average quality
             if !self.quality_filter.passes_quality_threshold(&quality) {
@@ -100,33 +121,53 @@ impl QCPipeline {
 
             // Then trim low-quality ends
             if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
-                let bases_trimmed = (sequence.len() - (end - start));
-                self.stats.record_quality_trimming(bases_trimmed);
+                quality_trimmed_bases = (sequence.len() - (end - start));
+                self.stats.record_quality_trimming(quality_trimmed_bases);
 
                 sequence = sequence[start..end].to_string();
                 quality = quality[start..end].to_vec();
 
-                if self.config.verbose && bases_trimmed > 0 {
-                    eprintln!(
-                        "  Quality trimmed from read {}: {} bp",
-                        read.id, bases_trimmed
+                if self.config.verbose && quality_trimmed_bases > 0 {
+                    debug!(
+                        "Quality trimmed from read {}: {} bp ({}bp from start, {}bp from end)",
+                        read.id,
+                        quality_trimmed_bases,
+                        start,
+                        sequence.len() + quality_trimmed_bases - end
                     );
                 }
             } else {
                 // Entire read is low quality
                 self.stats.record_failed(FailureReason::Quality);
+
+                // Debug output every 1000 reads
+                if self.reads_processed % 1000 == 0 {
+                    self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), None, "FAILED_QUALITY");
+                }
+
                 return None;
             }
 
             // Final length check
             if !self.quality_filter.passes_length_threshold(sequence.len()) {
                 self.stats.record_failed(FailureReason::Length);
+
+                // Debug output every 1000 reads
+                if self.reads_processed % 1000 == 0 {
+                    self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), Some(sequence.len()), "FAILED_FINAL_LENGTH");
+                }
+
                 return None;
             }
         }
 
         // Record passed read
         self.stats.record_passed(sequence.len(), &quality);
+
+        // Debug output every 1000 reads for successful reads
+        if self.reads_processed % 1000 == 0 {
+            self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), Some(sequence.len()), "PASSED");
+        }
 
         // Create processed read
         Some(CorrectedRead {
@@ -141,10 +182,25 @@ impl QCPipeline {
 
     /// Process multiple reads
     pub fn process_reads(&mut self, reads: &[CorrectedRead]) -> Vec<CorrectedRead> {
-        reads
+        if self.config.verbose {
+            info!("QC Config: min_quality=Q{}, min_avg=Q{:.1}, min_length={}bp",
+                  self.quality_filter.config.min_quality,
+                  self.quality_filter.config.min_avg_quality,
+                  self.quality_filter.config.min_length);
+        }
+
+        let result: Vec<CorrectedRead> = reads
             .iter()
             .filter_map(|read| self.process_read(read))
-            .collect()
+            .collect();
+
+        if self.config.verbose {
+            info!("QC Complete: {}/{} reads passed ({:.1}%)",
+                  result.len(), reads.len(),
+                  (result.len() as f64 / reads.len() as f64) * 100.0);
+        }
+
+        result
     }
 
     /// Get QC statistics
@@ -156,6 +212,117 @@ impl QCPipeline {
     /// Get mutable reference to stats (for updates)
     pub fn stats_mut(&mut self) -> &mut QCStats {
         &mut self.stats
+    }
+
+    /// Print comprehensive debug statistics for a read
+    fn print_debug_stats(
+        &self,
+        read: &CorrectedRead,
+        original_length: usize,
+        quality_trimmed: usize,
+        adapter_info: Option<(usize, &AdapterMatch)>,
+        final_length: Option<usize>,
+        status: &str,
+    ) {
+        let avg_quality = if !read.quality_scores.is_empty() {
+            read.quality_scores.iter().map(|&q| (q - 33) as f64).sum::<f64>() / read.quality_scores.len() as f64
+        } else {
+            0.0
+        };
+
+        let min_quality = read.quality_scores.iter().map(|&q| q - 33).min().unwrap_or(0);
+        let max_quality = read.quality_scores.iter().map(|&q| q - 33).max().unwrap_or(0);
+
+        eprintln!("\n╔══════════════════════════════════════════════════════════════════════");
+        eprintln!("║ 📊 DEBUG READ STATS #{}", self.reads_processed);
+        eprintln!("╠══════════════════════════════════════════════════════════════════════");
+        eprintln!("║ Read ID:           {}", read.id);
+        eprintln!("║ Status:            {}", status);
+        eprintln!("║ ");
+        eprintln!("║ LENGTH METRICS:");
+        eprintln!("║   Original length:     {} bp", original_length);
+
+        if let Some((adapter_trimmed, adapter)) = adapter_info {
+            eprintln!("║   After adapter trim:  {} bp (trimmed {} bp)", original_length - adapter_trimmed, adapter_trimmed);
+            eprintln!("║     ↳ Adapter:         {} at position {}", &adapter.adapter[..adapter.adapter.len().min(15)], adapter.position);
+            eprintln!("║     ↳ Adapter length:  {} bp (matched with {:.1}% error)", adapter.length, adapter.error_rate * 100.0);
+            eprintln!("║     ↳ Mismatches:      {}", adapter.mismatches);
+        }
+
+        if quality_trimmed > 0 {
+            eprintln!("║   Quality trimmed:     {} bp", quality_trimmed);
+        }
+
+        if let Some(final_len) = final_length {
+            eprintln!("║   Final length:        {} bp", final_len);
+            let total_removed = original_length - final_len;
+            let removal_pct = (total_removed as f64 / original_length as f64) * 100.0;
+            eprintln!("║   Total removed:       {} bp ({:.1}%)", total_removed, removal_pct);
+        }
+
+        eprintln!("║ ");
+        eprintln!("║ QUALITY METRICS:");
+        eprintln!("║   Average quality:     Q{:.1}", avg_quality);
+        eprintln!("║   Min quality:         Q{}", min_quality);
+        eprintln!("║   Max quality:         Q{}", max_quality);
+        eprintln!("║   Quality range:       Q{}-Q{}", min_quality, max_quality);
+
+        // GC content
+        let gc_count = read.corrected.chars().filter(|&c| c == 'G' || c == 'C').count();
+        let gc_content = if !read.corrected.is_empty() {
+            (gc_count as f64 / read.corrected.len() as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        eprintln!("║ ");
+        eprintln!("║ SEQUENCE METRICS:");
+        eprintln!("║   GC content:          {:.1}%", gc_content);
+        eprintln!("║   Corrections made:    {}", read.corrections.len());
+
+        // N bases
+        let n_count = read.corrected.chars().filter(|&c| c == 'N').count();
+        if n_count > 0 {
+            eprintln!("║   N bases:             {} ({:.1}%)", n_count, (n_count as f64 / read.corrected.len() as f64) * 100.0);
+        }
+
+        // Base composition
+        let a_count = read.corrected.chars().filter(|&c| c == 'A').count();
+        let t_count = read.corrected.chars().filter(|&c| c == 'T').count();
+        let g_count = read.corrected.chars().filter(|&c| c == 'G').count();
+        let c_count = read.corrected.chars().filter(|&c| c == 'C').count();
+        eprintln!("║   Base composition:    A={}, T={}, G={}, C={}, N={}",
+                  a_count, t_count, g_count, c_count, n_count);
+
+        // First/Last 20bp preview
+        let preview_len = 20.min(read.corrected.len());
+        if preview_len > 0 {
+            eprintln!("║ ");
+            eprintln!("║ SEQUENCE PREVIEW:");
+            eprintln!("║   First {}bp:         {}", preview_len, &read.corrected[..preview_len]);
+            if read.corrected.len() > preview_len {
+                let start = read.corrected.len() - preview_len;
+                eprintln!("║   Last {}bp:          {}", preview_len, &read.corrected[start..]);
+            }
+
+            // Quality preview
+            let qual_preview: Vec<String> = read.quality_scores[..preview_len]
+                .iter()
+                .map(|&q| format!("Q{}", q - 33))
+                .collect();
+            eprintln!("║   First {}bp qual:    {}", preview_len, qual_preview.join(" "));
+
+            if read.quality_scores.len() > preview_len {
+                let start = read.quality_scores.len() - preview_len;
+                let qual_preview_end: Vec<String> = read.quality_scores[start..]
+                    .iter()
+                    .map(|&q| format!("Q{}", q - 33))
+                    .collect();
+                eprintln!("║   Last {}bp qual:     {}", preview_len, qual_preview_end.join(" "));
+            }
+        }
+
+        eprintln!("╚══════════════════════════════════════════════════════════════════════\n");
     }
 }
 
