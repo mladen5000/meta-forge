@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -263,7 +263,7 @@ impl SemiBinExecutor {
                     debug!("🔍 {}", trimmed);
 
                     // Try to parse progress
-                    if let Some(progress) = Self::parse_progress(&trimmed) {
+                    if let Some(progress) = Self::parse_progress(trimmed) {
                         if let Some(ref reporter) = reporter {
                             if let Ok(r) = reporter.lock() {
                                 r.log_feature_extraction_progress(progress.0, progress.1);

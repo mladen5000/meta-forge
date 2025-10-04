@@ -98,8 +98,10 @@ impl From<QCPreset> for QCPipelineConfig {
         Self {
             enable_quality_filter: enabled,
             enable_adapter_trimming: enabled,
+            enable_genomic_validation: enabled,
             quality_config: preset.into(),
             adapter_config: preset.into(),
+            validation_thresholds: None,
             verbose: false,
         }
     }

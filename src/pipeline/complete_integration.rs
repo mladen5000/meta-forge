@@ -9,6 +9,7 @@ use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig,
 use crate::utils::kraken_reporter::{KrakenClassification, KrakenReporter};
 use crate::utils::output_writers;
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
+use crate::utils::performance_analyzer::{PerformanceProfiler, AnalysisConfig as PerfAnalysisConfig};
 use tracing::warn;
 
 // use crate::assembly::adaptive_k::AssemblyGraphBuilder; // Now using AdvancedAssemblyGraphBuilder
@@ -285,6 +286,7 @@ pub struct MetagenomicsPipeline {
     database: Option<MetagenomicsDatabase>,
     resource_monitor: ResourceMonitor,
     output_manager: IntermediateOutputManager,
+    performance_profiler: PerformanceProfiler,
 }
 
 impl MetagenomicsPipeline {
@@ -324,7 +326,7 @@ impl MetagenomicsPipeline {
             ConfigurationManager::new()?
         };
 
-        let mut config = config_manager.config().clone();
+        let config = config_manager.config().clone();
 
         // Apply auto-detection or CLI overrides
         if auto_detect || memory_mb.is_some() || threads.is_some() {
@@ -382,12 +384,24 @@ impl MetagenomicsPipeline {
         let output_manager =
             IntermediateOutputManager::new(config.general.output_dir.clone(), output_config)?;
 
+        // Initialize performance profiler with custom configuration
+        let perf_config = PerfAnalysisConfig {
+            sampling_interval_ms: config.performance.monitoring.sample_interval_ms,
+            max_samples: 10000,
+            memory_warning_threshold_mb: (config.performance.memory_limit_gb * 1024) * 80 / 100, // 80% of limit
+            cpu_warning_threshold_percent: 85.0,
+            io_wait_threshold_ms: 100,
+            enable_detailed_tracing: false, // Could add to config later
+        };
+        let performance_profiler = PerformanceProfiler::new(perf_config);
+
         Ok(Self {
             config,
             config_manager,
             database,
             resource_monitor,
             output_manager,
+            performance_profiler,
         })
     }
 
@@ -411,9 +425,18 @@ impl MetagenomicsPipeline {
         // Start resource monitoring
         self.resource_monitor.start_monitoring()?;
 
+        // Start performance profiling
+        self.performance_profiler.start_monitoring()?;
+
         // Phase 1: Data preprocessing and error correction
         info!("📋 Phase 1: Data preprocessing and error correction");
+        let preprocess_start = Instant::now();
         let corrected_reads = self.preprocess_inputs(inputs).await?;
+        let preprocess_duration = preprocess_start.elapsed();
+        info!("✅ Preprocessing completed in {:.2}s", preprocess_duration.as_secs_f64());
+
+        // Collect metrics after preprocessing
+        self.performance_profiler.collect_system_metrics("preprocessing")?;
 
         // Save preprocessing intermediate results
         self.output_manager.save_intermediate(
@@ -456,7 +479,13 @@ impl MetagenomicsPipeline {
 
         // Phase 2: Assembly with adaptive k-mer selection
         info!("🧬 Phase 2: Adaptive assembly");
+        let assembly_start = Instant::now();
         let assembly_results = self.run_assembly(&corrected_reads).await?;
+        let assembly_duration = assembly_start.elapsed();
+        info!("✅ Assembly completed in {:.2}s", assembly_duration.as_secs_f64());
+
+        // Collect metrics after assembly
+        self.performance_profiler.collect_system_metrics("assembly")?;
 
         // Save assembly intermediate results
         self.output_manager.save_intermediate(
@@ -584,9 +613,15 @@ impl MetagenomicsPipeline {
 
         // Phase 4: Taxonomic classification
         info!("🏷️  Phase 4: Taxonomic classification");
+        let classification_start = Instant::now();
         let classifications = self
             .classify_sequences(&assembly_results, &features)
             .await?;
+        let classification_duration = classification_start.elapsed();
+        info!("✅ Classification completed in {:.2}s", classification_duration.as_secs_f64());
+
+        // Collect metrics after classification
+        self.performance_profiler.collect_system_metrics("classification")?;
 
         // Save classification intermediate results
         self.output_manager.save_intermediate(
@@ -830,6 +865,33 @@ impl MetagenomicsPipeline {
             "✅ Analysis completed in {:.2} seconds",
             total_time.as_secs_f64()
         );
+
+        // Generate performance analysis report
+        info!("📊 Generating performance analysis report...");
+        let bottlenecks = self.performance_profiler.analyze_bottlenecks()?;
+        let optimization_report = self.performance_profiler.generate_optimization_report()?;
+
+        // Save performance report
+        let perf_report_path = self.config.general.output_dir.join("performance_analysis.json");
+        std::fs::write(
+            &perf_report_path,
+            serde_json::to_string_pretty(&optimization_report)?
+        )?;
+        info!("   📄 performance_analysis.json - Performance bottleneck analysis");
+
+        // Print key performance insights
+        if !bottlenecks.is_empty() {
+            info!("⚡ Performance Insights:");
+            for (i, bottleneck) in bottlenecks.iter().take(3).enumerate() {
+                info!(
+                    "   {}. {:?} bottleneck (impact: {:.1}%) - {}",
+                    i + 1,
+                    bottleneck.bottleneck_type,
+                    bottleneck.impact_score,
+                    bottleneck.description
+                );
+            }
+        }
 
         Ok(AnalysisResults {
             sample_name: sample_name.to_string(),
@@ -1881,7 +1943,7 @@ impl MetagenomicsPipeline {
                     if let Some(&first_idx) = outlier_bin.first() {
                         let bin_coverage = contigs[first_idx].coverage;
                         let ratio = contig.coverage / bin_coverage;
-                        if ratio >= 0.7 && ratio <= 1.3 {
+                        if (0.7..=1.3).contains(&ratio) {
                             outlier_bin.push(idx);
                             placed = true;
                             break;

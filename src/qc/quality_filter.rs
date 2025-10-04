@@ -6,7 +6,6 @@
 //! - Average quality thresholds
 //! - Length-based filtering
 
-use anyhow::Result;
 
 /// Quality filtering configuration
 #[derive(Debug, Clone)]

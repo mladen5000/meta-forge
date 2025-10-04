@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use ahash::{AHashMap, AHashSet};
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -111,7 +111,7 @@ impl LaptopConfig {
         if cpu_cores == 0 {
             return Err(anyhow!("CPU cores must be at least 1"));
         }
-        if max_k < 15 || max_k > 127 {
+        if !(15..=127).contains(&max_k) {
             return Err(anyhow!("Max k-mer size must be between 15 and 127"));
         }
 
@@ -578,7 +578,7 @@ impl LaptopAssemblyGraph {
                 "🚀".bright_green(), self.config.cpu_cores);
 
         // Use bounded k-mer counter to prevent memory explosion
-        let mut kmer_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / 4);
+        let kmer_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / 4);
 
         // Phase 1: Count k-mers to identify frequent ones (with AGGRESSIVE parallel processing)
         // IDIOM FIX: Use RwLock instead of Mutex for read-heavy parallel access (3-5x speedup)
@@ -660,7 +660,7 @@ impl LaptopAssemblyGraph {
         pb_kmer.finish_with_message("K-mer counting complete");
 
         // IDIOM FIX: Replace unwrap() with proper error handling
-        let mut kmer_counter = Arc::try_unwrap(counter_rwlock)
+        let kmer_counter = Arc::try_unwrap(counter_rwlock)
             .map_err(|_| anyhow!("Failed to unwrap Arc - still has references"))?
             .into_inner()
             .map_err(|e| anyhow!("RwLock poisoned: {:?}", e))?;
@@ -1228,7 +1228,7 @@ impl LaptopAssemblyGraph {
         // DO NOT create single k-mer contigs - biologically meaningless
         if self.edges.is_empty() && !self.nodes.is_empty() {
             pb.println(format!("   {} No edges found in graph - severe fragmentation detected", "⚠️".bright_red()));
-            pb.println("      This indicates k-mer size is too large for read length/overlap".to_string());
+            pb.println("      This indicates k-mer size is too large for read length/overlap");
             pb.println(format!("      {}: Use smaller k-mer size (try k=15-21)", "Recommendation".bright_yellow()));
             pb.finish_and_clear();
             return Ok(Vec::new());

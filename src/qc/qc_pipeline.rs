@@ -5,8 +5,8 @@
 use super::qc_stats::FailureReason;
 use super::{AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig};
 use crate::core::data_structures::CorrectedRead;
-use anyhow::Result;
-use log::{debug, info, warn};
+use crate::utils::genomic_validator::{GenomicDataValidator, ValidationThresholds};
+use log::{debug, info};
 
 /// Complete QC pipeline configuration
 #[derive(Debug, Clone)]
@@ -17,11 +17,17 @@ pub struct QCPipelineConfig {
     /// Enable adapter trimming
     pub enable_adapter_trimming: bool,
 
+    /// Enable genomic validation
+    pub enable_genomic_validation: bool,
+
     /// Quality filter configuration
     pub quality_config: QualityFilterConfig,
 
     /// Adapter trimmer configuration
     pub adapter_config: AdapterConfig,
+
+    /// Genomic validation thresholds
+    pub validation_thresholds: Option<ValidationThresholds>,
 
     /// Verbose output
     pub verbose: bool,
@@ -32,8 +38,10 @@ impl Default for QCPipelineConfig {
         Self {
             enable_quality_filter: true,
             enable_adapter_trimming: true,
+            enable_genomic_validation: false, // Disabled by default - enable when needed
             quality_config: QualityFilterConfig::default(),
             adapter_config: AdapterConfig::default(),
+            validation_thresholds: None, // Uses defaults if None
             verbose: true,
         }
     }
@@ -43,6 +51,7 @@ impl Default for QCPipelineConfig {
 pub struct QCPipeline {
     quality_filter: QualityFilter,
     adapter_trimmer: AdapterTrimmer,
+    genomic_validator: Option<GenomicDataValidator>,
     config: QCPipelineConfig,
     stats: QCStats,
     reads_processed: usize,
@@ -50,9 +59,18 @@ pub struct QCPipeline {
 
 impl QCPipeline {
     pub fn new(config: QCPipelineConfig) -> Self {
+        let genomic_validator = if config.enable_genomic_validation {
+            // Note: GenomicDataValidator uses default thresholds
+            // Custom thresholds support could be added via a with_thresholds() method
+            Some(GenomicDataValidator::new())
+        } else {
+            None
+        };
+
         Self {
             quality_filter: QualityFilter::new(config.quality_config.clone()),
             adapter_trimmer: AdapterTrimmer::new(config.adapter_config.clone()),
+            genomic_validator,
             config,
             stats: QCStats::new(),
             reads_processed: 0,
@@ -69,6 +87,23 @@ impl QCPipeline {
 
         // Record input
         self.stats.record_input(sequence.len(), &quality);
+
+        // Step 0: Genomic validation (if enabled)
+        if let Some(validator) = &mut self.genomic_validator {
+            let validation_result = validator.validate_sequence(&sequence, Some(&quality));
+            if !validation_result.passed {
+                if self.config.verbose {
+                    debug!(
+                        "Read {} failed genomic validation: errors={:?}, warnings={:?}",
+                        read.id,
+                        validation_result.errors,
+                        validation_result.warnings
+                    );
+                }
+                self.stats.record_failed(FailureReason::Quality); // Genomic validation failure
+                return None;
+            }
+        }
 
         // Debug first few reads
         if read.id < 3 && self.config.verbose {
@@ -121,7 +156,7 @@ impl QCPipeline {
 
             // Then trim low-quality ends
             if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
-                quality_trimmed_bases = (sequence.len() - (end - start));
+                quality_trimmed_bases = sequence.len() - (end - start);
                 self.stats.record_quality_trimming(quality_trimmed_bases);
 
                 sequence = sequence[start..end].to_string();

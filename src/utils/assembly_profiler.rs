@@ -7,7 +7,7 @@
 //! - Coverage filtering
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::collections::HashMap;
 
 /// Phase timing information
@@ -136,7 +136,7 @@ impl AssemblyProfiler {
         {
             use std::process::Command;
             if let Ok(output) = Command::new("ps")
-                .args(&["-o", "rss=", "-p", &std::process::id().to_string()])
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
                 .output()
             {
                 if let Ok(rss_str) = String::from_utf8(output.stdout) {

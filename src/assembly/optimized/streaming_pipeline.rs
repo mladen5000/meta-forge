@@ -10,7 +10,6 @@ use crate::assembly::optimized::{
 use crate::assembly::laptop_assembly::CompactKmer;
 use crate::core::data_structures::{CorrectedRead, Contig};
 use anyhow::{anyhow, Result};
-use crossbeam_channel::{bounded, Receiver, Sender};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -507,6 +506,12 @@ impl PipelineStage for KmerExtractionStage {
 pub struct GraphConstructionStage {
     memory_usage: AtomicUsize,
     metrics: StageMetrics,
+}
+
+impl Default for GraphConstructionStage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphConstructionStage {

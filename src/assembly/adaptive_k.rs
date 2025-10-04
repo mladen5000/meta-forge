@@ -175,9 +175,9 @@ impl AdaptiveKSelector {
         };
 
         // Memory constraint check
-        let memory_limited_k = self.apply_memory_constraints(complexity_adjusted_k);
+        
 
-        memory_limited_k
+        self.apply_memory_constraints(complexity_adjusted_k)
     }
 
     /// Apply memory constraints to k-mer selection

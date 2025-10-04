@@ -148,6 +148,12 @@ pub struct SystemMonitor {
     last_update: Mutex<Instant>,
 }
 
+impl Default for SystemMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemMonitor {
     pub fn new() -> Self {
         Self {

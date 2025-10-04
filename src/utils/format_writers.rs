@@ -38,7 +38,7 @@ pub fn write_fastq<P: AsRef<Path>>(
 
         // Quality scores (generate dummy high-quality scores for corrected reads)
         // 'I' = Phred quality 40 (99.99% accuracy)
-        let quality: String = std::iter::repeat('I').take(read.corrected.len()).collect();
+        let quality: String = std::iter::repeat_n('I', read.corrected.len()).collect();
         writeln!(writer, "{}", quality)?;
     }
 
@@ -166,7 +166,7 @@ pub fn write_assembly_stats<P: AsRef<Path>>(
     writeln!(writer)?;
     writeln!(writer, "Contig Length Distribution:")?;
 
-    let mut length_bins = vec![0; 10];
+    let mut length_bins = [0; 10];
     for contig in contigs {
         let bin = (contig.length / (max_length / 10 + 1)).min(9);
         length_bins[bin] += 1;
@@ -461,11 +461,10 @@ pub fn write_kraken_report<P: AsRef<Path>>(
 
         writeln!(
             writer,
-            "{:.2}\t{}\t{}\t{}\t{}",
+            "{:.2}\t{}\t{}\tS\t{}",
             percentage,
             *count as usize,
-            *count as usize,
-            "S", // Rank (Species)
+            *count as usize, // Rank (Species)
             tax_name
         )?;
     }

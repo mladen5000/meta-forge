@@ -10,14 +10,14 @@
 //! - No external ML dependencies required
 
 use ahash::AHashMap;
-use anyhow::{Context, Result};
-use ndarray::{Array1, Array2};
+use anyhow::Result;
+use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 use crate::core::data_structures::Contig;
 use crate::ml::classification_reporter::{
-    ClassificationReporter, ClassificationStage, calculate_bin_metrics, BinQualityMetrics,
+    ClassificationReporter, ClassificationStage, calculate_bin_metrics,
 };
 
 /// Configuration for the simple ML classifier
@@ -157,7 +157,7 @@ impl SimpleContigClassifier {
         // Add coverage feature if enabled
         if self.config.use_coverage_features {
             let coverage_idx = self.kmer_vocab.len();
-            features[coverage_idx] = contig.coverage as f64;
+            features[coverage_idx] = contig.coverage;
         }
 
         Ok(Array1::from_vec(features))

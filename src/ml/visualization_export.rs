@@ -5,9 +5,8 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-use crate::ml::classification_reporter::{BinQualityMetrics, ClassificationResults};
+use crate::ml::classification_reporter::ClassificationResults;
 use crate::ml::simple_classifier::ContigClassification;
 use crate::utils::intermediate_output::{IntermediateOutputManager, PipelineSection};
 
@@ -140,7 +139,7 @@ impl VisualizationExporter {
         classifications: &[ContigClassification],
         contigs_data: &[(usize, f64, f64, usize)],
     ) -> Result<()> {
-        let mut contig_map: std::collections::HashMap<usize, &ContigClassification> =
+        let contig_map: std::collections::HashMap<usize, &ContigClassification> =
             classifications
                 .iter()
                 .map(|c| (c.contig_id, c))
@@ -273,7 +272,7 @@ impl VisualizationExporter {
             {
                 bin_lengths
                     .entry(classification.bin_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(*length);
             }
         }

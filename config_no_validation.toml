@@ -1,0 +1,23 @@
+# MetaForge Configuration - No Genomic Validation
+
+[general]
+output = "./output"
+threads = 8
+
+[performance]
+memory_limit_gb = 4
+
+[qc]
+enable_genomic_validation = false  # Disable genomic validation
+enable_quality_filter = true
+enable_adapter_trimming = true
+
+[qc.quality]
+min_quality = 20
+min_avg_quality = 25.0
+min_length = 50
+
+[assembly]
+k_min = 21
+k_max = 31
+min_coverage = 2

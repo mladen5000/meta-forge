@@ -22,7 +22,7 @@ pub struct GenomicDataValidator {
 /// Thresholds controlling pass/fail decisions.
 ///
 /// The defaults are lenient enough for short-read Illumina data.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationThresholds {
     pub min_sequence_length: usize,
     pub max_sequence_length: usize,

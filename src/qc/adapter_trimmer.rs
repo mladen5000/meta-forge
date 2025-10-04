@@ -5,7 +5,6 @@
 //! - Nextera
 //! - Custom adapters
 
-use anyhow::Result;
 
 /// Common Illumina adapters
 pub const ILLUMINA_TRUSEQ_R1: &str = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";

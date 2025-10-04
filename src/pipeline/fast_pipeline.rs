@@ -108,7 +108,7 @@ impl FastPipeline {
                 step.to_string().bright_white(),
                 total_steps.to_string().bright_white(),
                 "Preprocessing".bright_cyan());
-        let corrected_reads = self.run_preprocessing(&input_files, &main_progress).await?;
+        let corrected_reads = self.run_preprocessing(&input_files, main_progress).await?;
 
         if !self.config.skip_intermediates {
             self.save_with_progress("preprocessing", "corrected_reads", &corrected_reads).await?;
@@ -126,7 +126,7 @@ impl FastPipeline {
                 step.to_string().bright_white(),
                 total_steps.to_string().bright_white(),
                 "Assembly".bright_cyan());
-        let assembly_results = self.run_assembly(&corrected_reads, &main_progress).await?;
+        let assembly_results = self.run_assembly(&corrected_reads, main_progress).await?;
 
         if !self.config.skip_intermediates {
             self.save_with_progress("assembly", "assembly_results", &assembly_results).await?;
@@ -144,7 +144,7 @@ impl FastPipeline {
                 step.to_string().bright_white(),
                 total_steps.to_string().bright_white(),
                 "Feature Extraction".bright_cyan());
-        let features = self.run_feature_extraction(&corrected_reads, &assembly_results, &main_progress).await?;
+        let features = self.run_feature_extraction(&corrected_reads, &assembly_results, main_progress).await?;
 
         if !self.config.skip_intermediates {
             self.save_with_progress("features", "feature_collection", &features).await?;
@@ -162,7 +162,7 @@ impl FastPipeline {
                 step.to_string().bright_white(),
                 total_steps.to_string().bright_white(),
                 "Taxonomic Classification".bright_cyan());
-        let classifications = self.run_classification(&assembly_results, &features, &main_progress).await?;
+        let classifications = self.run_classification(&assembly_results, &features, main_progress).await?;
 
         // Write classification outputs (always write these, they're critical results)
         use crate::utils::format_writers::{write_classification_tsv, write_classification_summary};
@@ -198,7 +198,7 @@ impl FastPipeline {
                 step.to_string().bright_white(),
                 total_steps.to_string().bright_white(),
                 "Abundance Analysis".bright_cyan());
-        let abundance = self.run_abundance_analysis(&assembly_results, &classifications, &main_progress).await?;
+        let abundance = self.run_abundance_analysis(&assembly_results, &classifications, main_progress).await?;
 
         if !self.config.skip_intermediates {
             self.save_with_progress("abundance", "abundance_profile", &abundance).await?;
@@ -222,7 +222,7 @@ impl FastPipeline {
             &features,
             &classifications,
             &abundance,
-            &main_progress,
+            main_progress,
         ).await?;
 
         eprintln!("{} Progress: {}/{} steps completed",

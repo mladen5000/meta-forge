@@ -363,7 +363,7 @@ impl HyperLogLog {
         // This is equivalent to counting leading zeros + 1
         let leftmost_one_pos = if w == 0 {
             // Special case: if w is 0, we consider it as having 64-p+1 leading zeros
-            (64 - self.precision + 1) as u8
+            64 - self.precision + 1
         } else {
             // Count leading zeros in w and add 1
             // Note: w.leading_zeros() counts zeros in full 64-bit word,
@@ -373,7 +373,7 @@ impl HyperLogLog {
             // Guard against underflow - if leading zeros >= precision bits used,
             // then we have all zeros in our portion
             if zeros_in_full_word >= 64 - self.precision as u32 {
-                (64 - self.precision + 1) as u8
+                64 - self.precision + 1
             } else {
                 let zeros_in_our_bits = zeros_in_full_word - self.precision as u32;
                 (zeros_in_our_bits + 1).min(64 - self.precision as u32 + 1) as u8
@@ -400,8 +400,8 @@ impl HyperLogLog {
             // Small range correction
             let zeros = self.buckets.iter().filter(|&&x| x == 0).count();
             if zeros != 0 {
-                let corrected = (self.num_buckets as f64 * (self.num_buckets as f64 / zeros as f64).ln()) as u64;
-                corrected
+                
+                (self.num_buckets as f64 * (self.num_buckets as f64 / zeros as f64).ln()) as u64
             } else {
                 raw_estimate as u64
             }

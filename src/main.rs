@@ -10,15 +10,15 @@ async fn main() -> Result<()> {
 
     // Initialize env_logger for log crate (used by QC modules)
     let log_level = if cli.verbose { "debug" } else { "info" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
         .format_timestamp_millis()
-        .init();
+        .try_init(); // Use try_init to avoid panic if already initialized
 
     // Initialize tracing for other modules (if not already set)
     if !tracing::dispatcher::has_been_set() {
-        tracing_subscriber::fmt()
+        let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
-            .init();
+            .try_init(); // Use try_init to avoid panic
     }
 
     match cli.command {

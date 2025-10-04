@@ -263,10 +263,10 @@ impl QCReport {
     fn generate_detailed(stats: &QCStats) -> String {
         let mut report = String::new();
 
-        report.push_str(&format!("Detailed QC Report\n"));
-        report.push_str(&format!("==================\n\n"));
+        report.push_str("Detailed QC Report\n");
+        report.push_str("==================\n\n");
 
-        report.push_str(&format!("Input Statistics:\n"));
+        report.push_str("Input Statistics:\n");
         report.push_str(&format!("  Total reads: {}\n", stats.reads_input));
         report.push_str(&format!("  Total bases: {}\n", stats.total_bases_before));
         report.push_str(&format!(
@@ -278,7 +278,7 @@ impl QCReport {
             stats.mean_quality_before
         ));
 
-        report.push_str(&format!("Filtering Results:\n"));
+        report.push_str("Filtering Results:\n");
         report.push_str(&format!("  Passed: {} reads\n", stats.reads_passed));
         report.push_str(&format!("  Failed: {} reads\n", stats.reads_failed));
         report.push_str(&format!(
@@ -291,14 +291,14 @@ impl QCReport {
             stats.reads_failed_adapter
         ));
 
-        report.push_str(&format!("Adapter Detection:\n"));
+        report.push_str("Adapter Detection:\n");
         report.push_str(&format!("  Total adapters found: {}\n", stats.adapters_detected));
         for (adapter, count) in &stats.adapter_types {
             report.push_str(&format!("    {}: {} occurrences\n", adapter, count));
         }
-        report.push_str("\n");
+        report.push('\n');
 
-        report.push_str(&format!("Trimming Statistics:\n"));
+        report.push_str("Trimming Statistics:\n");
         report.push_str(&format!(
             "  Quality-based trimming: {} bp\n",
             stats.bases_trimmed_quality
@@ -312,7 +312,7 @@ impl QCReport {
             stats.total_bases_after
         ));
 
-        report.push_str(&format!("Output Statistics:\n"));
+        report.push_str("Output Statistics:\n");
         report.push_str(&format!("  Total reads: {}\n", stats.reads_passed));
         report.push_str(&format!("  Total bases: {}\n", stats.total_bases_after));
         report.push_str(&format!("  Mean length: {:.1} bp\n", stats.mean_length_after));

@@ -8,3 +8,5 @@ pub mod format_writers;
 pub mod progress_display;
 pub mod streaming_abundance;
 pub mod assembly_profiler;
+pub mod performance_analyzer;
+pub mod benchmark_validator;

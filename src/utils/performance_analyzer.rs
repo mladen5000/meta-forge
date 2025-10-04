@@ -119,7 +119,7 @@ pub struct PerformanceProfiler {
     bottlenecks: Arc<Mutex<Vec<BottleneckAnalysis>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct TaskCounter {
     total_executions: AtomicU64,
     total_duration_ms: AtomicU64,
