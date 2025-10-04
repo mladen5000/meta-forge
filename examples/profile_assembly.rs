@@ -67,11 +67,24 @@ fn generate_test_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let bases = b"ACGT";
     let mut rng = thread_rng();
 
+    // Generate a longer reference sequence
+    let reference: String = (0..5000)
+        .map(|_| bases[rng.gen_range(0..4)] as char)
+        .collect();
+
+    // Generate overlapping reads from the reference
     (0..count)
         .map(|id| {
-            let sequence: String = (0..length)
-                .map(|_| bases[rng.gen_range(0..4)] as char)
-                .collect();
+            // Sample reads from reference with overlap
+            let max_start = reference.len().saturating_sub(length);
+            let start = if max_start > 0 {
+                rng.gen_range(0..max_start)
+            } else {
+                0
+            };
+
+            let end = (start + length).min(reference.len());
+            let sequence = reference[start..end].to_string();
 
             CorrectedRead {
                 id,

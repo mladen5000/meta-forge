@@ -2362,7 +2362,7 @@ impl MetagenomicsPipeline {
 
         // Create QC pipeline
         let qc_config = QCPipelineConfig::default();
-        let mut qc_pipeline = QCPipeline::new(qc_config);
+        let mut qc_pipeline = QCPipeline::new(qc_config.clone());
 
         let mut raw_reads = Vec::new();
         let mut pb = ProgressBar::new(0, "Reading sequences"); // Start as indeterminate
@@ -2404,14 +2404,84 @@ impl MetagenomicsPipeline {
             format!("📋 Preprocessing: ✅ Loaded {} reads", raw_reads.len()),
         );
 
-        // Second pass: QC filtering and trimming
-        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
-        multi_progress.update_line(
-            line_id,
-            "📋 Preprocessing: 🔬 Applying QC filters...".to_string(),
+        // Calculate input statistics
+        let total_input_bases: usize = raw_reads.iter().map(|r| r.corrected.len()).sum();
+        let avg_read_length = if !raw_reads.is_empty() {
+            total_input_bases as f64 / raw_reads.len() as f64
+        } else {
+            0.0
+        };
+        let avg_quality = if !raw_reads.is_empty() {
+            raw_reads
+                .iter()
+                .map(|r| {
+                    if !r.quality_scores.is_empty() {
+                        r.quality_scores.iter().map(|&q| (q.saturating_sub(33)) as f64).sum::<f64>()
+                            / r.quality_scores.len() as f64
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f64>()
+                / raw_reads.len() as f64
+        } else {
+            0.0
+        };
+
+        // Display input statistics
+        info!(
+            "{}",
+            format!(
+                "📊 Input stats: {} reads, {:.1} Mbp total, {:.0} bp avg length, Q{:.1} avg quality",
+                raw_reads.len(),
+                total_input_bases as f64 / 1_000_000.0,
+                avg_read_length,
+                avg_quality
+            )
+            .bright_cyan()
         );
 
-        let corrected_reads = qc_pipeline.process_reads(&raw_reads);
+        // Show QC configuration (use qc_config which we have access to)
+        let qc_config_msg = if qc_config.enable_adapter_trimming && qc_config.enable_quality_filter {
+            format!(
+                "🔧 QC config: Min Q{} (avg Q{:.1}), ≥{}bp length, adapter trimming enabled",
+                qc_config.quality_config.min_quality,
+                qc_config.quality_config.min_avg_quality,
+                qc_config.quality_config.min_length
+            )
+        } else if qc_config.enable_quality_filter {
+            format!(
+                "🔧 QC config: Min Q{} (avg Q{:.1}), ≥{}bp length",
+                qc_config.quality_config.min_quality,
+                qc_config.quality_config.min_avg_quality,
+                qc_config.quality_config.min_length
+            )
+        } else {
+            "🔧 QC config: Quality filtering disabled".to_string()
+        };
+        info!("{}", qc_config_msg.bright_blue());
+
+        // Second pass: QC filtering and trimming with progress
+        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+
+        let total_reads = raw_reads.len();
+
+        // Process in chunks to show progress
+        let chunk_size = 1000.max(total_reads / 10); // Show at least 10 updates
+        let mut corrected_reads = Vec::new();
+
+        for (chunk_idx, chunk) in raw_reads.chunks(chunk_size).enumerate() {
+            let chunk_start = chunk_idx * chunk_size;
+            let chunk_end = (chunk_start + chunk.len()).min(total_reads);
+
+            multi_progress.update_line(
+                line_id,
+                format!("📋 Preprocessing: 🔬 Applied QC filters to {}/{} reads", chunk_end, total_reads),
+            );
+
+            let chunk_results = qc_pipeline.process_reads(chunk);
+            corrected_reads.extend(chunk_results);
+        }
 
         // Get and display QC stats
         let qc_stats = qc_pipeline.stats();

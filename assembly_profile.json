@@ -1,0 +1,26 @@
+{
+  "total_duration_ms": 2311,
+  "peak_memory_mb": 1752.46875,
+  "phases": [
+    {
+      "phase_name": "Full Assembly",
+      "duration_ms": 2107,
+      "memory_mb": 1752.46875,
+      "throughput": null,
+      "metadata": {
+        "reads_processed": "10000",
+        "total_bases": "4996",
+        "contigs_generated": "1"
+      }
+    }
+  ],
+  "summary": {
+    "reads_processed": 10000,
+    "kmers_counted": 9992,
+    "nodes_created": 10,
+    "edges_created": 15,
+    "contigs_generated": 1,
+    "kmers_per_second": 4741.195603086563,
+    "reads_per_second": 4744.991596363654
+  }
+}

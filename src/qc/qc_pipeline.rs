@@ -42,7 +42,7 @@ impl Default for QCPipelineConfig {
             quality_config: QualityFilterConfig::default(),
             adapter_config: AdapterConfig::default(),
             validation_thresholds: None, // Uses defaults if None
-            verbose: true,
+            verbose: false, // Disabled for performance
         }
     }
 }
@@ -92,29 +92,12 @@ impl QCPipeline {
         if let Some(validator) = &mut self.genomic_validator {
             let validation_result = validator.validate_sequence(&sequence, Some(&quality));
             if !validation_result.passed {
-                if self.config.verbose {
-                    debug!(
-                        "Read {} failed genomic validation: errors={:?}, warnings={:?}",
-                        read.id,
-                        validation_result.errors,
-                        validation_result.warnings
-                    );
-                }
-                self.stats.record_failed(FailureReason::Quality); // Genomic validation failure
+                self.stats.record_failed(FailureReason::Quality);
                 return None;
             }
         }
 
-        // Debug first few reads
-        if read.id < 3 && self.config.verbose {
-            let avg_qual_raw = quality.iter().map(|&q| q as f64).sum::<f64>() / quality.len() as f64;
-            let avg_qual_phred = quality.iter().map(|&q| (q.saturating_sub(33)) as f64).sum::<f64>() / quality.len() as f64;
-            debug!("Read {}: len={}, avg_qual_raw={:.1}, avg_qual_phred={:.1}",
-                   read.id, sequence.len(), avg_qual_raw, avg_qual_phred);
-        }
-
         // Step 1: Adapter trimming (if enabled)
-        let mut adapter_info: Option<(usize, AdapterMatch)> = None;
         if self.config.enable_adapter_trimming {
             let (trimmed_seq, trimmed_qual, adapter_match) = self
                 .adapter_trimmer
@@ -124,21 +107,6 @@ impl QCPipeline {
                 let bases_trimmed = sequence.len() - trimmed_seq.len();
                 self.stats
                     .record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
-
-                // Store adapter info for debug output
-                adapter_info = Some((bases_trimmed, adapter.clone()));
-
-                if self.config.verbose {
-                    debug!(
-                        "Adapter trimmed from read {}: {} bp (adapter '{}' at pos {}, length {}, {:.1}% error)",
-                        read.id,
-                        bases_trimmed,
-                        &adapter.adapter[..adapter.adapter.len().min(10)],
-                        adapter.position,
-                        adapter.length,
-                        adapter.error_rate * 100.0
-                    );
-                }
             }
 
             sequence = trimmed_seq;
@@ -146,7 +114,6 @@ impl QCPipeline {
         }
 
         // Step 2: Quality filtering and trimming (if enabled)
-        let mut quality_trimmed_bases = 0;
         if self.config.enable_quality_filter {
             // First check average quality
             if !self.quality_filter.passes_quality_threshold(&quality) {
@@ -156,53 +123,26 @@ impl QCPipeline {
 
             // Then trim low-quality ends
             if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
-                quality_trimmed_bases = sequence.len() - (end - start);
+                let quality_trimmed_bases = sequence.len() - (end - start);
                 self.stats.record_quality_trimming(quality_trimmed_bases);
 
                 sequence = sequence[start..end].to_string();
                 quality = quality[start..end].to_vec();
-
-                if self.config.verbose && quality_trimmed_bases > 0 {
-                    debug!(
-                        "Quality trimmed from read {}: {} bp ({}bp from start, {}bp from end)",
-                        read.id,
-                        quality_trimmed_bases,
-                        start,
-                        sequence.len() + quality_trimmed_bases - end
-                    );
-                }
             } else {
                 // Entire read is low quality
                 self.stats.record_failed(FailureReason::Quality);
-
-                // Debug output every 1000 reads
-                if self.reads_processed % 1000 == 0 {
-                    self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), None, "FAILED_QUALITY");
-                }
-
                 return None;
             }
 
             // Final length check
             if !self.quality_filter.passes_length_threshold(sequence.len()) {
                 self.stats.record_failed(FailureReason::Length);
-
-                // Debug output every 1000 reads
-                if self.reads_processed % 1000 == 0 {
-                    self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), Some(sequence.len()), "FAILED_FINAL_LENGTH");
-                }
-
                 return None;
             }
         }
 
         // Record passed read
         self.stats.record_passed(sequence.len(), &quality);
-
-        // Debug output every 1000 reads for successful reads
-        if self.reads_processed % 1000 == 0 {
-            self.print_debug_stats(read, original_length, quality_trimmed_bases, adapter_info.as_ref().map(|(b, a)| (*b, a)), Some(sequence.len()), "PASSED");
-        }
 
         // Create processed read
         Some(CorrectedRead {
@@ -215,27 +155,89 @@ impl QCPipeline {
         })
     }
 
-    /// Process multiple reads
+    /// Process multiple reads (optimized with rayon parallel processing)
     pub fn process_reads(&mut self, reads: &[CorrectedRead]) -> Vec<CorrectedRead> {
-        if self.config.verbose {
-            info!("QC Config: min_quality=Q{}, min_avg=Q{:.1}, min_length={}bp",
-                  self.quality_filter.config.min_quality,
-                  self.quality_filter.config.min_avg_quality,
-                  self.quality_filter.config.min_length);
-        }
+        self.process_reads_with_progress(reads, |_, _| {})
+    }
 
-        let result: Vec<CorrectedRead> = reads
-            .iter()
-            .filter_map(|read| self.process_read(read))
+    /// Process multiple reads with progress callback
+    pub fn process_reads_with_progress<F>(&mut self, reads: &[CorrectedRead], progress_callback: F) -> Vec<CorrectedRead>
+    where
+        F: Fn(usize, usize) + Send + Sync,
+    {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let processed_count = AtomicUsize::new(0);
+        let total = reads.len();
+
+        // Process reads in parallel for better performance
+        let results: Vec<CorrectedRead> = reads
+            .par_iter()
+            .filter_map(|read| {
+                // Local QC processing (thread-safe)
+                let mut sequence = read.corrected.clone();
+                let mut quality = read.quality_scores.clone();
+
+                // Step 1: Adapter trimming
+                if self.config.enable_adapter_trimming {
+                    let (trimmed_seq, trimmed_qual, _) = self
+                        .adapter_trimmer
+                        .trim_adapter_with_quality(&sequence, &quality);
+                    sequence = trimmed_seq;
+                    quality = trimmed_qual;
+                }
+
+                // Step 2: Quality filtering
+                if self.config.enable_quality_filter {
+                    if !self.quality_filter.passes_quality_threshold(&quality) {
+                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 100 == 0 || count == total {
+                            progress_callback(count, total);
+                        }
+                        return None;
+                    }
+
+                    if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
+                        sequence = sequence[start..end].to_string();
+                        quality = quality[start..end].to_vec();
+                    } else {
+                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 100 == 0 || count == total {
+                            progress_callback(count, total);
+                        }
+                        return None;
+                    }
+
+                    if !self.quality_filter.passes_length_threshold(sequence.len()) {
+                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 100 == 0 || count == total {
+                            progress_callback(count, total);
+                        }
+                        return None;
+                    }
+                }
+
+                // Update progress
+                let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                if count % 100 == 0 || count == total {
+                    progress_callback(count, total);
+                }
+
+                Some(CorrectedRead {
+                    id: read.id,
+                    original: read.original.clone(),
+                    corrected: sequence,
+                    corrections: read.corrections.clone(),
+                    quality_scores: quality,
+                    correction_metadata: read.correction_metadata.clone(),
+                })
+            })
             .collect();
 
-        if self.config.verbose {
-            info!("QC Complete: {}/{} reads passed ({:.1}%)",
-                  result.len(), reads.len(),
-                  (result.len() as f64 / reads.len() as f64) * 100.0);
-        }
-
-        result
+        // Final progress update
+        progress_callback(total, total);
+        results
     }
 
     /// Get QC statistics
