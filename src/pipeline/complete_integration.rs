@@ -1989,6 +1989,10 @@ impl MetagenomicsPipeline {
         classifications: &[TaxonomicClassification],
         abundance_profile: &AbundanceProfile,
     ) -> Result<AnalysisReport> {
+        // Get actual performance metrics (simplified since ResourceMonitor doesn't track these yet)
+        let peak_memory = 0; // TODO: Implement proper memory tracking
+        let elapsed_time = std::time::Duration::from_secs(0); // Will be updated by caller
+
         let report = AnalysisReport {
             sample_name: sample_name.to_string(),
             timestamp: chrono::Utc::now(),
@@ -2005,22 +2009,22 @@ impl MetagenomicsPipeline {
                 diversity_index: calculate_shannon_diversity(&abundance_profile.abundant_kmers),
             },
             quality_metrics: QualityMetrics {
-                assembly_completeness: 0.85,
-                classification_confidence: classifications
-                    .iter()
-                    .map(|c| c.confidence)
-                    .sum::<f64>()
-                    / classifications.len() as f64,
-                coverage_uniformity: 0.75,
+                assembly_completeness: self.calculate_assembly_completeness(assembly_results),
+                classification_confidence: if !classifications.is_empty() {
+                    classifications.iter().map(|c| c.confidence).sum::<f64>() / classifications.len() as f64
+                } else {
+                    0.0
+                },
+                coverage_uniformity: self.calculate_coverage_uniformity(&assembly_results.contigs),
             },
             taxonomic_composition: classifications.to_vec(),
             abundance_data: abundance_profile.clone(),
             performance_metrics: PerformanceMetrics {
-                total_processing_time: std::time::Duration::from_secs(300), // Mock
-                peak_memory_usage: self.config.performance.memory_limit_gb * 1024 * 1024 * 1024 / 2, // Half of limit
-                reads_processed: 10000, // Mock
-                errors_corrected: 50,   // Mock
-                repeats_resolved: 25,   // Mock
+                total_processing_time: elapsed_time,
+                peak_memory_usage: peak_memory,
+                reads_processed: abundance_profile.total_kmers / 4, // Estimate using k=4
+                errors_corrected: 0,  // TODO: Track from QC pipeline
+                repeats_resolved: 0,  // TODO: Track from assembly
             },
         };
 
@@ -2207,7 +2211,7 @@ impl MetagenomicsPipeline {
     <div class="section">
         <h3>🏷️ Taxonomic Composition</h3>
         <table>
-            <tr><th>Species</th><th>Contigs</th><th>Confidence</th></tr>"#,
+            <tr><th>Species</th><th>Contigs</th><th>Confidence</th><th>Method</th></tr>"#,
             report.sample_name,
             report.sample_name,
             report.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
@@ -2217,8 +2221,63 @@ impl MetagenomicsPipeline {
             report.summary.mean_coverage
         );
 
-        // Add more HTML content here...
-        let html = format!("{html}</table></div></body></html>");
+        // Count contigs per species
+        let mut species_counts: std::collections::HashMap<String, (usize, f64, String)> = std::collections::HashMap::new();
+        for classification in &report.taxonomic_composition {
+            let entry = species_counts.entry(classification.taxonomy_name.clone())
+                .or_insert((0, 0.0, classification.method.clone()));
+            entry.0 += 1;
+            entry.1 += classification.confidence;
+        }
+
+        // Add taxonomic table rows
+        let mut species_rows = String::new();
+        let mut sorted_species: Vec<_> = species_counts.iter().collect();
+        sorted_species.sort_by(|a, b| b.1.0.cmp(&a.1.0)); // Sort by count descending
+
+        for (species, (count, total_conf, method)) in sorted_species.iter().take(20) { // Top 20
+            let avg_conf = total_conf / *count as f64;
+            species_rows.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{:.2}%</td><td>{}</td></tr>",
+                species, count, avg_conf * 100.0, method
+            ));
+        }
+
+        let html = format!(
+            r#"{html}
+            {species_rows}
+        </table>
+    </div>
+
+    <div class="section">
+        <h3>📈 Quality Metrics</h3>
+        <div class="metric">Assembly Completeness: {:.1}%</div>
+        <div class="metric">Classification Confidence: {:.1}%</div>
+        <div class="metric">Coverage Uniformity: {:.1}%</div>
+        <div class="metric">Unique Species: {}</div>
+        <div class="metric">Diversity Index: {:.3}</div>
+    </div>
+
+    <div class="section">
+        <h3>⚡ Performance</h3>
+        <div class="metric">Processing Time: {:.1}s</div>
+        <div class="metric">Peak Memory: {:.1} MB</div>
+        <div class="metric">Reads Processed: {}</div>
+        <div class="metric">Unique K-mers: {}</div>
+    </div>
+</body>
+</html>"#,
+            report.quality_metrics.assembly_completeness * 100.0,
+            report.quality_metrics.classification_confidence * 100.0,
+            report.quality_metrics.coverage_uniformity * 100.0,
+            report.summary.unique_species,
+            report.summary.diversity_index,
+            report.performance_metrics.total_processing_time.as_secs_f64(),
+            report.performance_metrics.peak_memory_usage as f64 / (1024.0 * 1024.0),
+            report.performance_metrics.reads_processed,
+            report.abundance_data.unique_kmers,
+        );
+
         Ok(html)
     }
 
@@ -2602,7 +2661,7 @@ impl MetagenomicsPipeline {
             println!("💾 Storing assembly results in database...");
             let _assembly_id = db.store_assembly_results(
                 &assembly_stats,
-                "current_sample",
+                &self.output_manager.run_id,  // Use actual run ID from output manager
                 &serde_json::to_string(&self.config)?,
             )?;
             println!("✅ Assembly results stored successfully");
@@ -2626,15 +2685,40 @@ impl MetagenomicsPipeline {
             "🔍 Feature Extraction: Initializing extractors...".to_string(),
         );
 
-        let features = FeatureCollection::new();
+        // Convert FeatureExtractionConfig to FeatureConfig
+        let feature_config = FeatureConfig {
+            include_composition: true,
+            include_codon_usage: true,
+            include_patterns: true,
+            include_complexity: true,
+            include_topology: self.config.features.include_topology,
+            include_centrality: self.config.features.include_centrality,
+            include_clustering: true,
+            kmer_sizes: vec![3, 4, 5, 6],
+            max_kmers: self.config.features.max_kmers,
+            sequence_feature_dim: self.config.features.sequence_feature_dim,
+            graph_feature_dim: self.config.features.graph_feature_dim,
+            kmer_feature_dim: self.config.features.kmer_feature_dim,
+        };
+        let extractor = AdvancedFeatureExtractor::new(feature_config)?;
+        let mut features = FeatureCollection::new();
 
         multi_progress.update_line(
             line_id,
             "🔍 Feature Extraction: Processing contigs...".to_string(),
         );
 
-        for (i, _contig) in assembly.contigs.iter().enumerate() {
-            // Mock feature extraction - skipping actual feature extraction for progress demo
+        for (i, contig) in assembly.contigs.iter().enumerate() {
+            // Extract real features from each contig
+            match extractor.extract_sequence_features(&contig.sequence) {
+                Ok(contig_features) => {
+                    features.add_sequence_features(contig.id, contig_features);
+                }
+                Err(e) => {
+                    warn!("Failed to extract features for contig {}: {}", contig.id, e);
+                }
+            }
+
             if i % 100 == 0 && i > 0 {
                 multi_progress.update_line(
                     line_id,
@@ -2647,6 +2731,11 @@ impl MetagenomicsPipeline {
             }
         }
 
+        multi_progress.update_line(
+            line_id,
+            format!("🔍 Feature Extraction: ✅ Extracted features for {} contigs", features.sequence_features.len()),
+        );
+
         Ok(features)
     }
 
@@ -2657,27 +2746,42 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<Vec<TaxonomicClassification>> {
-        multi_progress.update_line(line_id, "🏷️  Classification: Loading models...".to_string());
+        multi_progress.update_line(line_id, "🏷️  Classification: Loading ML classifier...".to_string());
 
-        let mut classifications = Vec::new();
+        // Initialize the ML-based contig classifier
+        use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
+
+        let classifier_config = SimpleClassifierConfig {
+            kmer_size: 4,  // Tetranucleotide frequencies
+            min_contig_length: 1000,  // Minimum contig length for classification
+            num_bins: 10,  // Default number of bins
+            ..Default::default()
+        };
+
+        let classifier = SimpleContigClassifier::new(classifier_config)?;
 
         multi_progress.update_line(
             line_id,
-            "🏷️  Classification: Analyzing sequences...".to_string(),
+            "🏷️  Classification: Analyzing sequences with ML model...".to_string(),
         );
 
-        for (i, _contig) in assembly.contigs.iter().enumerate() {
-            // Mock classification - in real implementation would use ML models
+        // Use real ML classification
+        let bin_classifications = classifier.classify_contigs(&assembly.contigs)?;
+
+        // Convert bin classifications to taxonomic classifications
+        let mut classifications = Vec::new();
+        for bin_class in bin_classifications {
             let classification = TaxonomicClassification {
-                contig_id: i,
-                taxonomy_id: (i % 10) as u32,
-                taxonomy_name: format!("Species_{}", i % 10),
-                confidence: 0.8,
-                lineage: format!("Kingdom_{}|Phylum_{}|Class_{}", i % 3, i % 5, i % 7),
-                method: "Mock".to_string(),
+                contig_id: bin_class.contig_id,
+                taxonomy_id: bin_class.bin_id as u32,
+                taxonomy_name: format!("Bin_{}", bin_class.bin_id),
+                confidence: bin_class.confidence,
+                lineage: format!("Unclassified|Bin_{}", bin_class.bin_id),
+                method: "SimpleContigClassifier".to_string(),
             };
             classifications.push(classification);
 
+            let i = bin_class.contig_id;
             if i % 50 == 0 && i > 0 {
                 multi_progress.update_line(
                     line_id,
@@ -2690,6 +2794,13 @@ impl MetagenomicsPipeline {
             }
         }
 
+        multi_progress.update_line(
+            line_id,
+            format!("🏷️  Classification: ✅ Classified {} sequences into {} bins",
+                    classifications.len(),
+                    classifications.iter().map(|c| c.taxonomy_id).collect::<std::collections::HashSet<_>>().len()),
+        );
+
         Ok(classifications)
     }
 
@@ -2701,27 +2812,49 @@ impl MetagenomicsPipeline {
     ) -> Result<AbundanceProfile> {
         multi_progress.update_line(
             line_id,
-            "📊 Abundance: Initializing estimator...".to_string(),
+            "📊 Abundance: Estimating k-mer abundance...".to_string(),
         );
 
-        // Mock abundance estimation
-        let mut abundance_data = std::collections::HashMap::new();
+        // Simple k-mer counting for abundance estimation
+        use ahash::AHashMap;
+        let mut kmer_counts: AHashMap<u64, f64> = AHashMap::new();
+        let total_reads = reads.len();
+        let mut total_kmers_processed = 0u64;
+        let k = 4usize; // Tetranucleotide
 
-        multi_progress.update_line(line_id, "📊 Abundance: Processing k-mers...".to_string());
+        multi_progress.update_line(line_id, "📊 Abundance: Processing k-mers from reads...".to_string());
 
-        for i in 0..100 {
-            abundance_data.insert(i as u64, fastrand::f64() * 100.0);
+        for (i, read) in reads.iter().enumerate() {
+            let seq = read.corrected.as_bytes();
+            if seq.len() >= k {
+                total_kmers_processed += (seq.len() - k + 1) as u64;
 
-            if i % 10 == 0 {
-                multi_progress
-                    .update_line(line_id, format!("📊 Abundance: Processed {i} k-mer groups"));
+                // Simple k-mer hashing and counting
+                for window in seq.windows(k) {
+                    let kmer_hash = self.hash_kmer(window);
+                    *kmer_counts.entry(kmer_hash).or_insert(0.0) += 1.0;
+                }
+            }
+
+            if i % 1000 == 0 && i > 0 {
+                multi_progress.update_line(
+                    line_id,
+                    format!("📊 Abundance: Processed {}/{} reads", i, total_reads),
+                );
             }
         }
 
+        let unique_kmers = kmer_counts.len() as u64;
+
+        multi_progress.update_line(
+            line_id,
+            format!("📊 Abundance: ✅ Found {} unique k-mers from {} total reads", unique_kmers, total_reads),
+        );
+
         Ok(AbundanceProfile {
-            unique_kmers: 1000,
-            abundant_kmers: abundance_data,
-            total_kmers: reads.len() as u64 * 100, // Mock calculation
+            unique_kmers,
+            abundant_kmers: kmer_counts.into_iter().collect(), // Convert AHashMap to HashMap
+            total_kmers: total_kmers_processed,
         })
     }
 
@@ -2734,6 +2867,9 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<AnalysisReport> {
+        // Calculate actual performance metrics (simplified since ResourceMonitor doesn't track these yet)
+        let peak_memory = 0; // TODO: Implement proper memory tracking
+        let elapsed_time = std::time::Duration::from_secs(0); // Will be updated by caller
         multi_progress.update_line(
             line_id,
             "📝 Report: Generating analysis report...".to_string(),
@@ -2766,11 +2902,11 @@ impl MetagenomicsPipeline {
             taxonomic_composition: classifications.to_vec(),
             abundance_data: abundance.clone(),
             performance_metrics: PerformanceMetrics {
-                total_processing_time: std::time::Duration::from_secs(300),
-                peak_memory_usage: self.config.performance.memory_limit_gb * 1024 * 1024 * 1024 / 2,
-                reads_processed: 10000,
-                errors_corrected: 50,
-                repeats_resolved: 25,
+                total_processing_time: elapsed_time,
+                peak_memory_usage: peak_memory,
+                reads_processed: abundance.total_kmers / 4, // Estimate reads from total k-mers (k=4)
+                errors_corrected: 0,  // TODO: Track from QC pipeline
+                repeats_resolved: 0,  // TODO: Track from assembly
             },
         };
 
@@ -2778,6 +2914,16 @@ impl MetagenomicsPipeline {
         self.write_report_files(&report).await?;
 
         Ok(report)
+    }
+
+    /// Simple hash function for k-mers
+    fn hash_kmer(&self, kmer: &[u8]) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        kmer.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Calculate N50 statistic for contigs
@@ -2870,6 +3016,40 @@ impl MetagenomicsPipeline {
             .sum::<f64>() / (contigs.len() - 1) as f64;
 
         variance.sqrt()
+    }
+
+    /// Calculate assembly completeness based on N50 and total length
+    fn calculate_assembly_completeness(&self, assembly: &AssemblyResults) -> f64 {
+        if assembly.contigs.is_empty() {
+            return 0.0;
+        }
+
+        // Heuristic: completeness based on N50 ratio and contig count
+        // Higher N50 relative to total length = better assembly
+        let n50_ratio = assembly.assembly_stats.n50 as f64 / assembly.assembly_stats.total_length as f64;
+        let contig_penalty = 1.0 / (1.0 + (assembly.contigs.len() as f64 / 100.0).ln());
+
+        // Score from 0-1, combining N50 quality and contig fragmentation
+        (n50_ratio * 100.0 + contig_penalty).min(1.0).max(0.0)
+    }
+
+    /// Calculate coverage uniformity (1.0 = perfect, 0.0 = highly variable)
+    fn calculate_coverage_uniformity(&self, contigs: &[Contig]) -> f64 {
+        if contigs.len() <= 1 {
+            return 1.0;
+        }
+
+        let mean = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
+        if mean == 0.0 {
+            return 0.0;
+        }
+
+        let std_dev = Self::calculate_coverage_std(contigs);
+        let coefficient_of_variation = std_dev / mean;
+
+        // Convert CV to uniformity score (lower CV = higher uniformity)
+        // CV of 0 = perfect uniformity (1.0), CV of 1+ = poor uniformity (approaching 0)
+        (1.0 / (1.0 + coefficient_of_variation)).max(0.0).min(1.0)
     }
 }
 

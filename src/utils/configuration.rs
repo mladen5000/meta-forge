@@ -593,8 +593,8 @@ impl ConfigurationManager {
             _ => {
                 // "pretty" or default - without timestamps for cleaner console output
                 let layer = fmt::layer()
-                    .without_time()  // Remove timestamp
-                    .with_target(false);  // Remove target path for cleaner output
+                    .without_time() // Remove timestamp
+                    .with_target(false); // Remove target path for cleaner output
                 if let Some(ref file_path) = self.config.logging.file_path {
                     let file_appender = rolling::daily(
                         file_path.parent().unwrap_or(Path::new(".")),
