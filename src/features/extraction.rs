@@ -991,17 +991,27 @@ impl PatternRecognizers {
     }
 
     pub fn detect_tandem_repeats(&self, sequence: &str) -> f64 {
-        // Simplified tandem repeat detection
+        // Optimized tandem repeat detection
+        let bytes = sequence.as_bytes();
+        let len = bytes.len();
         let mut max_repeat_length = 0;
 
+        // Early exit for short sequences
+        if len < 6 {
+            return 0.0;
+        }
+
+        // Sample starting positions for large sequences
+        let start_step = if len > 1000 { 10 } else { 1 };
+
         for period in 2..=10 {
-            for start in 0..sequence.len().saturating_sub(period * 2) {
-                let pattern = &sequence[start..start + period];
+            for start in (0..len.saturating_sub(period * 2)).step_by(start_step) {
+                let pattern = &bytes[start..start + period];
                 let mut repeat_count = 1;
 
                 let mut pos = start + period;
-                while pos + period <= sequence.len() {
-                    if &sequence[pos..pos + period] == pattern {
+                while pos + period <= len {
+                    if &bytes[pos..pos + period] == pattern {
                         repeat_count += 1;
                         pos += period;
                     } else {
@@ -1010,31 +1020,40 @@ impl PatternRecognizers {
                 }
 
                 if repeat_count >= 3 {
-                    max_repeat_length = max_repeat_length.max(repeat_count * period);
+                    let repeat_len = repeat_count * period;
+                    max_repeat_length = max_repeat_length.max(repeat_len);
+
+                    // Early exit if we found a significant repeat
+                    if repeat_len > len / 3 {
+                        return repeat_len as f64 / len as f64;
+                    }
                 }
             }
         }
 
-        max_repeat_length as f64 / sequence.len() as f64
+        max_repeat_length as f64 / len as f64
     }
 
     fn detect_inverted_repeats(&self, sequence: &str) -> f64 {
-        // Simplified inverted repeat detection
+        // Optimized inverted repeat detection - use byte slice instead of chars().nth()
+        let bytes = sequence.as_bytes();
         let mut max_palindrome = 0;
+        let len = bytes.len();
 
-        for center in 0..sequence.len() {
+        // Early exit for short sequences
+        if len < 4 {
+            return 0.0;
+        }
+
+        // Sample every 3rd position for large sequences to reduce computation
+        let step = if len > 1000 { 3 } else { 1 };
+
+        for center in (0..len).step_by(step) {
             // Odd-length palindromes
             let mut length = 0;
-            while center >= length && center + length < sequence.len() {
-                if let (Some(left_char), Some(right_char)) = (
-                    sequence.chars().nth(center - length),
-                    sequence.chars().nth(center + length),
-                ) {
-                    if left_char == self.complement(right_char) {
-                        length += 1;
-                    } else {
-                        break;
-                    }
+            while center >= length && center + length < len {
+                if self.complement_byte(bytes[center - length]) == bytes[center + length] {
+                    length += 1;
                 } else {
                     break;
                 }
@@ -1042,31 +1061,25 @@ impl PatternRecognizers {
             max_palindrome = max_palindrome.max(length.saturating_mul(2).saturating_sub(1));
 
             // Even-length palindromes
-            if center + 1 < sequence.len() {
+            if center + 1 < len {
                 let mut length = 0;
-                while center >= length
-                    && center.saturating_add(1).saturating_add(length) < sequence.len()
-                {
-                    if let (Some(left_char), Some(right_char)) = (
-                        sequence.chars().nth(center.saturating_sub(length)),
-                        sequence
-                            .chars()
-                            .nth(center.saturating_add(1).saturating_add(length)),
-                    ) {
-                        if left_char == self.complement(right_char) {
-                            length += 1;
-                        } else {
-                            break;
-                        }
+                while center >= length && center + 1 + length < len {
+                    if self.complement_byte(bytes[center - length]) == bytes[center + 1 + length] {
+                        length += 1;
                     } else {
                         break;
                     }
                 }
                 max_palindrome = max_palindrome.max(length * 2);
             }
+
+            // Early exit if we found a significant palindrome
+            if max_palindrome > len / 4 {
+                break;
+            }
         }
 
-        max_palindrome as f64 / sequence.len() as f64
+        max_palindrome as f64 / len as f64
     }
 
     fn detect_direct_repeats(&self, _sequence: &str) -> f64 {
@@ -1157,6 +1170,18 @@ impl PatternRecognizers {
             'C' => 'G',
             'G' => 'C',
             _ => 'N',
+        }
+    }
+
+    // Optimized byte-level complement for faster palindrome detection
+    #[inline]
+    fn complement_byte(&self, base: u8) -> u8 {
+        match base {
+            b'A' | b'a' => b'T',
+            b'T' | b't' => b'A',
+            b'C' | b'c' => b'G',
+            b'G' | b'g' => b'C',
+            _ => b'N',
         }
     }
 }

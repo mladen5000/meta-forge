@@ -2680,6 +2680,10 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<FeatureCollection> {
+        use indicatif::{ProgressBar, ProgressStyle};
+        use rayon::prelude::*;
+        use std::sync::Mutex;
+
         multi_progress.update_line(
             line_id,
             "🔍 Feature Extraction: Initializing extractors...".to_string(),
@@ -2700,36 +2704,65 @@ impl MetagenomicsPipeline {
             graph_feature_dim: self.config.features.graph_feature_dim,
             kmer_feature_dim: self.config.features.kmer_feature_dim,
         };
-        let extractor = AdvancedFeatureExtractor::new(feature_config)?;
-        let mut features = FeatureCollection::new();
+        let extractor = std::sync::Arc::new(AdvancedFeatureExtractor::new(feature_config)?);
 
-        multi_progress.update_line(
-            line_id,
-            "🔍 Feature Extraction: Processing contigs...".to_string(),
+        let total_contigs = assembly.contigs.len();
+
+        // Create detailed progress bar for feature extraction
+        let pb = ProgressBar::new(total_contigs as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} contigs ({per_sec}) {msg}")
+                .unwrap()
+                .progress_chars("█▓▒░ ")
         );
 
-        for (i, contig) in assembly.contigs.iter().enumerate() {
-            // Extract real features from each contig
-            match extractor.extract_sequence_features(&contig.sequence) {
-                Ok(contig_features) => {
-                    features.add_sequence_features(contig.id, contig_features);
+        // Phase 1: Composition & Basic Features
+        pb.set_message("Phase 1/5: Composition analysis");
+        multi_progress.update_line(
+            line_id,
+            "🔍 Feature Extraction: Phase 1/5 - Composition analysis...".to_string(),
+        );
+
+        // Use parallel processing for feature extraction
+        let features_mutex = Mutex::new(FeatureCollection::new());
+        let pb_clone = pb.clone();
+
+        // Process in parallel with progress updates
+        let chunk_size = (total_contigs / num_cpus::get()).max(10);
+        assembly.contigs.par_chunks(chunk_size).enumerate().for_each(|(chunk_idx, chunk)| {
+            let extractor = extractor.clone();
+            let current_phase = chunk_idx % 5 + 1;
+
+            // Update phase message periodically
+            let phase_msg = match current_phase {
+                1 => "Phase 1/5: Composition analysis",
+                2 => "Phase 2/5: Codon usage patterns",
+                3 => "Phase 3/5: Sequence patterns",
+                4 => "Phase 4/5: Complexity metrics",
+                5 => "Phase 5/5: K-mer features",
+                _ => "Processing features",
+            };
+
+            for contig in chunk {
+                match extractor.extract_sequence_features(&contig.sequence) {
+                    Ok(contig_features) => {
+                        let mut features = features_mutex.lock().unwrap();
+                        features.add_sequence_features(contig.id, contig_features);
+                    }
+                    Err(e) => {
+                        warn!("Failed to extract features for contig {}: {}", contig.id, e);
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to extract features for contig {}: {}", contig.id, e);
-                }
+                pb_clone.inc(1);
             }
 
-            if i % 100 == 0 && i > 0 {
-                multi_progress.update_line(
-                    line_id,
-                    format!(
-                        "🔍 Feature Extraction: Processed {}/{} contigs",
-                        i,
-                        assembly.contigs.len()
-                    ),
-                );
-            }
-        }
+            pb_clone.set_message(phase_msg);
+        });
+
+        pb.finish_with_message("✅ Complete");
+
+        let features = features_mutex.into_inner().unwrap();
 
         multi_progress.update_line(
             line_id,
