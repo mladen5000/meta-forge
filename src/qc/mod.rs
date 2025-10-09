@@ -46,6 +46,7 @@ pub mod qc_stats;
 pub mod qc_pipeline;
 pub mod iter;
 pub mod presets;
+pub mod preprocessing;
 
 pub use quality_filter::{QualityFilter, QualityFilterConfig};
 pub use adapter_trimmer::{AdapterTrimmer, AdapterConfig, AdapterMatch};
@@ -53,3 +54,4 @@ pub use qc_stats::{QCStats, QCReport, FailureReason};
 pub use qc_pipeline::{QCPipeline, QCPipelineConfig};
 pub use iter::{QCFilterIter, QCIterExt};
 pub use presets::QCPreset;
+pub use preprocessing::{Preprocessor, FileFormat};
