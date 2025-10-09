@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
 
             // Run preprocessing to get reads
             println!("📋 Preprocessing input files...");
-            let reads = pipeline.preprocess_inputs(&input).await?;
+            let (reads, _qc_stats) = pipeline.preprocess_inputs(&input).await?;
 
             // Run assembly with verbose progress
             println!("🚀 Starting assembly with enhanced verbose progress...");

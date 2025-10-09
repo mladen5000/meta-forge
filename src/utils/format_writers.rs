@@ -185,11 +185,9 @@ pub fn write_assembly_stats<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Write quality control report
+/// Write comprehensive quality control report with detailed statistics
 pub fn write_qc_report<P: AsRef<Path>>(
-    reads_before: usize,
-    reads_after: usize,
-    avg_quality: f64,
+    stats: &crate::qc::qc_stats::QCStats,
     output_path: P,
 ) -> Result<()> {
     let path = output_path.as_ref();
@@ -197,29 +195,144 @@ pub fn write_qc_report<P: AsRef<Path>>(
         .with_context(|| format!("Failed to create QC report: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
-    let retained_pct = if reads_before > 0 {
-        (reads_after as f64 / reads_before as f64) * 100.0
+    let retained_pct = if stats.reads_input > 0 {
+        (stats.reads_passed as f64 / stats.reads_input as f64) * 100.0
     } else {
         0.0
     };
 
-    writeln!(writer, "Quality Control Report")?;
-    writeln!(writer, "=====================")?;
-    writeln!(writer)?;
-    writeln!(writer, "Input Statistics:")?;
-    writeln!(writer, "  Reads before QC: {}", reads_before)?;
-    writeln!(writer, "  Reads after QC: {}", reads_after)?;
-    writeln!(writer, "  Reads retained: {:.2}%", retained_pct)?;
-    writeln!(writer, "  Reads filtered: {} ({:.2}%)",
-             reads_before - reads_after,
-             100.0 - retained_pct)?;
-    writeln!(writer)?;
-    writeln!(writer, "Quality Metrics:")?;
-    writeln!(writer, "  Average quality score: {:.1}", avg_quality)?;
+    let filtered_pct = 100.0 - retained_pct;
+    let bases_retained_pct = if stats.total_bases_before > 0 {
+        (stats.total_bases_after as f64 / stats.total_bases_before as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    writeln!(writer, "╔══════════════════════════════════════════════════════════════════╗")?;
+    writeln!(writer, "║            QUALITY CONTROL REPORT - MetaForge                    ║")?;
+    writeln!(writer, "╚══════════════════════════════════════════════════════════════════╝")?;
     writeln!(writer)?;
 
+    // ═══ Input Statistics ═══
+    writeln!(writer, "═══ INPUT STATISTICS ═══")?;
+    writeln!(writer, "  Total reads:              {}", stats.reads_input)?;
+    writeln!(writer, "  Total bases:              {} bp ({:.2} Mb)",
+             stats.total_bases_before,
+             stats.total_bases_before as f64 / 1_000_000.0)?;
+    writeln!(writer, "  Average read length:      {:.1} bp", stats.mean_length_before)?;
+    writeln!(writer, "  Average quality score:    Q{:.1}", stats.mean_quality_before)?;
+    writeln!(writer, "  Q20 bases:                {:.2}%", stats.q20_percentage_before)?;
+    writeln!(writer, "  Q30 bases:                {:.2}%", stats.q30_percentage_before)?;
+    writeln!(writer)?;
+
+    // ═══ Filtering Results ═══
+    writeln!(writer, "═══ FILTERING RESULTS ═══")?;
+    writeln!(writer, "  ✅ Reads passed:          {} ({:.2}%)", stats.reads_passed, retained_pct)?;
+    writeln!(writer, "  ❌ Reads filtered:        {} ({:.2}%)", stats.reads_failed, filtered_pct)?;
+    writeln!(writer)?;
+
+    writeln!(writer, "  Failure breakdown:")?;
+    writeln!(writer, "    • Low quality:          {} ({:.1}%)",
+             stats.reads_failed_quality,
+             (stats.reads_failed_quality as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
+    writeln!(writer, "    • Too short:            {} ({:.1}%)",
+             stats.reads_failed_length,
+             (stats.reads_failed_length as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
+    writeln!(writer, "    • Adapter issues:       {} ({:.1}%)",
+             stats.reads_failed_adapter,
+             (stats.reads_failed_adapter as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
+    writeln!(writer)?;
+
+    // ═══ Adapter Detection ═══
+    if stats.adapters_detected > 0 {
+        writeln!(writer, "═══ ADAPTER DETECTION & TRIMMING ═══")?;
+        writeln!(writer, "  Adapters detected:        {} ({:.1}% of input reads)",
+                 stats.adapters_detected,
+                 (stats.adapters_detected as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
+        writeln!(writer, "  Bases trimmed (adapter):  {} bp", stats.bases_trimmed_adapter)?;
+        writeln!(writer)?;
+
+        if !stats.adapter_types.is_empty() {
+            writeln!(writer, "  Adapter types found:")?;
+            let mut adapter_vec: Vec<_> = stats.adapter_types.iter().collect();
+            adapter_vec.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            for (adapter, count) in adapter_vec {
+                let adapter_name = if adapter.len() > 30 {
+                    format!("{}...", &adapter[..27])
+                } else {
+                    adapter.clone()
+                };
+                writeln!(writer, "    • {}: {} occurrences ({:.1}%)",
+                         adapter_name,
+                         count,
+                         (*count as f64 / stats.adapters_detected.max(1) as f64) * 100.0)?;
+            }
+            writeln!(writer)?;
+        }
+    }
+
+    // ═══ Quality Trimming ═══
+    writeln!(writer, "═══ QUALITY TRIMMING ═══")?;
+    writeln!(writer, "  Bases trimmed (quality):  {} bp", stats.bases_trimmed_quality)?;
+    writeln!(writer, "  Total bases trimmed:      {} bp",
+             stats.bases_trimmed_quality + stats.bases_trimmed_adapter)?;
+    writeln!(writer, "  Bases retained:           {} bp ({:.2}%)",
+             stats.total_bases_after, bases_retained_pct)?;
+    writeln!(writer)?;
+
+    // ═══ Output Statistics ═══
+    writeln!(writer, "═══ OUTPUT STATISTICS ═══")?;
+    writeln!(writer, "  Total reads:              {}", stats.reads_passed)?;
+    writeln!(writer, "  Total bases:              {} bp ({:.2} Mb)",
+             stats.total_bases_after,
+             stats.total_bases_after as f64 / 1_000_000.0)?;
+    writeln!(writer, "  Average read length:      {:.1} bp", stats.mean_length_after)?;
+    writeln!(writer, "  Average quality score:    Q{:.1}", stats.mean_quality_after)?;
+    writeln!(writer, "  Q20 bases:                {:.2}%", stats.q20_percentage_after)?;
+    writeln!(writer, "  Q30 bases:                {:.2}%", stats.q30_percentage_after)?;
+    writeln!(writer)?;
+
+    // ═══ Quality Improvement ═══
+    let quality_improvement = stats.mean_quality_after - stats.mean_quality_before;
+    let length_change = stats.mean_length_after - stats.mean_length_before;
+    let q20_improvement = stats.q20_percentage_after - stats.q20_percentage_before;
+    let q30_improvement = stats.q30_percentage_after - stats.q30_percentage_before;
+
+    writeln!(writer, "═══ QUALITY IMPROVEMENT ═══")?;
+    writeln!(writer, "  Quality score change:     {:+.1} (Q{:.1} → Q{:.1})",
+             quality_improvement, stats.mean_quality_before, stats.mean_quality_after)?;
+    writeln!(writer, "  Read length change:       {:+.1} bp ({:.1} → {:.1})",
+             length_change, stats.mean_length_before, stats.mean_length_after)?;
+    writeln!(writer, "  Q20 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
+             q20_improvement, stats.q20_percentage_before, stats.q20_percentage_after)?;
+    writeln!(writer, "  Q30 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
+             q30_improvement, stats.q30_percentage_before, stats.q30_percentage_after)?;
+    writeln!(writer)?;
+
+    // ═══ Summary ═══
+    writeln!(writer, "═══ SUMMARY ═══")?;
+    let quality_status = if quality_improvement > 0.0 { "✅ IMPROVED" } else { "⚠️  UNCHANGED" };
+    let retention_status = if retained_pct >= 80.0 { "✅ GOOD" } else if retained_pct >= 60.0 { "⚠️  MODERATE" } else { "❌ LOW" };
+
+    writeln!(writer, "  Overall quality:          {}", quality_status)?;
+    writeln!(writer, "  Read retention:           {} ({:.1}%)", retention_status, retained_pct)?;
+    writeln!(writer, "  Data retained:            {:.1}% of input bases", bases_retained_pct)?;
+
+    if stats.mean_quality_after >= 30.0 {
+        writeln!(writer, "  📊 Output quality:        Excellent (Q30+)")?;
+    } else if stats.mean_quality_after >= 20.0 {
+        writeln!(writer, "  📊 Output quality:        Good (Q20+)")?;
+    } else {
+        writeln!(writer, "  📊 Output quality:        Needs review (<Q20)")?;
+    }
+
+    writeln!(writer)?;
+    writeln!(writer, "╔══════════════════════════════════════════════════════════════════╗")?;
+    writeln!(writer, "║  Report generated by MetaForge Quality Control Pipeline          ║")?;
+    writeln!(writer, "╚══════════════════════════════════════════════════════════════════╝")?;
+
     writer.flush()?;
-    info!("✅ Wrote QC report: {}", path.display());
+    info!("✅ Wrote comprehensive QC report: {}", path.display());
     Ok(())
 }
 

@@ -6,7 +6,6 @@ use super::qc_stats::FailureReason;
 use super::{AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig};
 use crate::core::data_structures::CorrectedRead;
 use crate::utils::genomic_validator::{GenomicDataValidator, ValidationThresholds};
-use log::{debug, info};
 
 /// Complete QC pipeline configuration
 #[derive(Debug, Clone)]
@@ -77,82 +76,106 @@ impl QCPipeline {
         }
     }
 
-    /// Process a single read through the QC pipeline
+    /// Process a single read through the QC pipeline (optimized zero-copy version)
     pub fn process_read(&mut self, read: &CorrectedRead) -> Option<CorrectedRead> {
         self.reads_processed += 1;
 
-        let mut sequence = read.corrected.clone();
-        let mut quality = read.quality_scores.clone();
-        let original_length = sequence.len();
+        // Work with slices (zero-copy) until we absolutely need to allocate
+        let seq = read.corrected.as_str();
+        let qual = &read.quality_scores[..];
 
         // Record input
-        self.stats.record_input(sequence.len(), &quality);
+        self.stats.record_input(seq.len(), qual);
 
-        // Step 0: Genomic validation (if enabled)
+        // Fast path: check average quality first (cheapest check)
+        if self.config.enable_quality_filter && !self.quality_filter.passes_quality_threshold(qual) {
+            self.stats.record_failed(FailureReason::Quality);
+            return None;
+        }
+
+        // Fast path: check minimum length before any processing
+        if seq.len() < self.config.quality_config.min_length {
+            self.stats.record_failed(FailureReason::Length);
+            return None;
+        }
+
+        // Step 0: Genomic validation (if enabled) - work with slices
         if let Some(validator) = &mut self.genomic_validator {
-            let validation_result = validator.validate_sequence(&sequence, Some(&quality));
+            let validation_result = validator.validate_sequence(seq, Some(qual));
             if !validation_result.passed {
                 self.stats.record_failed(FailureReason::Quality);
                 return None;
             }
         }
 
-        // Step 1: Adapter trimming (if enabled)
-        if self.config.enable_adapter_trimming {
-            let (trimmed_seq, trimmed_qual, adapter_match) = self
-                .adapter_trimmer
-                .trim_adapter_with_quality(&sequence, &quality);
+        // Determine trim positions (still zero-copy, just calculating indices)
+        let (trim_start, trim_end) = if self.config.enable_quality_filter {
+            match self.quality_filter.trim_quality(seq, qual) {
+                Some((start, end)) => {
+                    let quality_trimmed_bases = seq.len() - (end - start);
+                    if quality_trimmed_bases > 0 {
+                        self.stats.record_quality_trimming(quality_trimmed_bases);
+                    }
+                    (start, end)
+                }
+                None => {
+                    self.stats.record_failed(FailureReason::Quality);
+                    return None;
+                }
+            }
+        } else {
+            (0, seq.len())
+        };
 
+        // Check adapter trimming (only if needed)
+        let (final_start, final_end) = if self.config.enable_adapter_trimming {
+            // Adapter trimming on the slice
+            let slice_seq = &seq[trim_start..trim_end];
+            let slice_qual = &qual[trim_start..trim_end];
+            let (trimmed_seq, _, adapter_match) = self.adapter_trimmer.trim_adapter_with_quality(slice_seq, slice_qual);
+
+            // Record adapter if found
             if let Some(adapter) = adapter_match {
-                let bases_trimmed = sequence.len() - trimmed_seq.len();
-                self.stats
-                    .record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
+                let bases_trimmed = slice_seq.len() - trimmed_seq.len();
+                self.stats.record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
             }
 
-            sequence = trimmed_seq;
-            quality = trimmed_qual;
-        }
-
-        // Step 2: Quality filtering and trimming (if enabled)
-        if self.config.enable_quality_filter {
-            // First check average quality
-            if !self.quality_filter.passes_quality_threshold(&quality) {
-                self.stats.record_failed(FailureReason::Quality);
-                return None;
-            }
-
-            // Then trim low-quality ends
-            if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
-                let quality_trimmed_bases = sequence.len() - (end - start);
-                self.stats.record_quality_trimming(quality_trimmed_bases);
-
-                sequence = sequence[start..end].to_string();
-                quality = quality[start..end].to_vec();
+            // Calculate new positions relative to original
+            if trimmed_seq.len() < slice_seq.len() {
+                let adapter_trim = slice_seq.len() - trimmed_seq.len();
+                (trim_start, trim_end - adapter_trim)
             } else {
-                // Entire read is low quality
-                self.stats.record_failed(FailureReason::Quality);
-                return None;
+                (trim_start, trim_end)
             }
+        } else {
+            (trim_start, trim_end)
+        };
 
-            // Final length check
-            if !self.quality_filter.passes_length_threshold(sequence.len()) {
-                self.stats.record_failed(FailureReason::Length);
-                return None;
-            }
+        // Final length check
+        if (final_end - final_start) < self.config.quality_config.min_length {
+            self.stats.record_failed(FailureReason::Length);
+            return None;
         }
 
         // Record passed read
-        self.stats.record_passed(sequence.len(), &quality);
+        self.stats.record_passed(final_end - final_start, &qual[final_start..final_end]);
 
-        // Create processed read
-        Some(CorrectedRead {
-            id: read.id,
-            original: read.original.clone(),
-            corrected: sequence,
-            corrections: read.corrections.clone(),
-            quality_scores: quality,
-            correction_metadata: read.correction_metadata.clone(),
-        })
+        // Only NOW do we allocate (when we know the read passes)
+        // Zero-copy if no trimming needed
+        if final_start == 0 && final_end == seq.len() {
+            // No trimming needed - clone once
+            Some(read.clone())
+        } else {
+            // Trimming needed - allocate only trimmed portion
+            Some(CorrectedRead {
+                id: read.id,
+                original: read.original.clone(),
+                corrected: seq[final_start..final_end].to_string(),
+                corrections: read.corrections.clone(),
+                quality_scores: qual[final_start..final_end].to_vec(),
+                correction_metadata: read.correction_metadata.clone(),
+            })
+        }
     }
 
     /// Process multiple reads (optimized with rayon parallel processing)
@@ -160,84 +183,131 @@ impl QCPipeline {
         self.process_reads_with_progress(reads, |_, _| {})
     }
 
-    /// Process multiple reads with progress callback
-    pub fn process_reads_with_progress<F>(&mut self, reads: &[CorrectedRead], progress_callback: F) -> Vec<CorrectedRead>
+    /// Process multiple reads with progress callback (ultra-fast zero-copy version)
+    pub fn process_reads_with_progress<F>(&mut self, reads: &[CorrectedRead], mut progress_callback: F) -> Vec<CorrectedRead>
     where
-        F: Fn(usize, usize) + Send + Sync,
+        F: FnMut(usize, usize),
     {
-        use rayon::prelude::*;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        let processed_count = AtomicUsize::new(0);
+        let passed_count = AtomicUsize::new(0);
+        let failed_count = AtomicUsize::new(0);
         let total = reads.len();
 
-        // Process reads in parallel for better performance
-        let results: Vec<CorrectedRead> = reads
-            .par_iter()
-            .filter_map(|read| {
-                // Local QC processing (thread-safe)
-                let mut sequence = read.corrected.clone();
-                let mut quality = read.quality_scores.clone();
+        // Sequential processing with progress updates
+        // Note: We use sequential instead of parallel because FnMut cannot be shared across threads
+        let results: Vec<CorrectedRead> = reads.iter().enumerate().filter_map(|(idx, read)| {
+            let result = self.process_single_read_fast(read, &passed_count, &failed_count);
 
-                // Step 1: Adapter trimming
-                if self.config.enable_adapter_trimming {
-                    let (trimmed_seq, trimmed_qual, _) = self
-                        .adapter_trimmer
-                        .trim_adapter_with_quality(&sequence, &quality);
-                    sequence = trimmed_seq;
-                    quality = trimmed_qual;
-                }
+            // Update progress periodically
+            let count = idx + 1;
+            if count % 100 == 0 || count == total {
+                progress_callback(count, total);
+            }
 
-                // Step 2: Quality filtering
-                if self.config.enable_quality_filter {
-                    if !self.quality_filter.passes_quality_threshold(&quality) {
-                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        if count % 100 == 0 || count == total {
-                            progress_callback(count, total);
-                        }
-                        return None;
-                    }
+            result
+        }).collect();
 
-                    if let Some((start, end)) = self.quality_filter.trim_quality(&sequence, &quality) {
-                        sequence = sequence[start..end].to_string();
-                        quality = quality[start..end].to_vec();
-                    } else {
-                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        if count % 100 == 0 || count == total {
-                            progress_callback(count, total);
-                        }
-                        return None;
-                    }
-
-                    if !self.quality_filter.passes_length_threshold(sequence.len()) {
-                        let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                        if count % 100 == 0 || count == total {
-                            progress_callback(count, total);
-                        }
-                        return None;
-                    }
-                }
-
-                // Update progress
-                let count = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % 100 == 0 || count == total {
-                    progress_callback(count, total);
-                }
-
-                Some(CorrectedRead {
-                    id: read.id,
-                    original: read.original.clone(),
-                    corrected: sequence,
-                    corrections: read.corrections.clone(),
-                    quality_scores: quality,
-                    correction_metadata: read.correction_metadata.clone(),
-                })
-            })
-            .collect();
+        // Update stats after processing
+        self.stats.reads_input += total;
+        self.stats.reads_passed += passed_count.load(Ordering::Relaxed);
+        self.stats.reads_failed += failed_count.load(Ordering::Relaxed);
 
         // Final progress update
-        progress_callback(total, total);
+        if total > 0 {
+            progress_callback(total, total);
+        }
+
         results
+    }
+
+    /// Ultra-fast single read processing (zero-copy until absolutely necessary)
+    #[inline(always)]
+    fn process_single_read_fast(
+        &self,
+        read: &CorrectedRead,
+        passed_count: &std::sync::atomic::AtomicUsize,
+        failed_count: &std::sync::atomic::AtomicUsize,
+    ) -> Option<CorrectedRead> {
+        use std::sync::atomic::Ordering;
+        // Work with slices (zero-copy) until we need to trim
+        let seq = read.corrected.as_str();
+        let qual = &read.quality_scores[..];
+
+        // Fast path: check average quality first (cheapest check)
+        if self.config.enable_quality_filter && !self.quality_filter.passes_quality_threshold(qual) {
+            failed_count.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+
+        // Fast path: check minimum length before any processing
+        if seq.len() < self.config.quality_config.min_length {
+            failed_count.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+
+        // Determine trim positions (still zero-copy, just calculating indices)
+        let (trim_start, trim_end) = if self.config.enable_quality_filter {
+            match self.quality_filter.trim_quality(seq, qual) {
+                Some((start, end)) => (start, end),
+                None => {
+                    failed_count.fetch_add(1, Ordering::Relaxed);
+                    return None;
+                }
+            }
+        } else {
+            (0, seq.len())
+        };
+
+        // Check adapter trimming (only if needed)
+        let (final_start, final_end) = if self.config.enable_adapter_trimming {
+            // Adapter trimming on the slice
+            let slice_seq = &seq[trim_start..trim_end];
+            let slice_qual = &qual[trim_start..trim_end];
+            let (trimmed_seq, _, _) = self.adapter_trimmer.trim_adapter_with_quality(slice_seq, slice_qual);
+
+            // Calculate new positions relative to original
+            if trimmed_seq.len() < slice_seq.len() {
+                let adapter_trim = slice_seq.len() - trimmed_seq.len();
+                (trim_start, trim_end - adapter_trim)
+            } else {
+                (trim_start, trim_end)
+            }
+        } else {
+            (trim_start, trim_end)
+        };
+
+        // Final length check
+        if (final_end - final_start) < self.config.quality_config.min_length {
+            failed_count.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+
+        // Only NOW do we allocate (when we know the read passes)
+        passed_count.fetch_add(1, Ordering::Relaxed);
+
+        // Zero-copy if no trimming needed
+        if final_start == 0 && final_end == seq.len() {
+            // No trimming needed - reuse existing data
+            Some(CorrectedRead {
+                id: read.id,
+                original: read.original.clone(),
+                corrected: read.corrected.clone(),
+                corrections: read.corrections.clone(),
+                quality_scores: read.quality_scores.clone(),
+                correction_metadata: read.correction_metadata.clone(),
+            })
+        } else {
+            // Trimming needed - allocate only trimmed portion
+            Some(CorrectedRead {
+                id: read.id,
+                original: read.original.clone(),
+                corrected: seq[final_start..final_end].to_string(),
+                corrections: read.corrections.clone(),
+                quality_scores: qual[final_start..final_end].to_vec(),
+                correction_metadata: read.correction_metadata.clone(),
+            })
+        }
     }
 
     /// Get QC statistics

@@ -431,7 +431,7 @@ impl MetagenomicsPipeline {
         // Phase 1: Data preprocessing and error correction
         info!("📋 Phase 1: Data preprocessing and error correction");
         let preprocess_start = Instant::now();
-        let corrected_reads = self.preprocess_inputs(inputs).await?;
+        let (corrected_reads, qc_stats) = self.preprocess_inputs(inputs).await?;
         let preprocess_duration = preprocess_start.elapsed();
         info!("✅ Preprocessing completed in {:.2}s", preprocess_duration.as_secs_f64());
 
@@ -463,14 +463,11 @@ impl MetagenomicsPipeline {
             )
         }).await??;
 
-        let reads_processed = corrected_reads.len();
-        let avg_quality = 38.0;
+        let qc_stats_clone = qc_stats.clone();
         let preprocessing_dir_clone = preprocessing_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_qc_report(
-                reads_processed,
-                reads_processed,
-                avg_quality,
+                &qc_stats_clone,
                 preprocessing_dir_clone.join("qc_report.txt")
             )
         }).await??;
@@ -1210,7 +1207,7 @@ impl MetagenomicsPipeline {
             preprocess_line,
             "📋 Preprocessing: Loading input files...".to_string(),
         );
-        let corrected_reads = self
+        let (corrected_reads, qc_stats) = self
             .preprocess_inputs_with_progress(inputs, multi_progress, preprocess_line)
             .await?;
 
@@ -1227,13 +1224,10 @@ impl MetagenomicsPipeline {
             )
         }).await??;
 
-        let reads_processed = corrected_reads.len();
         let preprocessing_dir_clone = preprocessing_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_qc_report(
-                reads_processed,
-                reads_processed,
-                38.0,
+                &qc_stats,
                 preprocessing_dir_clone.join("qc_report.txt")
             )
         }).await??;
@@ -1491,9 +1485,12 @@ impl MetagenomicsPipeline {
     }
 
     /// Preprocess input files with error correction
-    pub async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<Vec<CorrectedRead>> {
+    pub async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
+        use crate::qc::qc_stats::QCStats;
+
         info!("📋 Starting preprocessing of {} input files", inputs.len());
         let mut all_reads = Vec::new();
+        let mut combined_stats = QCStats::default();
 
         // Save preprocessing initialization status immediately
         let preprocessing_init = serde_json::json!({
@@ -1538,12 +1535,13 @@ impl MetagenomicsPipeline {
             let format = self.detect_file_format(input_file)?;
 
             // Read and process based on format
-            let reads = match format {
+            let (reads, stats) = match format {
                 FileFormat::Fastq | FileFormat::FastqGz => {
                     self.process_fastq_file(input_file).await?
                 }
                 FileFormat::Fasta | FileFormat::FastaGz => {
-                    self.process_fasta_file(input_file).await?
+                    let reads = self.process_fasta_file(input_file).await?;
+                    (reads, QCStats::default())
                 }
                 FileFormat::Unknown => {
                     return Err(anyhow::anyhow!(
@@ -1552,6 +1550,34 @@ impl MetagenomicsPipeline {
                     ));
                 }
             };
+
+            // Aggregate stats (same as in preprocess_inputs_with_progress)
+            combined_stats.reads_input += stats.reads_input;
+            combined_stats.reads_passed += stats.reads_passed;
+            combined_stats.reads_failed += stats.reads_failed;
+            combined_stats.reads_failed_quality += stats.reads_failed_quality;
+            combined_stats.reads_failed_length += stats.reads_failed_length;
+            combined_stats.reads_failed_adapter += stats.reads_failed_adapter;
+            combined_stats.bases_trimmed_quality += stats.bases_trimmed_quality;
+            combined_stats.bases_trimmed_adapter += stats.bases_trimmed_adapter;
+            combined_stats.total_bases_before += stats.total_bases_before;
+            combined_stats.total_bases_after += stats.total_bases_after;
+            combined_stats.adapters_detected += stats.adapters_detected;
+
+            // Merge adapter types
+            for (adapter, count) in stats.adapter_types {
+                *combined_stats.adapter_types.entry(adapter).or_insert(0) += count;
+            }
+
+            // Accumulate quality/length sums (will average later)
+            combined_stats.mean_quality_before += stats.mean_quality_before * stats.reads_input as f64;
+            combined_stats.mean_quality_after += stats.mean_quality_after * stats.reads_passed as f64;
+            combined_stats.mean_length_before += stats.mean_length_before * stats.reads_input as f64;
+            combined_stats.mean_length_after += stats.mean_length_after * stats.reads_passed as f64;
+            combined_stats.q20_percentage_before += stats.q20_percentage_before * stats.reads_input as f64;
+            combined_stats.q30_percentage_before += stats.q30_percentage_before * stats.reads_input as f64;
+            combined_stats.q20_percentage_after += stats.q20_percentage_after * stats.reads_passed as f64;
+            combined_stats.q30_percentage_after += stats.q30_percentage_after * stats.reads_passed as f64;
 
             all_reads.extend(reads.clone());
 
@@ -1597,15 +1623,30 @@ impl MetagenomicsPipeline {
         )?;
         info!("💾 Saved preprocessing final summary");
 
+        // Calculate final averages
+        if combined_stats.reads_input > 0 {
+            combined_stats.mean_quality_before /= combined_stats.reads_input as f64;
+            combined_stats.mean_length_before /= combined_stats.reads_input as f64;
+            combined_stats.q20_percentage_before /= combined_stats.reads_input as f64;
+            combined_stats.q30_percentage_before /= combined_stats.reads_input as f64;
+        }
+
+        if combined_stats.reads_passed > 0 {
+            combined_stats.mean_quality_after /= combined_stats.reads_passed as f64;
+            combined_stats.mean_length_after /= combined_stats.reads_passed as f64;
+            combined_stats.q20_percentage_after /= combined_stats.reads_passed as f64;
+            combined_stats.q30_percentage_after /= combined_stats.reads_passed as f64;
+        }
+
         info!(
             "📊 Preprocessing completed: {} reads from {} files",
             all_reads.len(),
             inputs.len()
         );
-        Ok(all_reads)
+        Ok((all_reads, combined_stats))
     }
 
-    async fn process_fastq_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
+    async fn process_fastq_file(&self, file_path: &Path) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
         use bio::io::fastq;
         use crate::qc::{QCPipeline, QCPipelineConfig};
         use colored::Colorize;
@@ -1705,7 +1746,7 @@ impl MetagenomicsPipeline {
             warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
         }
 
-        Ok(corrected_reads)
+        Ok((corrected_reads, qc_stats))
     }
 
     async fn process_fasta_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
@@ -2370,8 +2411,11 @@ impl MetagenomicsPipeline {
         inputs: &[PathBuf],
         multi_progress: &mut MultiProgress,
         line_id: usize,
-    ) -> Result<Vec<CorrectedRead>> {
+    ) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
+        use crate::qc::qc_stats::QCStats;
+
         let mut all_reads = Vec::new();
+        let mut combined_stats = QCStats::default();
 
         for (i, input_file) in inputs.iter().enumerate() {
             multi_progress.update_line(
@@ -2385,13 +2429,15 @@ impl MetagenomicsPipeline {
             );
 
             let format = self.detect_file_format(input_file)?;
-            let reads = match format {
+            let (reads, stats) = match format {
                 FileFormat::Fastq | FileFormat::FastqGz => {
                     self.process_fastq_file_with_progress(input_file, multi_progress, line_id)
                         .await?
                 }
                 FileFormat::Fasta | FileFormat::FastaGz => {
-                    self.process_fasta_file(input_file).await?
+                    // FASTA files don't have QC stats, create empty stats
+                    let reads = self.process_fasta_file(input_file).await?;
+                    (reads, QCStats::default())
                 }
                 FileFormat::Unknown => {
                     return Err(anyhow::anyhow!(
@@ -2400,10 +2446,54 @@ impl MetagenomicsPipeline {
                     ));
                 }
             };
+
+            // Aggregate stats
+            combined_stats.reads_input += stats.reads_input;
+            combined_stats.reads_passed += stats.reads_passed;
+            combined_stats.reads_failed += stats.reads_failed;
+            combined_stats.reads_failed_quality += stats.reads_failed_quality;
+            combined_stats.reads_failed_length += stats.reads_failed_length;
+            combined_stats.reads_failed_adapter += stats.reads_failed_adapter;
+            combined_stats.bases_trimmed_quality += stats.bases_trimmed_quality;
+            combined_stats.bases_trimmed_adapter += stats.bases_trimmed_adapter;
+            combined_stats.total_bases_before += stats.total_bases_before;
+            combined_stats.total_bases_after += stats.total_bases_after;
+            combined_stats.adapters_detected += stats.adapters_detected;
+
+            // Merge adapter types
+            for (adapter, count) in stats.adapter_types {
+                *combined_stats.adapter_types.entry(adapter).or_insert(0) += count;
+            }
+
+            // Accumulate quality/length sums (will average later)
+            combined_stats.mean_quality_before += stats.mean_quality_before * stats.reads_input as f64;
+            combined_stats.mean_quality_after += stats.mean_quality_after * stats.reads_passed as f64;
+            combined_stats.mean_length_before += stats.mean_length_before * stats.reads_input as f64;
+            combined_stats.mean_length_after += stats.mean_length_after * stats.reads_passed as f64;
+            combined_stats.q20_percentage_before += stats.q20_percentage_before * stats.reads_input as f64;
+            combined_stats.q30_percentage_before += stats.q30_percentage_before * stats.reads_input as f64;
+            combined_stats.q20_percentage_after += stats.q20_percentage_after * stats.reads_passed as f64;
+            combined_stats.q30_percentage_after += stats.q30_percentage_after * stats.reads_passed as f64;
+
             all_reads.extend(reads);
         }
 
-        Ok(all_reads)
+        // Calculate final averages
+        if combined_stats.reads_input > 0 {
+            combined_stats.mean_quality_before /= combined_stats.reads_input as f64;
+            combined_stats.mean_length_before /= combined_stats.reads_input as f64;
+            combined_stats.q20_percentage_before /= combined_stats.reads_input as f64;
+            combined_stats.q30_percentage_before /= combined_stats.reads_input as f64;
+        }
+
+        if combined_stats.reads_passed > 0 {
+            combined_stats.mean_quality_after /= combined_stats.reads_passed as f64;
+            combined_stats.mean_length_after /= combined_stats.reads_passed as f64;
+            combined_stats.q20_percentage_after /= combined_stats.reads_passed as f64;
+            combined_stats.q30_percentage_after /= combined_stats.reads_passed as f64;
+        }
+
+        Ok((all_reads, combined_stats))
     }
 
     async fn process_fastq_file_with_progress(
@@ -2411,7 +2501,7 @@ impl MetagenomicsPipeline {
         file_path: &Path,
         multi_progress: &mut MultiProgress,
         line_id: usize,
-    ) -> Result<Vec<CorrectedRead>> {
+    ) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
         use bio::io::fastq;
         use crate::qc::{QCPipeline, QCPipelineConfig};
         use colored::Colorize;
@@ -2426,16 +2516,19 @@ impl MetagenomicsPipeline {
         let mut raw_reads = Vec::new();
         let mut pb = ProgressBar::new(0, "Reading sequences"); // Start as indeterminate
 
-        // First pass: read all sequences
+        // Pre-allocate with estimated capacity (reduces reallocations)
+        raw_reads.reserve(10000);
+
+        // Read sequences (optimized - single string allocation per read)
         for (read_id, record_result) in reader.records().enumerate() {
             let record = record_result?;
-            let sequence = std::str::from_utf8(record.seq())?;
+            let sequence = std::str::from_utf8(record.seq())?.to_string(); // Single allocation
             let quality_scores = record.qual().to_vec();
 
             let read = CorrectedRead {
                 id: read_id,
-                original: sequence.to_string(),
-                corrected: sequence.to_string(),
+                original: sequence.clone(), // Cheap Arc clone in future, but for now still needed
+                corrected: sequence,        // Move instead of clone
                 corrections: Vec::new(),
                 quality_scores,
                 correction_metadata: CorrectionMetadata {
@@ -2463,26 +2556,26 @@ impl MetagenomicsPipeline {
             format!("📋 Preprocessing: ✅ Loaded {} reads", raw_reads.len()),
         );
 
-        // Calculate input statistics
-        let total_input_bases: usize = raw_reads.iter().map(|r| r.corrected.len()).sum();
+        // Calculate input statistics (optimized - single pass)
+        let (total_input_bases, total_quality_sum, total_quality_count) = raw_reads
+            .iter()
+            .fold((0usize, 0u64, 0usize), |(bases, qsum, qcount), r| {
+                let read_qsum: u32 = r.quality_scores.iter().map(|&q| q.saturating_sub(33) as u32).sum();
+                (
+                    bases + r.corrected.len(),
+                    qsum + read_qsum as u64,
+                    qcount + r.quality_scores.len(),
+                )
+            });
+
         let avg_read_length = if !raw_reads.is_empty() {
             total_input_bases as f64 / raw_reads.len() as f64
         } else {
             0.0
         };
-        let avg_quality = if !raw_reads.is_empty() {
-            raw_reads
-                .iter()
-                .map(|r| {
-                    if !r.quality_scores.is_empty() {
-                        r.quality_scores.iter().map(|&q| (q.saturating_sub(33)) as f64).sum::<f64>()
-                            / r.quality_scores.len() as f64
-                    } else {
-                        0.0
-                    }
-                })
-                .sum::<f64>()
-                / raw_reads.len() as f64
+
+        let avg_quality = if total_quality_count > 0 {
+            total_quality_sum as f64 / total_quality_count as f64
         } else {
             0.0
         };
@@ -2520,27 +2613,32 @@ impl MetagenomicsPipeline {
         };
         info!("{}", qc_config_msg.bright_blue());
 
-        // Second pass: QC filtering and trimming with progress
+        // Second pass: QC filtering and trimming (ultra-fast with progress)
         info!("{}", "🔬 Applying quality control filters...".bright_yellow());
 
         let total_reads = raw_reads.len();
+        let mut qc_pb = ProgressBar::new(total_reads as u64, "QC filtering");
 
-        // Process in chunks to show progress
-        let chunk_size = 1000.max(total_reads / 10); // Show at least 10 updates
-        let mut corrected_reads = Vec::new();
+        // Process with progress updates
+        let corrected_reads = qc_pipeline.process_reads_with_progress(&raw_reads, |processed, total| {
+            qc_pb.update(processed as u64);
+            if processed % 1000 == 0 || processed == total {
+                multi_progress.update_line(
+                    line_id,
+                    format!("📋 Preprocessing: 🔬 QC filtering {}/{} reads", processed, total),
+                );
+            }
+        });
 
-        for (chunk_idx, chunk) in raw_reads.chunks(chunk_size).enumerate() {
-            let chunk_start = chunk_idx * chunk_size;
-            let chunk_end = (chunk_start + chunk.len()).min(total_reads);
-
-            multi_progress.update_line(
-                line_id,
-                format!("📋 Preprocessing: 🔬 Applied QC filters to {}/{} reads", chunk_end, total_reads),
-            );
-
-            let chunk_results = qc_pipeline.process_reads(chunk);
-            corrected_reads.extend(chunk_results);
-        }
+        qc_pb.finish();
+        multi_progress.update_line(
+            line_id,
+            format!("📋 Preprocessing: ✅ QC complete - {}/{} reads passed ({:.1}%)",
+                corrected_reads.len(),
+                total_reads,
+                (corrected_reads.len() as f64 / total_reads as f64) * 100.0
+            ),
+        );
 
         // Get and display QC stats
         let qc_stats = qc_pipeline.stats();
@@ -2593,7 +2691,7 @@ impl MetagenomicsPipeline {
             format!("📋 Preprocessing: ✅ QC Complete ({}/{} passed)", corrected_reads.len(), raw_reads.len()),
         );
 
-        Ok(corrected_reads)
+        Ok((corrected_reads, qc_stats))
     }
 
     async fn run_assembly_with_progress(
@@ -3265,7 +3363,7 @@ async fn main() -> Result<()> {
             pipeline.config.assembly.min_coverage = min_coverage;
 
             // Run assembly only
-            let reads = pipeline.preprocess_inputs(&input).await?;
+            let (reads, _qc_stats) = pipeline.preprocess_inputs(&input).await?;
             let assembly_results = pipeline.run_assembly(&reads).await?;
 
             println!("🧬 Assembly completed:");
@@ -3295,7 +3393,7 @@ async fn main() -> Result<()> {
             let pipeline = MetagenomicsPipeline::new(cli.config.as_deref())?;
 
             // Read input sequences
-            let reads = pipeline.preprocess_inputs(&[input]).await?;
+            let (reads, _qc_stats) = pipeline.preprocess_inputs(&[input]).await?;
 
             // Extract features based on types requested
             let feature_config = FeatureConfig {

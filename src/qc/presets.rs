@@ -7,11 +7,11 @@ use super::{AdapterConfig, QCPipelineConfig, QualityFilterConfig};
 /// QC preset levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QCPreset {
-    /// Strict quality control (Q30, 75bp min, 5% adapter error)
+    /// Strict quality control (Q25 avg, Q20 window, 75bp min, 5% adapter error)
     Strict,
-    /// Standard quality control (Q20, 50bp min, 10% adapter error) - default
+    /// Standard quality control (Q18 avg, Q15 window, 50bp min, 10% adapter error) - default
     Standard,
-    /// Lenient quality control (Q15, 30bp min, 15% adapter error)
+    /// Lenient quality control (Q12 avg, Q10 window, 30bp min, 15% adapter error)
     Lenient,
     /// No quality control (bypass all filtering)
     None,
@@ -21,20 +21,20 @@ impl From<QCPreset> for QualityFilterConfig {
     fn from(preset: QCPreset) -> Self {
         match preset {
             QCPreset::Strict => Self {
-                min_quality: 30,
+                min_quality: 20,
                 window_size: 4,
-                min_window_quality: 30.0,
+                min_window_quality: 20.0,
                 min_length: 75,
-                min_avg_quality: 30.0,
+                min_avg_quality: 25.0,
                 quality_offset: 33,
             },
-            QCPreset::Standard => Self::default(),
+            QCPreset::Standard => Self::default(), // Now Q18 avg, Q15 window
             QCPreset::Lenient => Self {
-                min_quality: 15,
+                min_quality: 10,
                 window_size: 4,
-                min_window_quality: 15.0,
+                min_window_quality: 10.0,
                 min_length: 30,
-                min_avg_quality: 20.0,
+                min_avg_quality: 12.0,
                 quality_offset: 33,
             },
             QCPreset::None => Self {
@@ -111,9 +111,9 @@ impl From<QCPreset> for QCPipelineConfig {
 impl std::fmt::Display for QCPreset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QCPreset::Strict => write!(f, "Strict (Q30, 75bp min)"),
-            QCPreset::Standard => write!(f, "Standard (Q20, 50bp min)"),
-            QCPreset::Lenient => write!(f, "Lenient (Q15, 30bp min)"),
+            QCPreset::Strict => write!(f, "Strict (Q25 avg, 75bp min)"),
+            QCPreset::Standard => write!(f, "Standard (Q18 avg, 50bp min)"),
+            QCPreset::Lenient => write!(f, "Lenient (Q12 avg, 30bp min)"),
             QCPreset::None => write!(f, "Disabled"),
         }
     }
@@ -126,12 +126,14 @@ mod tests {
     #[test]
     fn test_quality_preset_conversion() {
         let config: QualityFilterConfig = QCPreset::Strict.into();
-        assert_eq!(config.min_quality, 30);
+        assert_eq!(config.min_quality, 20);
         assert_eq!(config.min_length, 75);
+        assert_eq!(config.min_avg_quality, 25.0);
 
         let config: QualityFilterConfig = QCPreset::Lenient.into();
-        assert_eq!(config.min_quality, 15);
+        assert_eq!(config.min_quality, 10);
         assert_eq!(config.min_length, 30);
+        assert_eq!(config.min_avg_quality, 12.0);
     }
 
     #[test]
@@ -157,7 +159,8 @@ mod tests {
 
     #[test]
     fn test_display() {
-        assert_eq!(QCPreset::Strict.to_string(), "Strict (Q30, 75bp min)");
+        assert_eq!(QCPreset::Strict.to_string(), "Strict (Q25 avg, 75bp min)");
+        assert_eq!(QCPreset::Standard.to_string(), "Standard (Q18 avg, 50bp min)");
         assert_eq!(QCPreset::None.to_string(), "Disabled");
     }
 }
