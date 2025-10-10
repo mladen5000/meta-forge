@@ -42,33 +42,33 @@ pub struct LaptopConfig {
 }
 
 impl LaptopConfig {
-    /// Configuration for 4GB laptops (conservative)
+    /// Configuration for 8GB laptops (aggressive: uses 75% of RAM)
     pub fn low_memory() -> Self {
         Self {
-            memory_budget_mb: 2048, // Increased from 1GB to 2GB
+            memory_budget_mb: 6144, // 6GB = 75% of 8GB total RAM
             cpu_cores: 2,
-            chunk_size: 2000, // Increased from 500 for better batching
-            max_k: 21,
+            chunk_size: 8000, // Increased 4x for better batching and parallelism
+            max_k: 25, // Increased from 21, well under u64 limit of 32
         }
     }
 
-    /// Configuration for 8GB laptops (balanced)
+    /// Configuration for 16GB laptops (aggressive: uses 75% of RAM)
     pub fn medium_memory() -> Self {
         Self {
-            memory_budget_mb: 4096, // Increased from 2GB to 4GB
+            memory_budget_mb: 12288, // 12GB = 75% of 16GB total RAM
             cpu_cores: 4,
-            chunk_size: 5000, // Increased from 1000 for better batching
-            max_k: 31,
+            chunk_size: 15000, // Increased 3x for better batching and parallelism
+            max_k: 31, // Maximum for efficient u64-based k-mer storage (31 * 2 = 62 bits)
         }
     }
 
-    /// Configuration for 16GB+ laptops (performance)
+    /// Configuration for 32GB+ laptops (aggressive: uses 75% of RAM)
     pub fn high_memory() -> Self {
         Self {
-            memory_budget_mb: 12288, // Increased from 4GB to 12GB
+            memory_budget_mb: 24576, // 24GB = 75% of 32GB total RAM
             cpu_cores: num_cpus::get(),
-            chunk_size: 10000, // Increased from 2000 for better batching
-            max_k: 63,
+            chunk_size: 25000, // Increased 2.5x for optimal batching and parallelism
+            max_k: 31, // Hard limit: u64 can store max 32 nucleotides (64 bits / 2 bits per nucleotide)
         }
     }
 
@@ -123,11 +123,13 @@ impl LaptopConfig {
         if cpu_cores == 0 {
             return Err(anyhow!("CPU cores must be at least 1"));
         }
-        if !(15..=127).contains(&max_k) {
-            return Err(anyhow!("Max k-mer size must be between 15 and 127"));
+        if !(15..=31).contains(&max_k) {
+            return Err(anyhow!("Max k-mer size must be between 15 and 31 (u64 2-bit encoding limit)"));
         }
 
-        let chunk_size = (memory_budget_mb / 2).max(100).min(5000);
+        // Aggressive chunk sizing: use more memory for better batching
+        // Scale chunk size with memory budget for optimal throughput
+        let chunk_size = (memory_budget_mb / 1).max(1000).min(30000);
 
         Ok(Self {
             memory_budget_mb,

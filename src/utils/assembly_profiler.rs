@@ -7,8 +7,8 @@
 //! - Coverage filtering
 
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Phase timing information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +75,12 @@ impl AssemblyProfiler {
         }
     }
 
-    fn end_phase_internal(&mut self, name: String, start: Instant, metadata: HashMap<String, String>) {
+    fn end_phase_internal(
+        &mut self,
+        name: String,
+        start: Instant,
+        metadata: HashMap<String, String>,
+    ) {
         let duration = start.elapsed();
         let memory = Self::get_current_memory_mb();
 
@@ -173,25 +178,56 @@ impl AssemblyProfile {
     pub fn print_report(&self) {
         use colored::Colorize;
 
-        println!("\n{}", "═══════════════════════════════════════════════".bright_cyan());
-        println!("{}", "    ASSEMBLY PERFORMANCE PROFILE".bright_white().bold());
-        println!("{}", "═══════════════════════════════════════════════".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════════".bright_cyan()
+        );
+        println!(
+            "{}",
+            "    ASSEMBLY PERFORMANCE PROFILE".bright_white().bold()
+        );
+        println!(
+            "{}",
+            "═══════════════════════════════════════════════".bright_cyan()
+        );
 
         println!("\n{}", "📊 Summary:".bright_yellow().bold());
-        println!("  Total time:       {} ms", self.total_duration_ms.to_string().bright_white());
+        println!(
+            "  Total time:       {} ms",
+            self.total_duration_ms.to_string().bright_white()
+        );
         println!("  Peak memory:      {:.1} MB", self.peak_memory_mb);
-        println!("  Reads processed:  {}", self.summary.reads_processed.to_string().bright_white());
-        println!("  K-mers counted:   {}", self.summary.kmers_counted.to_string().bright_white());
-        println!("  Contigs created:  {}", self.summary.contigs_generated.to_string().bright_white());
-        println!("  Throughput:       {:.0} reads/s", self.summary.reads_per_second);
-        println!("                    {:.0} k-mers/s", self.summary.kmers_per_second);
+        println!(
+            "  Reads processed:  {}",
+            self.summary.reads_processed.to_string().bright_white()
+        );
+        println!(
+            "  K-mers counted:   {}",
+            self.summary.kmers_counted.to_string().bright_white()
+        );
+        println!(
+            "  Contigs created:  {}",
+            self.summary.contigs_generated.to_string().bright_white()
+        );
+        println!(
+            "  Throughput:       {:.0} reads/s",
+            self.summary.reads_per_second
+        );
+        println!(
+            "                    {:.0} k-mers/s",
+            self.summary.kmers_per_second
+        );
 
         println!("\n{}", "⏱️  Phase Breakdown:".bright_yellow().bold());
-        println!("  {:<30} {:>12} {:>12} {:>15}", "Phase", "Time (ms)", "Memory (MB)", "Throughput");
+        println!(
+            "  {:<30} {:>12} {:>12} {:>15}",
+            "Phase", "Time (ms)", "Memory (MB)", "Throughput"
+        );
         println!("  {}", "─".repeat(72).bright_black());
 
         for phase in &self.phases {
-            let throughput_str = phase.throughput
+            let throughput_str = phase
+                .throughput
                 .map(|t| format!("{:.0} items/s", t))
                 .unwrap_or_else(|| "-".to_string());
 
@@ -206,12 +242,20 @@ impl AssemblyProfile {
             // Print metadata if present
             if !phase.metadata.is_empty() {
                 for (key, value) in &phase.metadata {
-                    println!("    {} {}: {}", "→".bright_blue(), key.bright_black(), value.bright_black());
+                    println!(
+                        "    {} {}: {}",
+                        "→".bright_blue(),
+                        key.bright_black(),
+                        value.bright_black()
+                    );
                 }
             }
         }
 
-        println!("\n{}", "═══════════════════════════════════════════════".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════════".bright_cyan()
+        );
 
         // Performance warnings
         self.print_warnings();
@@ -245,7 +289,7 @@ impl AssemblyProfile {
         // Check phase imbalance
         if let (Some(longest), Some(shortest)) = (
             self.phases.iter().max_by_key(|p| p.duration_ms),
-            self.phases.iter().min_by_key(|p| p.duration_ms)
+            self.phases.iter().min_by_key(|p| p.duration_ms),
         ) {
             let ratio = longest.duration_ms as f64 / shortest.duration_ms.max(1) as f64;
             if ratio > 50.0 {

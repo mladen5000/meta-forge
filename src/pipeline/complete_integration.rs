@@ -592,23 +592,29 @@ impl MetagenomicsPipeline {
             .output_manager
             .get_section_dir(&PipelineSection::Classification);
 
-        // Extract feature data into TSV format (FeatureVector has Array1<f64> fields)
-        let feature_names = vec![
-            "feature_dim_0".to_string(),
-            "feature_dim_1".to_string(),
-            "feature_dim_2".to_string(),
-            "feature_dim_3".to_string(),
-        ];
+        // Get actual feature names from the first feature vector's metadata
+        let feature_names = if let Some((_, first_fv)) = features.sequence_features.iter().next() {
+            first_fv.metadata.feature_names.clone()
+        } else {
+            vec!["no_features_extracted".to_string()]
+        };
 
+        // Use combined_features which includes all extracted features
         let feature_data: Vec<(String, Vec<f64>)> = features
             .sequence_features
             .iter()
             .map(|(idx, fv)| {
-                // FeatureVector has sequence_features as Array1<f64>
-                let feature_values = fv.sequence_features.to_vec();
+                // Use combined_features which has sequence + kmer features
+                let feature_values = fv.combined_features.to_vec();
                 (format!("contig_{}", idx), feature_values)
             })
             .collect();
+
+        info!(
+            "📊 Extracted features from {} contigs with {} dimensions each",
+            feature_data.len(),
+            feature_names.len()
+        );
 
         // Write features in blocking tasks (sync I/O)
         let feature_data_clone = feature_data.clone();
@@ -637,7 +643,11 @@ impl MetagenomicsPipeline {
         })
         .await??;
 
-        info!("💾 Saved feature extraction intermediate files (JSON + TSV + summary)");
+        info!(
+            "💾 Saved feature extraction files: {} vectors → {}/feature_vectors.tsv",
+            num_features,
+            features_dir.display()
+        );
 
         // Phase 4: Taxonomic classification
         info!("🏷️  Phase 4: Taxonomic classification");
@@ -1396,17 +1406,26 @@ impl MetagenomicsPipeline {
         let features_dir = self
             .output_manager
             .get_section_dir(&PipelineSection::Classification);
-        let feature_names = vec![
-            "feature_dim_0".to_string(),
-            "feature_dim_1".to_string(),
-            "feature_dim_2".to_string(),
-            "feature_dim_3".to_string(),
-        ];
+
+        // Get actual feature names from the first feature vector's metadata
+        let feature_names = if let Some((_, first_fv)) = features.sequence_features.iter().next() {
+            first_fv.metadata.feature_names.clone()
+        } else {
+            vec!["no_features_extracted".to_string()]
+        };
+
+        // Use combined_features which includes sequence + kmer features
         let feature_data: Vec<(String, Vec<f64>)> = features
             .sequence_features
             .iter()
-            .map(|(idx, fv)| (format!("contig_{}", idx), fv.sequence_features.to_vec()))
+            .map(|(idx, fv)| (format!("contig_{}", idx), fv.combined_features.to_vec()))
             .collect();
+
+        info!(
+            "📊 Preparing to write {} feature vectors with {} dimensions",
+            feature_data.len(),
+            feature_names.len()
+        );
 
         let feature_data_clone = feature_data.clone();
         let feature_names_clone = feature_names.clone();
@@ -1431,6 +1450,12 @@ impl MetagenomicsPipeline {
             )
         })
         .await??;
+
+        info!(
+            "✅ Feature extraction complete: {} vectors saved to {}",
+            num_features,
+            features_dir.join("feature_vectors.tsv").display()
+        );
 
         multi_progress.update_line(
             features_line,
@@ -2217,9 +2242,13 @@ impl MetagenomicsPipeline {
     async fn classify_sequences(
         &self,
         assembly_results: &AssemblyResults,
-        _features: &FeatureCollection,
+        features: &FeatureCollection,
     ) -> Result<Vec<TaxonomicClassification>> {
         info!("🧬 Classifying sequences with coverage-based binning...");
+        info!(
+            "   📊 Using {} extracted features for classification",
+            features.sequence_features.len()
+        );
 
         // CRITICAL FIX: Bin contigs by coverage before classification
         // This prevents counting fragments of same genome as separate species
@@ -3338,13 +3367,18 @@ impl MetagenomicsPipeline {
     async fn classify_sequences_with_progress(
         &self,
         assembly: &AssemblyResults,
-        _features: &FeatureCollection,
+        features: &FeatureCollection,
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<Vec<TaxonomicClassification>> {
         multi_progress.update_line(
             line_id,
             "🏷️  Classification: Loading ML classifier...".to_string(),
+        );
+
+        info!(
+            "   📊 Classification has access to {} feature vectors",
+            features.sequence_features.len()
         );
 
         // Initialize the ML-based contig classifier

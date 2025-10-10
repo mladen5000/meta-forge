@@ -8,6 +8,7 @@ use super::{
 };
 use crate::core::data_structures::CorrectedRead;
 use crate::utils::genomic_validator::{GenomicDataValidator, ValidationThresholds};
+use std::time::Duration;
 
 /// Complete QC pipeline configuration
 #[derive(Debug, Clone)]
