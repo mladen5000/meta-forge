@@ -104,6 +104,7 @@ impl BiologicalTestData {
                 context_window: 3,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }
     }
 }

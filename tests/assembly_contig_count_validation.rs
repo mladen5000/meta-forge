@@ -23,6 +23,7 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: AHashMap::new(),
     }
 }
 
@@ -62,13 +63,16 @@ fn test_contig_count_cannot_exceed_read_count() {
 
             // Additional quality checks
             if !contigs.is_empty() {
-                let avg_length: f64 = contigs.iter().map(|c| c.length).sum::<usize>() as f64
-                                      / contigs.len() as f64;
+                let avg_length: f64 =
+                    contigs.iter().map(|c| c.length).sum::<usize>() as f64 / contigs.len() as f64;
 
                 println!("✅ Assembly validation passed:");
                 println!("   Reads: {}", reads.len());
                 println!("   Contigs: {}", contigs.len());
-                println!("   Ratio: {:.2}x reduction", reads.len() as f64 / contigs.len() as f64);
+                println!(
+                    "   Ratio: {:.2}x reduction",
+                    reads.len() as f64 / contigs.len() as f64
+                );
                 println!("   Avg contig length: {:.1} bp", avg_length);
 
                 // Reasonable assembly should produce fewer contigs than reads (merging happened)
@@ -83,7 +87,10 @@ fn test_contig_count_cannot_exceed_read_count() {
             // Check if error is the expected validation error
             let error_msg = e.to_string();
             if error_msg.contains("Generated") && error_msg.contains("contigs from") {
-                panic!("Assembly correctly detected contig over-generation bug: {}", e);
+                panic!(
+                    "Assembly correctly detected contig over-generation bug: {}",
+                    e
+                );
             } else {
                 // Other errors might be acceptable (e.g., no valid contigs)
                 println!("Assembly failed (may be acceptable): {}", e);
@@ -106,7 +113,8 @@ fn test_non_overlapping_reads_produce_equal_or_fewer_contigs() {
         "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", // 34bp of C's
     ];
 
-    let reads: Vec<_> = sequences.iter()
+    let reads: Vec<_> = sequences
+        .iter()
         .enumerate()
         .map(|(i, seq)| create_test_read(i, seq))
         .collect();
@@ -146,7 +154,9 @@ fn test_assembly_validates_and_rejects_over_generation() {
         .collect();
 
     // If assembly has the bug, this should panic with validation error
-    let _result = assembler.assemble(&reads).expect("Should reject over-generation");
+    let _result = assembler
+        .assemble(&reads)
+        .expect("Should reject over-generation");
 }
 
 /// Test MetaSPAdes-style filtering

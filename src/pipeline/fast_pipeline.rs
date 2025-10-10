@@ -8,21 +8,20 @@
 //! - Progress tracking for user feedback
 
 use anyhow::Result;
+use colored::Colorize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::{info, instrument};
-use colored::Colorize;
 
 use crate::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig};
 use crate::core::data_structures::CorrectedRead;
 use crate::pipeline::complete_integration::{
-    AssemblyResults, FeatureCollection, TaxonomicClassification,
-    AbundanceProfile, AnalysisReport,
+    AbundanceProfile, AnalysisReport, AssemblyResults, FeatureCollection, TaxonomicClassification,
 };
-use crate::utils::configuration::FeatureExtractionConfig;
 use crate::utils::async_output_manager::{AsyncOutputManager, FastOutputConfig};
+use crate::utils::configuration::FeatureExtractionConfig;
 use crate::utils::intermediate_output::PipelineSection;
 use crate::utils::progress_display::MultiProgress;
 
@@ -47,8 +46,8 @@ impl Default for FastPipelineConfig {
     fn default() -> Self {
         Self {
             output_dir: PathBuf::from("output"),
-            minimal_output: true,  // Only essential outputs
-            skip_intermediates: true,  // Skip intermediate saves during processing
+            minimal_output: true,     // Only essential outputs
+            skip_intermediates: true, // Skip intermediate saves during processing
             max_parallel_writes: 8,
             assembly_config: LaptopConfig::auto_detect(),
             feature_config: FeatureExtractionConfig::default(),
@@ -69,16 +68,17 @@ impl FastPipeline {
         // Configure output manager for performance
         let output_config = FastOutputConfig {
             enable_json: true,
-            enable_fasta: !config.minimal_output,  // Only if not minimal
-            enable_tsv: false,  // Disable TSV for speed
-            compress_files: false,  // Disable compression for speed
-            skip_checksums: true,   // Skip checksums for speed
+            enable_fasta: !config.minimal_output, // Only if not minimal
+            enable_tsv: false,                    // Disable TSV for speed
+            compress_files: false,                // Disable compression for speed
+            skip_checksums: true,                 // Skip checksums for speed
             max_concurrent_writes: config.max_parallel_writes,
             batch_threshold: if config.skip_intermediates { 50 } else { 10 },
-            buffer_size_kb: 128,  // Larger buffer for better performance
+            buffer_size_kb: 128, // Larger buffer for better performance
         };
 
-        let output_manager = AsyncOutputManager::new(config.output_dir.clone(), output_config).await?;
+        let output_manager =
+            AsyncOutputManager::new(config.output_dir.clone(), output_config).await?;
         let progress = Arc::new(Mutex::new(MultiProgress::new()));
 
         Ok(Self {
@@ -93,9 +93,11 @@ impl FastPipeline {
     pub async fn run(&mut self, input_files: Vec<PathBuf>) -> Result<AnalysisReport> {
         let start_time = Instant::now();
 
-        eprintln!("\n{} Starting high-performance pipeline with {} files",
-                "🚀".bright_cyan(),
-                input_files.len().to_string().bright_white());
+        eprintln!(
+            "\n{} Starting high-performance pipeline with {} files",
+            "🚀".bright_cyan(),
+            input_files.len().to_string().bright_white()
+        );
 
         // Create progress tracking
         let total_steps = if self.config.skip_intermediates { 5 } else { 7 };
@@ -103,69 +105,92 @@ impl FastPipeline {
 
         // Step 1: Preprocessing with minimal I/O
         let mut step = 1;
-        eprintln!("\n{} Step {}/{}: {}",
-                "📥".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Preprocessing".bright_cyan());
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "📥".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Preprocessing".bright_cyan()
+        );
         let corrected_reads = self.run_preprocessing(&input_files, main_progress).await?;
 
         if !self.config.skip_intermediates {
-            self.save_with_progress("preprocessing", "corrected_reads", &corrected_reads).await?;
+            self.save_with_progress("preprocessing", "corrected_reads", &corrected_reads)
+                .await?;
         }
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
         step += 1;
 
         // Step 2: Assembly with optimized memory usage
-        eprintln!("\n{} Step {}/{}: {}",
-                "🧬".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Assembly".bright_cyan());
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "🧬".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Assembly".bright_cyan()
+        );
         let assembly_results = self.run_assembly(&corrected_reads, main_progress).await?;
 
         if !self.config.skip_intermediates {
-            self.save_with_progress("assembly", "assembly_results", &assembly_results).await?;
+            self.save_with_progress("assembly", "assembly_results", &assembly_results)
+                .await?;
         }
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
         step += 1;
 
         // Step 3: Feature extraction
-        eprintln!("\n{} Step {}/{}: {}",
-                "🧪".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Feature Extraction".bright_cyan());
-        let features = self.run_feature_extraction(&corrected_reads, &assembly_results, main_progress).await?;
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "🧪".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Feature Extraction".bright_cyan()
+        );
+        let features = self
+            .run_feature_extraction(&corrected_reads, &assembly_results, main_progress)
+            .await?;
 
         if !self.config.skip_intermediates {
-            self.save_with_progress("features", "feature_collection", &features).await?;
+            self.save_with_progress("features", "feature_collection", &features)
+                .await?;
         }
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
         step += 1;
 
         // Step 4: Classification (simplified for speed)
-        eprintln!("\n{} Step {}/{}: {}",
-                "🔍".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Taxonomic Classification".bright_cyan());
-        let classifications = self.run_classification(&assembly_results, &features, main_progress).await?;
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "🔍".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Taxonomic Classification".bright_cyan()
+        );
+        let classifications = self
+            .run_classification(&assembly_results, &features, main_progress)
+            .await?;
 
         // Write classification outputs (always write these, they're critical results)
-        use crate::utils::format_writers::{write_classification_tsv, write_classification_summary};
+        use crate::utils::format_writers::{
+            write_classification_summary, write_classification_tsv,
+        };
 
         let classification_tsv = self.config.output_dir.join("classifications.tsv");
         write_classification_tsv(&classifications, &classification_tsv)?;
@@ -173,82 +198,112 @@ impl FastPipeline {
         let classification_summary = self.config.output_dir.join("classification_summary.txt");
         write_classification_summary(&classifications, &classification_summary)?;
 
-        eprintln!("{} Classification outputs written:",
-                "💾".bright_green());
-        eprintln!("   {} TSV: {}",
-                "→".bright_blue(),
-                classification_tsv.display().to_string().bright_white());
-        eprintln!("   {} Summary: {}",
-                "→".bright_blue(),
-                classification_summary.display().to_string().bright_white());
+        eprintln!("{} Classification outputs written:", "💾".bright_green());
+        eprintln!(
+            "   {} TSV: {}",
+            "→".bright_blue(),
+            classification_tsv.display().to_string().bright_white()
+        );
+        eprintln!(
+            "   {} Summary: {}",
+            "→".bright_blue(),
+            classification_summary.display().to_string().bright_white()
+        );
 
         if !self.config.skip_intermediates {
-            self.save_with_progress("classification", "taxonomic_classifications", &classifications).await?;
+            self.save_with_progress(
+                "classification",
+                "taxonomic_classifications",
+                &classifications,
+            )
+            .await?;
         }
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
         step += 1;
 
         // Step 5: Abundance analysis
-        eprintln!("\n{} Step {}/{}: {}",
-                "📊".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Abundance Analysis".bright_cyan());
-        let abundance = self.run_abundance_analysis(&assembly_results, &classifications, main_progress).await?;
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "📊".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Abundance Analysis".bright_cyan()
+        );
+        let abundance = self
+            .run_abundance_analysis(&assembly_results, &classifications, main_progress)
+            .await?;
 
         if !self.config.skip_intermediates {
-            self.save_with_progress("abundance", "abundance_profile", &abundance).await?;
+            self.save_with_progress("abundance", "abundance_profile", &abundance)
+                .await?;
         }
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
         step += 1;
 
         // Step 6: Generate final report
-        eprintln!("\n{} Step {}/{}: {}",
-                "📝".bright_blue(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white(),
-                "Generating Report".bright_cyan());
-        let report = self.generate_report(
-            &corrected_reads,
-            &assembly_results,
-            &features,
-            &classifications,
-            &abundance,
-            main_progress,
-        ).await?;
+        eprintln!(
+            "\n{} Step {}/{}: {}",
+            "📝".bright_blue(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white(),
+            "Generating Report".bright_cyan()
+        );
+        let report = self
+            .generate_report(
+                &corrected_reads,
+                &assembly_results,
+                &features,
+                &classifications,
+                &abundance,
+                main_progress,
+            )
+            .await?;
 
-        eprintln!("{} Progress: {}/{} steps completed",
-                "📊".bright_green(),
-                step.to_string().bright_white(),
-                total_steps.to_string().bright_white());
+        eprintln!(
+            "{} Progress: {}/{} steps completed",
+            "📊".bright_green(),
+            step.to_string().bright_white(),
+            total_steps.to_string().bright_white()
+        );
 
         // Step 7: Save final outputs (always save these)
-        eprintln!("\n{} Saving Final Results",
-                "💾".bright_blue());
+        eprintln!("\n{} Saving Final Results", "💾".bright_blue());
         self.save_final_outputs(&report).await?;
 
         // Flush all pending writes
         self.output_manager.flush_all().await?;
 
         let elapsed = start_time.elapsed();
-        eprintln!("\n{} Pipeline completed in {:.2}s",
-                "✅".bright_green(),
-                elapsed.as_secs_f64());
+        eprintln!(
+            "\n{} Pipeline completed in {:.2}s",
+            "✅".bright_green(),
+            elapsed.as_secs_f64()
+        );
 
         // Log performance statistics
         let stats = self.output_manager.get_stats().await;
-        eprintln!("{} Output Stats: {} pending ops, compression: {}",
-                "📊".bright_blue(),
-                stats.pending_operations.to_string().bright_white(),
-                if stats.compression_enabled { "enabled".bright_green() } else { "disabled".bright_yellow() });
+        eprintln!(
+            "{} Output Stats: {} pending ops, compression: {}",
+            "📊".bright_blue(),
+            stats.pending_operations.to_string().bright_white(),
+            if stats.compression_enabled {
+                "enabled".bright_green()
+            } else {
+                "disabled".bright_yellow()
+            }
+        );
 
         Ok(report)
     }
@@ -269,10 +324,19 @@ impl FastPipeline {
             let mock_reads = self.create_mock_reads_from_file(file_path, i).await?;
             all_reads.extend(mock_reads);
 
-            info!("📥 Processed file {}/{}: {}", i + 1, total_files, file_path.display());
+            info!(
+                "📥 Processed file {}/{}: {}",
+                i + 1,
+                total_files,
+                file_path.display()
+            );
         }
 
-        info!("📥 Preprocessed {} reads from {} files", all_reads.len(), total_files);
+        info!(
+            "📥 Preprocessed {} reads from {} files",
+            all_reads.len(),
+            total_files
+        );
         Ok(all_reads)
     }
 
@@ -300,6 +364,7 @@ impl FastPipeline {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(), // Empty cache for mock:w
             });
         }
 
@@ -338,8 +403,11 @@ impl FastPipeline {
         assembly_results: &AssemblyResults,
         _progress_info: &str,
     ) -> Result<FeatureCollection> {
-        info!("🧪 Extracting features from {} reads and {} contigs...",
-              corrected_reads.len(), assembly_results.contigs.len());
+        info!(
+            "🧪 Extracting features from {} reads and {} contigs...",
+            corrected_reads.len(),
+            assembly_results.contigs.len()
+        );
 
         // Simplified feature extraction for demonstration
         let features = FeatureCollection {
@@ -358,21 +426,26 @@ impl FastPipeline {
         _features: &FeatureCollection,
         _progress_info: &str,
     ) -> Result<Vec<TaxonomicClassification>> {
-        eprintln!("   {} Classifying {} contigs using hybrid ML+taxonomy approach...",
-                "🔍".bright_cyan(),
-                assembly_results.contigs.len().to_string().bright_white());
+        eprintln!(
+            "   {} Classifying {} contigs using hybrid ML+taxonomy approach...",
+            "🔍".bright_cyan(),
+            assembly_results.contigs.len().to_string().bright_white()
+        );
 
         // Step 1: Use k-mer binning for initial clustering
-        use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
+        use crate::ml::simple_classifier::{SimpleClassifierConfig, SimpleContigClassifier};
 
-        eprintln!("   {} Initializing k-mer clustering (k=4) with adaptive binning...", "⚙️".bright_blue());
+        eprintln!(
+            "   {} Initializing k-mer clustering (k=4) with adaptive binning...",
+            "⚙️".bright_blue()
+        );
         let classifier_config = SimpleClassifierConfig {
             kmer_size: 4,
             min_contig_length: 500, // CRITICAL FIX: Match this with contig filtering
-            num_bins: 10,  // Ignored when auto_detect_bins = true
-            auto_detect_bins: true,  // FIX: Enable adaptive binning
-            max_bins: 50,            // FIX: Prevent over-binning
-            coverage_variance_threshold: 0.05,  // FIX: 5% coverage similarity threshold
+            num_bins: 10,           // Ignored when auto_detect_bins = true
+            auto_detect_bins: true, // FIX: Enable adaptive binning
+            max_bins: 50,           // FIX: Prevent over-binning
+            coverage_variance_threshold: 0.05, // FIX: 5% coverage similarity threshold
             use_coverage_features: true,
             normalization: crate::ml::simple_classifier::NormalizationMethod::ZScore,
         };
@@ -380,10 +453,12 @@ impl FastPipeline {
         let classifier = SimpleContigClassifier::new(classifier_config)?;
         let bin_results = classifier.classify_contigs(&assembly_results.contigs)?;
 
-        eprintln!("   {} K-mer clustering: {} contigs assigned to {} bins",
-                "📦".bright_green(),
-                bin_results.len().to_string().bright_white(),
-                "10".bright_white());
+        eprintln!(
+            "   {} K-mer clustering: {} contigs assigned to {} bins",
+            "📦".bright_green(),
+            bin_results.len().to_string().bright_white(),
+            "10".bright_white()
+        );
 
         // Step 2: Try taxonomic assignment using k-mer composition
         use crate::ml::kmer_taxonomy::KmerTaxonomyClassifier;
@@ -391,21 +466,27 @@ impl FastPipeline {
         eprintln!("   {} Loading taxonomic references...", "🧬".bright_blue());
         let mut taxonomy_classifier = KmerTaxonomyClassifier::new(4);
         if let Err(e) = taxonomy_classifier.load_default_references() {
-            eprintln!("   {} Failed to load taxonomy references: {}, using bins only",
-                    "⚠️".bright_yellow(), e);
+            eprintln!(
+                "   {} Failed to load taxonomy references: {}, using bins only",
+                "⚠️".bright_yellow(),
+                e
+            );
         }
 
         let stats = taxonomy_classifier.get_stats();
-        eprintln!("   {} Taxonomy classifier: {} references loaded",
-                "✓".bright_green(),
-                stats.num_references.to_string().bright_white());
+        eprintln!(
+            "   {} Taxonomy classifier: {} references loaded",
+            "✓".bright_green(),
+            stats.num_references.to_string().bright_white()
+        );
 
         // Step 3: Combine binning + taxonomy for final classification
         let mut classifications = Vec::new();
 
         for bin_result in bin_results.iter() {
             // Find the corresponding contig
-            let contig = assembly_results.contigs
+            let contig = assembly_results
+                .contigs
                 .iter()
                 .find(|c| c.id == bin_result.contig_id);
 
@@ -414,12 +495,16 @@ impl FastPipeline {
                 match taxonomy_classifier.classify_sequence(&contig.sequence) {
                     Ok(tax_assignment) if tax_assignment.is_classified() => {
                         // Use taxonomy if confidence is high
-                        let combined_confidence = (bin_result.confidence + tax_assignment.confidence) / 2.0;
+                        let combined_confidence =
+                            (bin_result.confidence + tax_assignment.confidence) / 2.0;
                         let taxon_name = tax_assignment.taxon.clone();
                         (
                             taxon_name.clone(),
                             format!("Bacteria;{}", taxon_name),
-                            format!("hybrid_kmer_taxonomy (bin={}, tax={:.2})", bin_result.bin_id, tax_assignment.confidence),
+                            format!(
+                                "hybrid_kmer_taxonomy (bin={}, tax={:.2})",
+                                bin_result.bin_id, tax_assignment.confidence
+                            ),
                             combined_confidence,
                         )
                     }
@@ -455,15 +540,20 @@ impl FastPipeline {
         }
 
         // Count taxonomy assignments
-        let taxonomy_assigned = classifications.iter()
+        let taxonomy_assigned = classifications
+            .iter()
             .filter(|c| c.method.contains("taxonomy"))
             .count();
 
-        eprintln!("   {} Classification completed: {} total ({} with taxonomy, {} bins only)",
-                "✅".bright_green(),
-                classifications.len().to_string().bright_white(),
-                taxonomy_assigned.to_string().bright_cyan(),
-                (classifications.len() - taxonomy_assigned).to_string().bright_yellow());
+        eprintln!(
+            "   {} Classification completed: {} total ({} with taxonomy, {} bins only)",
+            "✅".bright_green(),
+            classifications.len().to_string().bright_white(),
+            taxonomy_assigned.to_string().bright_cyan(),
+            (classifications.len() - taxonomy_assigned)
+                .to_string()
+                .bright_yellow()
+        );
 
         Ok(classifications)
     }
@@ -475,11 +565,15 @@ impl FastPipeline {
         classifications: &[TaxonomicClassification],
         _progress_info: &str,
     ) -> Result<AbundanceProfile> {
-        info!("📊 Analyzing abundance from {} classifications...", classifications.len());
+        info!(
+            "📊 Analyzing abundance from {} classifications...",
+            classifications.len()
+        );
 
         // Simplified abundance calculation
         let total_contigs = assembly_results.contigs.len() as f64;
-        let bacteria_count = classifications.iter()
+        let bacteria_count = classifications
+            .iter()
             .filter(|c| c.lineage.contains("Bacteria"))
             .count() as f64;
 
@@ -501,7 +595,7 @@ impl FastPipeline {
         &self,
         corrected_reads: &[CorrectedRead],
         assembly_results: &AssemblyResults,
-        features: &FeatureCollection,
+        _features: &FeatureCollection,
         classifications: &[TaxonomicClassification],
         abundance: &AbundanceProfile,
         _progress_info: &str,
@@ -513,16 +607,20 @@ impl FastPipeline {
             timestamp: chrono::Utc::now(),
             summary: crate::pipeline::complete_integration::ReportSummary {
                 total_contigs: assembly_results.contigs.len(),
-                total_length: assembly_results.contigs.iter().map(|c| c.sequence.len()).sum(),
-                n50: 1000, // Placeholder calculation
+                total_length: assembly_results
+                    .contigs
+                    .iter()
+                    .map(|c| c.sequence.len())
+                    .sum(),
+                n50: 1000,           // Placeholder calculation
                 mean_coverage: 10.0, // Placeholder
                 unique_species: classifications.len(),
                 diversity_index: 2.5, // Placeholder Shannon diversity
             },
             quality_metrics: crate::pipeline::complete_integration::QualityMetrics {
-                assembly_completeness: 0.85, // 85% completeness
+                assembly_completeness: 0.85,     // 85% completeness
                 classification_confidence: 0.75, // 75% confidence
-                coverage_uniformity: 0.9, // 90% uniform coverage
+                coverage_uniformity: 0.9,        // 90% uniform coverage
             },
             taxonomic_composition: classifications.to_vec(),
             abundance_data: abundance.clone(),
@@ -553,7 +651,7 @@ impl FastPipeline {
                     if p > 0.5 {
                         info!("📝 Report save progress: {:.1}%", p * 100.0);
                     }
-                }))
+                })),
             )
             .await?;
 
@@ -583,7 +681,6 @@ impl FastPipeline {
 
         Ok(())
     }
-
 
     /// Get output statistics
     pub async fn get_output_stats(&self) -> crate::utils::async_output_manager::OutputStats {

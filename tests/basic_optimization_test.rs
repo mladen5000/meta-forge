@@ -17,6 +17,7 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 1,
         },
+        kmer_hash_cache: HashMap::new(),
     }
 }
 

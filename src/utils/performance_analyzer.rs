@@ -10,7 +10,6 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use rayon::prelude::*;
 
 /// Performance analysis configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

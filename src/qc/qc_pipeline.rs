@@ -2,8 +2,12 @@
 //!
 //! Combines quality filtering, adapter trimming, and statistics
 
+use ahash::AHashMap;
+
 use super::qc_stats::FailureReason;
-use super::{AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig};
+use super::{
+    AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig,
+};
 use crate::core::data_structures::CorrectedRead;
 use crate::utils::genomic_validator::{GenomicDataValidator, ValidationThresholds};
 
@@ -41,7 +45,7 @@ impl Default for QCPipelineConfig {
             quality_config: QualityFilterConfig::default(),
             adapter_config: AdapterConfig::default(),
             validation_thresholds: None, // Uses defaults if None
-            verbose: false, // Disabled for performance
+            verbose: false,              // Disabled for performance
         }
     }
 }
@@ -88,7 +92,8 @@ impl QCPipeline {
         self.stats.record_input(seq.len(), qual);
 
         // Fast path: check average quality first (cheapest check)
-        if self.config.enable_quality_filter && !self.quality_filter.passes_quality_threshold(qual) {
+        if self.config.enable_quality_filter && !self.quality_filter.passes_quality_threshold(qual)
+        {
             self.stats.record_failed(FailureReason::Quality);
             return None;
         }
@@ -132,12 +137,15 @@ impl QCPipeline {
             // Adapter trimming on the slice
             let slice_seq = &seq[trim_start..trim_end];
             let slice_qual = &qual[trim_start..trim_end];
-            let (trimmed_seq, _, adapter_match) = self.adapter_trimmer.trim_adapter_with_quality(slice_seq, slice_qual);
+            let (trimmed_seq, _, adapter_match) = self
+                .adapter_trimmer
+                .trim_adapter_with_quality(slice_seq, slice_qual);
 
             // Record adapter if found
             if let Some(adapter) = adapter_match {
                 let bases_trimmed = slice_seq.len() - trimmed_seq.len();
-                self.stats.record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
+                self.stats
+                    .record_adapter_trimming(adapter.adapter.clone(), bases_trimmed);
             }
 
             // Calculate new positions relative to original
@@ -158,7 +166,8 @@ impl QCPipeline {
         }
 
         // Record passed read
-        self.stats.record_passed(final_end - final_start, &qual[final_start..final_end]);
+        self.stats
+            .record_passed(final_end - final_start, &qual[final_start..final_end]);
 
         // Only NOW do we allocate (when we know the read passes)
         // Zero-copy if no trimming needed
@@ -174,6 +183,7 @@ impl QCPipeline {
                 corrections: read.corrections.clone(),
                 quality_scores: qual[final_start..final_end].to_vec(),
                 correction_metadata: read.correction_metadata.clone(),
+                kmer_hash_cache: Vec::new(), // Clear cache as sequence changed
             })
         }
     }
@@ -184,34 +194,34 @@ impl QCPipeline {
     }
 
     /// Process multiple reads with progress callback (ultra-fast zero-copy version)
-    pub fn process_reads_with_progress<F>(&mut self, reads: &[CorrectedRead], mut progress_callback: F) -> Vec<CorrectedRead>
+    pub fn process_reads_with_progress<F>(
+        &mut self,
+        reads: &[CorrectedRead],
+        mut progress_callback: F,
+    ) -> Vec<CorrectedRead>
     where
         F: FnMut(usize, usize),
     {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let passed_count = AtomicUsize::new(0);
-        let failed_count = AtomicUsize::new(0);
         let total = reads.len();
 
-        // Sequential processing with progress updates
+        // Sequential processing with progress updates and full statistics tracking
         // Note: We use sequential instead of parallel because FnMut cannot be shared across threads
-        let results: Vec<CorrectedRead> = reads.iter().enumerate().filter_map(|(idx, read)| {
-            let result = self.process_single_read_fast(read, &passed_count, &failed_count);
+        let results: Vec<CorrectedRead> = reads
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, read)| {
+                // Use the full process_read method that tracks all statistics
+                let result = self.process_read(read);
 
-            // Update progress periodically
-            let count = idx + 1;
-            if count % 100 == 0 || count == total {
-                progress_callback(count, total);
-            }
+                // Update progress periodically
+                let count = idx + 1;
+                if count % 100 == 0 || count == total {
+                    progress_callback(count, total);
+                }
 
-            result
-        }).collect();
-
-        // Update stats after processing
-        self.stats.reads_input += total;
-        self.stats.reads_passed += passed_count.load(Ordering::Relaxed);
-        self.stats.reads_failed += failed_count.load(Ordering::Relaxed);
+                result
+            })
+            .collect();
 
         // Final progress update
         if total > 0 {
@@ -219,95 +229,6 @@ impl QCPipeline {
         }
 
         results
-    }
-
-    /// Ultra-fast single read processing (zero-copy until absolutely necessary)
-    #[inline(always)]
-    fn process_single_read_fast(
-        &self,
-        read: &CorrectedRead,
-        passed_count: &std::sync::atomic::AtomicUsize,
-        failed_count: &std::sync::atomic::AtomicUsize,
-    ) -> Option<CorrectedRead> {
-        use std::sync::atomic::Ordering;
-        // Work with slices (zero-copy) until we need to trim
-        let seq = read.corrected.as_str();
-        let qual = &read.quality_scores[..];
-
-        // Fast path: check average quality first (cheapest check)
-        if self.config.enable_quality_filter && !self.quality_filter.passes_quality_threshold(qual) {
-            failed_count.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-
-        // Fast path: check minimum length before any processing
-        if seq.len() < self.config.quality_config.min_length {
-            failed_count.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-
-        // Determine trim positions (still zero-copy, just calculating indices)
-        let (trim_start, trim_end) = if self.config.enable_quality_filter {
-            match self.quality_filter.trim_quality(seq, qual) {
-                Some((start, end)) => (start, end),
-                None => {
-                    failed_count.fetch_add(1, Ordering::Relaxed);
-                    return None;
-                }
-            }
-        } else {
-            (0, seq.len())
-        };
-
-        // Check adapter trimming (only if needed)
-        let (final_start, final_end) = if self.config.enable_adapter_trimming {
-            // Adapter trimming on the slice
-            let slice_seq = &seq[trim_start..trim_end];
-            let slice_qual = &qual[trim_start..trim_end];
-            let (trimmed_seq, _, _) = self.adapter_trimmer.trim_adapter_with_quality(slice_seq, slice_qual);
-
-            // Calculate new positions relative to original
-            if trimmed_seq.len() < slice_seq.len() {
-                let adapter_trim = slice_seq.len() - trimmed_seq.len();
-                (trim_start, trim_end - adapter_trim)
-            } else {
-                (trim_start, trim_end)
-            }
-        } else {
-            (trim_start, trim_end)
-        };
-
-        // Final length check
-        if (final_end - final_start) < self.config.quality_config.min_length {
-            failed_count.fetch_add(1, Ordering::Relaxed);
-            return None;
-        }
-
-        // Only NOW do we allocate (when we know the read passes)
-        passed_count.fetch_add(1, Ordering::Relaxed);
-
-        // Zero-copy if no trimming needed
-        if final_start == 0 && final_end == seq.len() {
-            // No trimming needed - reuse existing data
-            Some(CorrectedRead {
-                id: read.id,
-                original: read.original.clone(),
-                corrected: read.corrected.clone(),
-                corrections: read.corrections.clone(),
-                quality_scores: read.quality_scores.clone(),
-                correction_metadata: read.correction_metadata.clone(),
-            })
-        } else {
-            // Trimming needed - allocate only trimmed portion
-            Some(CorrectedRead {
-                id: read.id,
-                original: read.original.clone(),
-                corrected: seq[final_start..final_end].to_string(),
-                corrections: read.corrections.clone(),
-                quality_scores: qual[final_start..final_end].to_vec(),
-                correction_metadata: read.correction_metadata.clone(),
-            })
-        }
     }
 
     /// Get QC statistics
@@ -332,13 +253,27 @@ impl QCPipeline {
         status: &str,
     ) {
         let avg_quality = if !read.quality_scores.is_empty() {
-            read.quality_scores.iter().map(|&q| (q - 33) as f64).sum::<f64>() / read.quality_scores.len() as f64
+            read.quality_scores
+                .iter()
+                .map(|&q| (q - 33) as f64)
+                .sum::<f64>()
+                / read.quality_scores.len() as f64
         } else {
             0.0
         };
 
-        let min_quality = read.quality_scores.iter().map(|&q| q - 33).min().unwrap_or(0);
-        let max_quality = read.quality_scores.iter().map(|&q| q - 33).max().unwrap_or(0);
+        let min_quality = read
+            .quality_scores
+            .iter()
+            .map(|&q| q - 33)
+            .min()
+            .unwrap_or(0);
+        let max_quality = read
+            .quality_scores
+            .iter()
+            .map(|&q| q - 33)
+            .max()
+            .unwrap_or(0);
 
         eprintln!("\n╔══════════════════════════════════════════════════════════════════════");
         eprintln!("║ 📊 DEBUG READ STATS #{}", self.reads_processed);
@@ -350,9 +285,21 @@ impl QCPipeline {
         eprintln!("║   Original length:     {} bp", original_length);
 
         if let Some((adapter_trimmed, adapter)) = adapter_info {
-            eprintln!("║   After adapter trim:  {} bp (trimmed {} bp)", original_length - adapter_trimmed, adapter_trimmed);
-            eprintln!("║     ↳ Adapter:         {} at position {}", &adapter.adapter[..adapter.adapter.len().min(15)], adapter.position);
-            eprintln!("║     ↳ Adapter length:  {} bp (matched with {:.1}% error)", adapter.length, adapter.error_rate * 100.0);
+            eprintln!(
+                "║   After adapter trim:  {} bp (trimmed {} bp)",
+                original_length - adapter_trimmed,
+                adapter_trimmed
+            );
+            eprintln!(
+                "║     ↳ Adapter:         {} at position {}",
+                &adapter.adapter[..adapter.adapter.len().min(15)],
+                adapter.position
+            );
+            eprintln!(
+                "║     ↳ Adapter length:  {} bp (matched with {:.1}% error)",
+                adapter.length,
+                adapter.error_rate * 100.0
+            );
             eprintln!("║     ↳ Mismatches:      {}", adapter.mismatches);
         }
 
@@ -364,7 +311,10 @@ impl QCPipeline {
             eprintln!("║   Final length:        {} bp", final_len);
             let total_removed = original_length - final_len;
             let removal_pct = (total_removed as f64 / original_length as f64) * 100.0;
-            eprintln!("║   Total removed:       {} bp ({:.1}%)", total_removed, removal_pct);
+            eprintln!(
+                "║   Total removed:       {} bp ({:.1}%)",
+                total_removed, removal_pct
+            );
         }
 
         eprintln!("║ ");
@@ -375,7 +325,11 @@ impl QCPipeline {
         eprintln!("║   Quality range:       Q{}-Q{}", min_quality, max_quality);
 
         // GC content
-        let gc_count = read.corrected.chars().filter(|&c| c == 'G' || c == 'C').count();
+        let gc_count = read
+            .corrected
+            .chars()
+            .filter(|&c| c == 'G' || c == 'C')
+            .count();
         let gc_content = if !read.corrected.is_empty() {
             (gc_count as f64 / read.corrected.len() as f64) * 100.0
         } else {
@@ -390,7 +344,11 @@ impl QCPipeline {
         // N bases
         let n_count = read.corrected.chars().filter(|&c| c == 'N').count();
         if n_count > 0 {
-            eprintln!("║   N bases:             {} ({:.1}%)", n_count, (n_count as f64 / read.corrected.len() as f64) * 100.0);
+            eprintln!(
+                "║   N bases:             {} ({:.1}%)",
+                n_count,
+                (n_count as f64 / read.corrected.len() as f64) * 100.0
+            );
         }
 
         // Base composition
@@ -398,18 +356,28 @@ impl QCPipeline {
         let t_count = read.corrected.chars().filter(|&c| c == 'T').count();
         let g_count = read.corrected.chars().filter(|&c| c == 'G').count();
         let c_count = read.corrected.chars().filter(|&c| c == 'C').count();
-        eprintln!("║   Base composition:    A={}, T={}, G={}, C={}, N={}",
-                  a_count, t_count, g_count, c_count, n_count);
+        eprintln!(
+            "║   Base composition:    A={}, T={}, G={}, C={}, N={}",
+            a_count, t_count, g_count, c_count, n_count
+        );
 
         // First/Last 20bp preview
         let preview_len = 20.min(read.corrected.len());
         if preview_len > 0 {
             eprintln!("║ ");
             eprintln!("║ SEQUENCE PREVIEW:");
-            eprintln!("║   First {}bp:         {}", preview_len, &read.corrected[..preview_len]);
+            eprintln!(
+                "║   First {}bp:         {}",
+                preview_len,
+                &read.corrected[..preview_len]
+            );
             if read.corrected.len() > preview_len {
                 let start = read.corrected.len() - preview_len;
-                eprintln!("║   Last {}bp:          {}", preview_len, &read.corrected[start..]);
+                eprintln!(
+                    "║   Last {}bp:          {}",
+                    preview_len,
+                    &read.corrected[start..]
+                );
             }
 
             // Quality preview
@@ -417,7 +385,11 @@ impl QCPipeline {
                 .iter()
                 .map(|&q| format!("Q{}", q - 33))
                 .collect();
-            eprintln!("║   First {}bp qual:    {}", preview_len, qual_preview.join(" "));
+            eprintln!(
+                "║   First {}bp qual:    {}",
+                preview_len,
+                qual_preview.join(" ")
+            );
 
             if read.quality_scores.len() > preview_len {
                 let start = read.quality_scores.len() - preview_len;
@@ -425,7 +397,11 @@ impl QCPipeline {
                     .iter()
                     .map(|&q| format!("Q{}", q - 33))
                     .collect();
-                eprintln!("║   Last {}bp qual:     {}", preview_len, qual_preview_end.join(" "));
+                eprintln!(
+                    "║   Last {}bp qual:     {}",
+                    preview_len,
+                    qual_preview_end.join(" ")
+                );
             }
         }
 

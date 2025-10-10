@@ -36,6 +36,7 @@ fn test_assembly_chunk_add_read() -> Result<()> {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: HashMap::new(),
     };
 
     // Add the read
@@ -90,6 +91,7 @@ fn test_overlapping_reads_create_connected_graph() -> Result<()> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         },
         CorrectedRead {
             id: 2,
@@ -103,6 +105,7 @@ fn test_overlapping_reads_create_connected_graph() -> Result<()> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         },
     ];
 
@@ -192,6 +195,7 @@ fn test_mini_assembly_pipeline() -> Result<()> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         };
         chunk.add_read(read)?;
     }

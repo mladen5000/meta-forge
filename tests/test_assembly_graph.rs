@@ -38,6 +38,7 @@ pub mod tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: HashMap::new(),
             },
             CorrectedRead {
                 id: 1,
@@ -51,6 +52,7 @@ pub mod tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: HashMap::new(),
             },
         ];
 
@@ -83,6 +85,7 @@ pub mod tests {
                 context_window: 3,
                 correction_time_ms: 100,
             },
+            kmer_hash_cache: HashMap::new(),
         };
 
         assert_eq!(read.id, 42);
@@ -124,6 +127,7 @@ pub mod tests {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         }];
 
         let result = builder.build(&short_reads);

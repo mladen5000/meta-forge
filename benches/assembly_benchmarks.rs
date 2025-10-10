@@ -3,7 +3,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
 use meta_forge::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig, CompactKmer, RollingKmerHash};
-use meta_forge::core::data_structures::CorrectedRead;
+use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
+use ahash::AHashMap;
 use std::time::Duration;
 
 /// Generate synthetic reads for benchmarking
@@ -26,7 +27,13 @@ fn generate_synthetic_reads(count: usize, length: usize, seed: u64) -> Vec<Corre
                 corrected: sequence,
                 corrections: Vec::new(),
                 quality_scores: vec![30; length],
-                correction_metadata: Default::default(),
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "synthetic".to_string(),
+                    confidence_threshold: 1.0,
+                    context_window: 0,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
             }
         })
         .collect()

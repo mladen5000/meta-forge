@@ -67,6 +67,7 @@ impl TestDataGenerator {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             });
         }
 
@@ -343,6 +344,7 @@ mod integration_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             CorrectedRead {
                 id: 1,
@@ -356,6 +358,7 @@ mod integration_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             CorrectedRead {
                 id: 2,
@@ -369,6 +372,7 @@ mod integration_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             // One copy with error
             CorrectedRead {
@@ -389,6 +393,7 @@ mod integration_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
         ];
 
@@ -422,6 +427,7 @@ mod integration_tests {
                     context_window: 10,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             });
         }
 
@@ -465,6 +471,7 @@ mod integration_tests {
                 context_window: 3,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }];
         let short_graph = builder.build(&short_reads)?;
         // Should handle gracefully (may have empty graph due to length)
@@ -482,6 +489,7 @@ mod integration_tests {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }];
         let ambiguous_graph = builder.build(&ambiguous_reads)?;
         // Should handle ambiguous bases appropriately
@@ -678,6 +686,7 @@ mod unit_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             CorrectedRead {
                 id: 1,
@@ -691,6 +700,7 @@ mod unit_tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
         ];
 
@@ -808,6 +818,7 @@ mod benchmarks {
                         context_window: 5,
                         correction_time_ms: 0,
                     },
+                    kmer_hash_cache: Vec::new(),
                 })
                 .collect();
 

@@ -184,6 +184,7 @@ fn test_assembly_chunk_processing() {
             context_window: 3,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: HashMap::new(),
     };
 
     let k = 4;
@@ -266,6 +267,7 @@ fn test_full_pipeline_simple() {
                 context_window: 3,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         },
         CorrectedRead {
             id: 1,
@@ -279,6 +281,7 @@ fn test_full_pipeline_simple() {
                 context_window: 3,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         },
     ];
 

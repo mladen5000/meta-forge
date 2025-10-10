@@ -14,21 +14,19 @@
 
 use anyhow::Result;
 use meta_forge::assembly::laptop_assembly::{
-    LaptopAssembler, LaptopConfig, LaptopAssemblyGraph, CompactKmer, BoundedKmerCounter
+    BoundedKmerCounter, CompactKmer, LaptopAssembler, LaptopAssemblyGraph, LaptopConfig,
 };
 use meta_forge::assembly::memory_optimizations::{
-    KmerArena, LockFreeGraphBuilder, BoundedStreamProcessor, StreamConfig
+    BoundedStreamProcessor, KmerArena, LockFreeGraphBuilder, StreamConfig,
 };
 use meta_forge::assembly::performance_optimizations::{
-    CacheOptimizedGraph, OptimizationConfig, PerformanceMode,
-    SIMDNucleotideOps, ZeroCopyKmerIterator, PerformanceBenchmark
+    CacheOptimizedGraph, OptimizationConfig, PerformanceBenchmark, PerformanceMode,
+    SIMDNucleotideOps, ZeroCopyKmerIterator,
 };
-use meta_forge::core::data_structures::{
-    CorrectedRead, CorrectionMetadata, Contig, ContigType
-};
-use std::time::Instant;
-use std::sync::Arc;
+use meta_forge::core::data_structures::{Contig, ContigType, CorrectedRead, CorrectionMetadata};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 
 /* ========================================================================= */
 /*                        LAPTOP HARDWARE CONSTRAINT TESTS                 */
@@ -45,10 +43,22 @@ mod laptop_constraints {
         let config = LaptopConfig::low_memory();
 
         // Validate conservative memory settings
-        assert_eq!(config.memory_budget_mb, 1024, "Low memory config should use 1GB budget");
-        assert_eq!(config.cpu_cores, 2, "Low memory config should limit CPU cores");
-        assert_eq!(config.chunk_size, 500, "Low memory config should use small chunks");
-        assert_eq!(config.max_k, 21, "Low memory config should limit k-mer size");
+        assert_eq!(
+            config.memory_budget_mb, 1024,
+            "Low memory config should use 1GB budget"
+        );
+        assert_eq!(
+            config.cpu_cores, 2,
+            "Low memory config should limit CPU cores"
+        );
+        assert_eq!(
+            config.chunk_size, 500,
+            "Low memory config should use small chunks"
+        );
+        assert_eq!(
+            config.max_k, 21,
+            "Low memory config should limit k-mer size"
+        );
 
         println!("✅ Low memory laptop configuration validated");
     }
@@ -58,10 +68,22 @@ mod laptop_constraints {
     fn test_medium_memory_laptop_config() {
         let config = LaptopConfig::medium_memory();
 
-        assert_eq!(config.memory_budget_mb, 2048, "Medium memory config should use 2GB budget");
-        assert_eq!(config.cpu_cores, 4, "Medium memory config should use 4 cores");
-        assert_eq!(config.chunk_size, 1000, "Medium memory config should use medium chunks");
-        assert_eq!(config.max_k, 31, "Medium memory config should allow larger k-mers");
+        assert_eq!(
+            config.memory_budget_mb, 2048,
+            "Medium memory config should use 2GB budget"
+        );
+        assert_eq!(
+            config.cpu_cores, 4,
+            "Medium memory config should use 4 cores"
+        );
+        assert_eq!(
+            config.chunk_size, 1000,
+            "Medium memory config should use medium chunks"
+        );
+        assert_eq!(
+            config.max_k, 31,
+            "Medium memory config should allow larger k-mers"
+        );
 
         println!("✅ Medium memory laptop configuration validated");
     }
@@ -81,11 +103,16 @@ mod laptop_constraints {
         let final_memory = graph.memory_usage_mb();
 
         // Verify memory usage is within laptop constraints (1GB = 1024MB)
-        assert!(final_memory < 1024.0,
-                "Memory usage {:.1}MB exceeds laptop constraint of 1024MB", final_memory);
+        assert!(
+            final_memory < 1024.0,
+            "Memory usage {:.1}MB exceeds laptop constraint of 1024MB",
+            final_memory
+        );
 
-        println!("✅ Memory usage {:.1}MB -> {:.1}MB (within {:.1}MB limit)",
-                initial_memory, final_memory, 1024.0);
+        println!(
+            "✅ Memory usage {:.1}MB -> {:.1}MB (within {:.1}MB limit)",
+            initial_memory, final_memory, 1024.0
+        );
 
         Ok(())
     }
@@ -95,9 +122,18 @@ mod laptop_constraints {
     fn test_cpu_constrained_configuration() {
         let config = OptimizationConfig::low_cpu();
 
-        assert_eq!(config.max_threads, 2, "CPU-constrained config should limit threads");
-        assert!(!config.enable_simd, "CPU-constrained config should disable SIMD");
-        assert_eq!(config.chunk_size, 5_000, "CPU-constrained config should use moderate chunks");
+        assert_eq!(
+            config.max_threads, 2,
+            "CPU-constrained config should limit threads"
+        );
+        assert!(
+            !config.enable_simd,
+            "CPU-constrained config should disable SIMD"
+        );
+        assert_eq!(
+            config.chunk_size, 5_000,
+            "CPU-constrained config should use moderate chunks"
+        );
 
         println!("✅ CPU-constrained laptop configuration validated");
     }
@@ -115,14 +151,23 @@ mod laptop_constraints {
         let processing_time = start_time.elapsed();
 
         // Verify reasonable processing time for laptop hardware
-        assert!(processing_time.as_secs() < 30,
-                "Processing took {:.2}s, should be under 30s on laptop",
-                processing_time.as_secs_f64());
+        assert!(
+            processing_time.as_secs() < 30,
+            "Processing took {:.2}s, should be under 30s on laptop",
+            processing_time.as_secs_f64()
+        );
 
-        assert!(!contigs.is_empty(), "Should generate contigs from test reads");
+        assert!(
+            !contigs.is_empty(),
+            "Should generate contigs from test reads"
+        );
 
-        println!("✅ SSD-friendly sequential processing: {:.2}s for {} reads -> {} contigs",
-                processing_time.as_secs_f64(), reads.len(), contigs.len());
+        println!(
+            "✅ SSD-friendly sequential processing: {:.2}s for {} reads -> {} contigs",
+            processing_time.as_secs_f64(),
+            reads.len(),
+            contigs.len()
+        );
 
         Ok(())
     }
@@ -150,13 +195,24 @@ mod memory_pressure_tests {
         let (unique, total, dropped, memory) = counter.get_stats();
 
         // Verify memory bounds are respected
-        assert!(unique <= counter.max_kmers, "Unique k-mers should not exceed limit");
+        assert!(
+            unique <= counter.max_kmers,
+            "Unique k-mers should not exceed limit"
+        );
         assert_eq!(total, total_kmers, "Should track all processed k-mers");
         assert!(dropped > 0, "Should drop k-mers when at capacity");
-        assert!(memory <= 1024 * 1024, "Memory usage should stay within limit");
+        assert!(
+            memory <= 1024 * 1024,
+            "Memory usage should stay within limit"
+        );
 
-        println!("✅ Bounded k-mer counter: {} unique, {} total, {} dropped, {:.1}KB used",
-                unique, total, dropped, memory as f64 / 1024.0);
+        println!(
+            "✅ Bounded k-mer counter: {} unique, {} total, {} dropped, {:.1}KB used",
+            unique,
+            total,
+            dropped,
+            memory as f64 / 1024.0
+        );
     }
 
     /// Test memory arena cleanup and reuse
@@ -176,16 +232,24 @@ mod memory_pressure_tests {
 
         // Verify efficient memory usage
         assert!(stats.utilization > 0.5, "Arena utilization should be > 50%");
-        assert!(stats.allocated_kmers == 1000, "Should track all allocated k-mers");
+        assert!(
+            stats.allocated_kmers == 1000,
+            "Should track all allocated k-mers"
+        );
 
         // Test data retrieval
-        for kmer_ref in &kmer_refs[..10] { // Test first 10
+        for kmer_ref in &kmer_refs[..10] {
+            // Test first 10
             let retrieved = arena.get_kmer(kmer_ref);
             assert!(retrieved.is_some(), "Should retrieve allocated k-mer data");
         }
 
-        println!("✅ Memory arena: {} k-mers, {:.1}% utilization, {} blocks",
-                stats.allocated_kmers, stats.utilization * 100.0, stats.active_blocks);
+        println!(
+            "✅ Memory arena: {} k-mers, {:.1}% utilization, {} blocks",
+            stats.allocated_kmers,
+            stats.utilization * 100.0,
+            stats.active_blocks
+        );
 
         Ok(())
     }
@@ -209,12 +273,23 @@ mod memory_pressure_tests {
         let memory_stats = processor.get_streaming_stats();
 
         // Verify memory bounds
-        assert!(memory_stats.memory_usage_mb <= 1, "Memory should stay within 1MB limit");
-        assert!(memory_stats.reservoir_size <= 1000, "Reservoir should respect size limit");
-        assert!(stats.total_kmers_processed == 10_000, "Should process all k-mers");
+        assert!(
+            memory_stats.memory_usage_mb <= 1,
+            "Memory should stay within 1MB limit"
+        );
+        assert!(
+            memory_stats.reservoir_size <= 1000,
+            "Reservoir should respect size limit"
+        );
+        assert!(
+            stats.total_kmers_processed == 10_000,
+            "Should process all k-mers"
+        );
 
-        println!("✅ Streaming processor: {} processed, {} stored, {:.1}% memory used",
-                stats.total_kmers_processed, stats.kmers_stored, memory_stats.memory_utilization);
+        println!(
+            "✅ Streaming processor: {} processed, {} stored, {:.1}% memory used",
+            stats.total_kmers_processed, stats.kmers_stored, memory_stats.memory_utilization
+        );
 
         Ok(())
     }
@@ -240,7 +315,8 @@ mod memory_pressure_tests {
                 if current + amount > self.limit {
                     false // Memory pressure detected
                 } else {
-                    self.current_usage.store(current + amount, Ordering::Relaxed);
+                    self.current_usage
+                        .store(current + amount, Ordering::Relaxed);
                     true
                 }
             }
@@ -259,7 +335,8 @@ mod memory_pressure_tests {
 
         while monitor.allocate(chunk_size) {
             allocations += 1;
-            if allocations > 20 { // Safety break
+            if allocations > 20 {
+                // Safety break
                 break;
             }
         }
@@ -267,11 +344,17 @@ mod memory_pressure_tests {
         let pressure_ratio = monitor.get_pressure_ratio();
 
         // Should detect pressure before exceeding limit
-        assert!(pressure_ratio > 0.8, "Should detect memory pressure at 80% usage");
+        assert!(
+            pressure_ratio > 0.8,
+            "Should detect memory pressure at 80% usage"
+        );
         assert!(pressure_ratio <= 1.0, "Should not exceed memory limit");
 
-        println!("✅ Memory pressure detection: {:.1}% usage after {} allocations",
-                pressure_ratio * 100.0, allocations);
+        println!(
+            "✅ Memory pressure detection: {:.1}% usage after {} allocations",
+            pressure_ratio * 100.0,
+            allocations
+        );
     }
 }
 
@@ -306,15 +389,20 @@ mod assembly_quality_tests {
 
             // Basic quality checks
             assert!(!contigs.is_empty(), "Should generate contigs for {}", name);
-            assert!(quality_metrics.avg_coverage > 0.0, "Should have coverage > 0 for {}", name);
+            assert!(
+                quality_metrics.avg_coverage > 0.0,
+                "Should have coverage > 0 for {}",
+                name
+            );
             assert!(quality_metrics.n50 > 0, "Should have N50 > 0 for {}", name);
         }
 
         // Compare quality across configurations
         for (name, metrics) in &results {
-            println!("✅ {}: {} contigs, N50={}, avg_cov={:.1}, total_len={}",
-                    name, metrics.num_contigs, metrics.n50,
-                    metrics.avg_coverage, metrics.total_length);
+            println!(
+                "✅ {}: {} contigs, N50={}, avg_cov={:.1}, total_len={}",
+                name, metrics.num_contigs, metrics.n50, metrics.avg_coverage, metrics.total_length
+            );
         }
 
         // Quality should be comparable across configurations
@@ -322,8 +410,10 @@ mod assembly_quality_tests {
         let min_coverage = coverages.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max_coverage = coverages.iter().fold(0.0, |a, &b| a.max(b));
 
-        assert!(max_coverage / min_coverage < 2.0,
-                "Coverage variation should be < 2x across configs");
+        assert!(
+            max_coverage / min_coverage < 2.0,
+            "Coverage variation should be < 2x across configs"
+        );
 
         Ok(())
     }
@@ -347,10 +437,17 @@ mod assembly_quality_tests {
 
             // Validate results are reasonable
             assert!(gc_simd >= 0.0 && gc_simd <= 1.0, "GC content should be 0-1");
-            assert!(complexity_simd >= 0.0 && complexity_simd <= 1.0, "Complexity should be 0-1");
+            assert!(
+                complexity_simd >= 0.0 && complexity_simd <= 1.0,
+                "Complexity should be 0-1"
+            );
 
-            println!("✅ SIMD validation: seq_len={}, GC={:.3}, complexity={:.3}",
-                    sequence.len(), gc_simd, complexity_simd);
+            println!(
+                "✅ SIMD validation: seq_len={}, GC={:.3}, complexity={:.3}",
+                sequence.len(),
+                gc_simd,
+                complexity_simd
+            );
         }
     }
 
@@ -365,9 +462,14 @@ mod assembly_quality_tests {
 
         // Verify expected number of k-mers
         let expected_count = sequence.len() - k + 1;
-        assert_eq!(zero_copy_kmers.len(), expected_count,
-                  "Should generate {} k-mers from {}-bp sequence with k={}",
-                  expected_count, sequence.len(), k);
+        assert_eq!(
+            zero_copy_kmers.len(),
+            expected_count,
+            "Should generate {} k-mers from {}-bp sequence with k={}",
+            expected_count,
+            sequence.len(),
+            k
+        );
 
         // Test that all k-mers are valid hashes
         for (i, (hash, is_forward)) in zero_copy_kmers.iter().enumerate() {
@@ -375,8 +477,11 @@ mod assembly_quality_tests {
             println!("K-mer {}: hash={}, forward={}", i, hash, is_forward);
         }
 
-        println!("✅ Zero-copy k-mer processing: {} k-mers from {}-bp sequence",
-                zero_copy_kmers.len(), sequence.len());
+        println!(
+            "✅ Zero-copy k-mer processing: {} k-mers from {}-bp sequence",
+            zero_copy_kmers.len(),
+            sequence.len()
+        );
     }
 
     /// Quality metrics for assembly validation
@@ -389,7 +494,10 @@ mod assembly_quality_tests {
         max_contig_length: usize,
     }
 
-    fn calculate_assembly_quality(contigs: &[Contig], _reads: &[CorrectedRead]) -> AssemblyQualityMetrics {
+    fn calculate_assembly_quality(
+        contigs: &[Contig],
+        _reads: &[CorrectedRead],
+    ) -> AssemblyQualityMetrics {
         if contigs.is_empty() {
             return AssemblyQualityMetrics {
                 num_contigs: 0,
@@ -402,7 +510,8 @@ mod assembly_quality_tests {
 
         let num_contigs = contigs.len();
         let total_length: usize = contigs.iter().map(|c| c.length).sum();
-        let avg_coverage: f64 = contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs as f64;
+        let avg_coverage: f64 =
+            contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs as f64;
         let max_contig_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
 
         // Calculate N50
@@ -453,18 +562,32 @@ mod realistic_workload_tests {
         let assembly_time = start_time.elapsed();
 
         // Validate realistic assembly results
-        assert!(!contigs.is_empty(), "Should generate contigs from metagenomic reads");
-        assert!(contigs.len() < reads.len(), "Should merge reads into fewer contigs");
+        assert!(
+            !contigs.is_empty(),
+            "Should generate contigs from metagenomic reads"
+        );
+        assert!(
+            contigs.len() < reads.len(),
+            "Should merge reads into fewer contigs"
+        );
 
         // Performance expectations for laptop hardware
-        assert!(assembly_time.as_secs() < 60,
-                "Metagenomic assembly should complete in < 60s on laptop");
+        assert!(
+            assembly_time.as_secs() < 60,
+            "Metagenomic assembly should complete in < 60s on laptop"
+        );
 
         let quality = calculate_assembly_quality(&contigs, &reads);
-        println!("✅ Metagenomic assembly: {} reads -> {} contigs in {:.2}s",
-                reads.len(), quality.num_contigs, assembly_time.as_secs_f64());
-        println!("   Quality: N50={}, avg_cov={:.1}, total_len={}",
-                quality.n50, quality.avg_coverage, quality.total_length);
+        println!(
+            "✅ Metagenomic assembly: {} reads -> {} contigs in {:.2}s",
+            reads.len(),
+            quality.num_contigs,
+            assembly_time.as_secs_f64()
+        );
+        println!(
+            "   Quality: N50={}, avg_cov={:.1}, total_len={}",
+            quality.n50, quality.avg_coverage, quality.total_length
+        );
 
         Ok(())
     }
@@ -489,11 +612,20 @@ mod realistic_workload_tests {
         let quality = calculate_assembly_quality(&contigs, &all_reads);
 
         // Expect better contiguity from paired reads
-        assert!(quality.n50 > 50, "Paired-end assembly should have reasonable N50");
+        assert!(
+            quality.n50 > 50,
+            "Paired-end assembly should have reasonable N50"
+        );
 
-        println!("✅ Paired-end assembly: {} read pairs -> {} contigs",
-                all_reads.len() / 2, quality.num_contigs);
-        println!("   N50={}, max_contig={}", quality.n50, quality.max_contig_length);
+        println!(
+            "✅ Paired-end assembly: {} read pairs -> {} contigs",
+            all_reads.len() / 2,
+            quality.num_contigs
+        );
+        println!(
+            "   N50={}, max_contig={}",
+            quality.n50, quality.max_contig_length
+        );
 
         Ok(())
     }
@@ -521,8 +653,10 @@ mod realistic_workload_tests {
         let min_coverage = coverages.iter().fold(f64::INFINITY, |a, &b| a.min(b));
         let max_coverage = coverages.iter().fold(0.0, |a, &b| a.max(b));
 
-        println!("✅ Mixed coverage assembly: coverage range {:.1} - {:.1}",
-                min_coverage, max_coverage);
+        println!(
+            "✅ Mixed coverage assembly: coverage range {:.1} - {:.1}",
+            min_coverage, max_coverage
+        );
 
         // Should preserve high-coverage regions
         assert!(max_coverage >= 5.0, "Should preserve high-coverage regions");
@@ -545,8 +679,14 @@ mod realistic_workload_tests {
         kmer_result.print_results();
 
         // Performance expectations for laptop hardware
-        assert!(nt_result.speedup >= 1.0, "SIMD should not be slower than scalar");
-        assert!(kmer_result.speedup >= 1.0, "Zero-copy should not be slower than allocating");
+        assert!(
+            nt_result.speedup >= 1.0,
+            "SIMD should not be slower than scalar"
+        );
+        assert!(
+            kmer_result.speedup >= 1.0,
+            "Zero-copy should not be slower than allocating"
+        );
 
         // Store performance results for collective memory
         println!("✅ Laptop performance benchmarks completed");
@@ -579,12 +719,20 @@ mod regression_tests {
         // Critical regression test: should NOT have 1:1 ratio
         let ratio = contigs.len() as f64 / reads.len() as f64;
 
-        assert!(ratio < 0.8,
-                "Contig:read ratio should be < 0.8, got {:.2} ({} contigs from {} reads)",
-                ratio, contigs.len(), reads.len());
+        assert!(
+            ratio < 0.8,
+            "Contig:read ratio should be < 0.8, got {:.2} ({} contigs from {} reads)",
+            ratio,
+            contigs.len(),
+            reads.len()
+        );
 
-        println!("✅ Contig ratio regression test: {:.2} ({} contigs from {} reads)",
-                ratio, contigs.len(), reads.len());
+        println!(
+            "✅ Contig ratio regression test: {:.2} ({} contigs from {} reads)",
+            ratio,
+            contigs.len(),
+            reads.len()
+        );
 
         Ok(())
     }
@@ -616,11 +764,16 @@ mod regression_tests {
         let memory_increase = final_memory - initial_memory;
 
         // Should not have significant memory growth
-        assert!(memory_increase < 50.0,
-                "Memory increased by {:.1}MB, possible leak", memory_increase);
+        assert!(
+            memory_increase < 50.0,
+            "Memory increased by {:.1}MB, possible leak",
+            memory_increase
+        );
 
-        println!("✅ Memory leak test: {:.1}MB -> {:.1}MB (+{:.1}MB)",
-                initial_memory, final_memory, memory_increase);
+        println!(
+            "✅ Memory leak test: {:.1}MB -> {:.1}MB (+{:.1}MB)",
+            initial_memory, final_memory, memory_increase
+        );
 
         Ok(())
     }
@@ -642,7 +795,11 @@ mod regression_tests {
             let contigs = assembler.assemble(&test_reads)?;
 
             assert!(!contigs.is_empty(), "Should work on {}", platform);
-            println!("✅ {} compatibility: {} contigs generated", platform, contigs.len());
+            println!(
+                "✅ {} compatibility: {} contigs generated",
+                platform,
+                contigs.len()
+            );
         }
 
         Ok(())
@@ -662,46 +819,52 @@ mod regression_tests {
 
 /// Create stress test reads for memory pressure testing
 fn create_stress_test_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
-    (0..count).map(|i| {
-        let sequence = generate_random_sequence(length, i as u64);
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "stress_test".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 1,
-            },
-        }
-    }).collect()
+    (0..count)
+        .map(|i| {
+            let sequence = generate_random_sequence(length, i as u64);
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "stress_test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 1,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create sequential reads for SSD I/O pattern testing
 fn create_sequential_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let base_sequence = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG";
 
-    (0..count).map(|i| {
-        let start = (i * 2) % (base_sequence.len() - length);
-        let sequence = base_sequence[start..start + length].to_string();
+    (0..count)
+        .map(|i| {
+            let start = (i * 2) % (base_sequence.len() - length);
+            let sequence = base_sequence[start..start + length].to_string();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![35; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "sequential_test".to_string(),
-                confidence_threshold: 0.95,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![35; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "sequential_test".to_string(),
+                    confidence_threshold: 0.95,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create overlapping reads that should merge into contigs
@@ -709,52 +872,62 @@ fn create_overlapping_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let template = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG";
     let overlap = length / 2;
 
-    (0..count).map(|i| {
-        let start = (i * (length - overlap)) % (template.len() - length);
-        let sequence = template[start..start + length].to_string();
+    (0..count)
+        .map(|i| {
+            let start = (i * (length - overlap)) % (template.len() - length);
+            let sequence = template[start..start + length].to_string();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "overlap_test".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "overlap_test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create metagenomic reads with realistic diversity
 fn create_metagenomic_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let gc_ratios = vec![0.3, 0.4, 0.5, 0.6, 0.7]; // Diverse GC content
 
-    (0..count).map(|i| {
-        let gc_ratio = gc_ratios[i % gc_ratios.len()];
-        let sequence = generate_gc_biased_sequence(length, gc_ratio, i as u64);
+    (0..count)
+        .map(|i| {
+            let gc_ratio = gc_ratios[i % gc_ratios.len()];
+            let sequence = generate_gc_biased_sequence(length, gc_ratio, i as u64);
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![25 + (i % 15) as u8; length], // Variable quality
-            correction_metadata: CorrectionMetadata {
-                algorithm: "metagenomic_test".to_string(),
-                confidence_threshold: 0.85,
-                context_window: 7,
-                correction_time_ms: 2,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![25 + (i % 15) as u8; length], // Variable quality
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "metagenomic_test".to_string(),
+                    confidence_threshold: 0.85,
+                    context_window: 7,
+                    correction_time_ms: 2,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create paired-end reads with insert size
-fn create_paired_end_reads(num_pairs: usize, read_length: usize, insert_size: usize) -> (Vec<CorrectedRead>, Vec<CorrectedRead>) {
+fn create_paired_end_reads(
+    num_pairs: usize,
+    read_length: usize,
+    insert_size: usize,
+) -> (Vec<CorrectedRead>, Vec<CorrectedRead>) {
     let template = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG";
 
     let mut forward_reads = Vec::new();
@@ -777,6 +950,7 @@ fn create_paired_end_reads(num_pairs: usize, read_length: usize, insert_size: us
                 context_window: 5,
                 correction_time_ms: 1,
             },
+            kmer_hash_cache: AHashMap::new(),
         });
 
         // Reverse read (from other end of fragment)
@@ -794,6 +968,7 @@ fn create_paired_end_reads(num_pairs: usize, read_length: usize, insert_size: us
                 context_window: 5,
                 correction_time_ms: 1,
             },
+            kmer_hash_cache: AHashMap::new(),
         });
     }
 
@@ -801,9 +976,13 @@ fn create_paired_end_reads(num_pairs: usize, read_length: usize, insert_size: us
 }
 
 /// Create repeated reads for coverage testing
-fn create_repeated_reads(sequence: &str, repeat_count: usize, start_id: usize) -> Vec<CorrectedRead> {
-    (0..repeat_count).map(|i| {
-        CorrectedRead {
+fn create_repeated_reads(
+    sequence: &str,
+    repeat_count: usize,
+    start_id: usize,
+) -> Vec<CorrectedRead> {
+    (0..repeat_count)
+        .map(|i| CorrectedRead {
             id: start_id + i,
             original: sequence.to_string(),
             corrected: sequence.to_string(),
@@ -815,58 +994,69 @@ fn create_repeated_reads(sequence: &str, repeat_count: usize, start_id: usize) -
                 context_window: 5,
                 correction_time_ms: 0,
             },
-        }
-    }).collect()
+            kmer_hash_cache: AHashMap::new(),
+        })
+        .collect()
 }
 
 /// Create overlapping reads from a template sequence
-fn create_overlapping_sequence_reads(template: &str, overlap: usize, count: usize) -> Vec<CorrectedRead> {
+fn create_overlapping_sequence_reads(
+    template: &str,
+    overlap: usize,
+    count: usize,
+) -> Vec<CorrectedRead> {
     let read_length = template.len() - 2; // Slightly shorter than template
 
-    (0..count).map(|i| {
-        let start = (i * (read_length - overlap)) % (template.len() - read_length);
-        let sequence = template[start..start + read_length].to_string();
+    (0..count)
+        .map(|i| {
+            let start = (i * (read_length - overlap)) % (template.len() - read_length);
+            let sequence = template[start..start + read_length].to_string();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; read_length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "overlap_sequence_test".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; read_length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "overlap_sequence_test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create diverse reads for compatibility testing
 fn create_diverse_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
-    (0..count).map(|i| {
-        let sequence = match i % 4 {
-            0 => generate_random_sequence(length, i as u64),
-            1 => generate_gc_biased_sequence(length, 0.3, i as u64),
-            2 => generate_gc_biased_sequence(length, 0.7, i as u64),
-            _ => generate_repetitive_sequence(length, i),
-        };
+    (0..count)
+        .map(|i| {
+            let sequence = match i % 4 {
+                0 => generate_random_sequence(length, i as u64),
+                1 => generate_gc_biased_sequence(length, 0.3, i as u64),
+                2 => generate_gc_biased_sequence(length, 0.7, i as u64),
+                _ => generate_repetitive_sequence(length, i),
+            };
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![25 + (i % 20) as u8; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "diverse_test".to_string(),
-                confidence_threshold: 0.8 + (i as f64 % 0.2),
-                context_window: 3 + (i % 5),
-                correction_time_ms: i % 5,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![25 + (i % 20) as u8; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "diverse_test".to_string(),
+                    confidence_threshold: 0.8 + (i as f64 % 0.2),
+                    context_window: 3 + (i % 5),
+                    correction_time_ms: i % 5,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Generate random DNA sequence with seed for reproducibility
@@ -934,7 +1124,8 @@ fn create_long_sequence(length: usize) -> Vec<u8> {
 
 /// Simple reverse complement function
 fn reverse_complement(sequence: &str) -> String {
-    sequence.chars()
+    sequence
+        .chars()
         .rev()
         .map(|c| match c {
             'A' => 'T',

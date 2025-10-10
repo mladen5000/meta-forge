@@ -13,17 +13,17 @@
 
 use anyhow::Result;
 use meta_forge::assembly::laptop_assembly::{
-    LaptopConfig, LaptopAssemblyGraph, BoundedKmerCounter
+    BoundedKmerCounter, LaptopAssemblyGraph, LaptopConfig,
 };
 use meta_forge::assembly::memory_optimizations::{
-    KmerArena, MemoryStats, LockFreeGraphBuilder, BuilderConfig,
-    BoundedStreamProcessor, StreamConfig, StreamProcessorStats
+    BoundedStreamProcessor, BuilderConfig, KmerArena, LockFreeGraphBuilder, MemoryStats,
+    StreamConfig, StreamProcessorStats,
 };
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /* ========================================================================= */
 /*                        REAL-TIME MEMORY MONITORING                      */
@@ -60,7 +60,10 @@ impl RealTimeMemoryMonitor {
         let mut peak = self.peak_usage.load(Ordering::Relaxed);
         while peak < new_usage {
             match self.peak_usage.compare_exchange_weak(
-                peak, new_usage, Ordering::SeqCst, Ordering::Relaxed
+                peak,
+                new_usage,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(current_peak) => peak = current_peak,
@@ -94,7 +97,8 @@ impl RealTimeMemoryMonitor {
             critical_threshold_mb: self.critical_threshold as f64 / (1024.0 * 1024.0),
             allocation_count: self.allocation_count.load(Ordering::Relaxed),
             deallocation_count: self.deallocation_count.load(Ordering::Relaxed),
-            pressure_ratio: self.current_usage.load(Ordering::Relaxed) as f64 / self.pressure_threshold as f64,
+            pressure_ratio: self.current_usage.load(Ordering::Relaxed) as f64
+                / self.pressure_threshold as f64,
         }
     }
 }
@@ -121,19 +125,27 @@ mod memory_monitoring_tests {
 
         // Simulate memory allocations
         let allocations = vec![
-            10 * 1024 * 1024,  // 10MB
-            20 * 1024 * 1024,  // 20MB
-            30 * 1024 * 1024,  // 30MB
-            40 * 1024 * 1024,  // 40MB
+            10 * 1024 * 1024, // 10MB
+            20 * 1024 * 1024, // 20MB
+            30 * 1024 * 1024, // 30MB
+            40 * 1024 * 1024, // 40MB
         ];
 
         let mut successful_allocations = 0;
         for (i, &size) in allocations.iter().enumerate() {
             if monitor.allocate(size) {
                 successful_allocations += 1;
-                println!("Allocation {}: {:.1}MB - SUCCESS", i + 1, size as f64 / (1024.0 * 1024.0));
+                println!(
+                    "Allocation {}: {:.1}MB - SUCCESS",
+                    i + 1,
+                    size as f64 / (1024.0 * 1024.0)
+                );
             } else {
-                println!("Allocation {}: {:.1}MB - BLOCKED (critical threshold)", i + 1, size as f64 / (1024.0 * 1024.0));
+                println!(
+                    "Allocation {}: {:.1}MB - BLOCKED (critical threshold)",
+                    i + 1,
+                    size as f64 / (1024.0 * 1024.0)
+                );
                 break;
             }
 
@@ -151,8 +163,14 @@ mod memory_monitoring_tests {
 
         // Validate tracking accuracy
         assert!(stats.current_usage_mb > 0.0, "Should track memory usage");
-        assert!(stats.peak_usage_mb >= stats.current_usage_mb, "Peak should be >= current");
-        assert_eq!(stats.allocation_count, successful_allocations, "Should track allocation count");
+        assert!(
+            stats.peak_usage_mb >= stats.current_usage_mb,
+            "Peak should be >= current"
+        );
+        assert_eq!(
+            stats.allocation_count, successful_allocations,
+            "Should track allocation count"
+        );
 
         println!("✅ Real-time memory tracking validated");
     }
@@ -179,7 +197,10 @@ mod memory_monitoring_tests {
 
                 if monitor.is_critical() && !critical_reached {
                     critical_reached = true;
-                    println!("🔴 Critical memory threshold reached at allocation {}", i + 1);
+                    println!(
+                        "🔴 Critical memory threshold reached at allocation {}",
+                        i + 1
+                    );
                 }
             } else {
                 println!("🚫 Allocation {} blocked by critical threshold", i + 1);
@@ -190,7 +211,10 @@ mod memory_monitoring_tests {
         assert!(pressure_detected, "Should detect memory pressure");
 
         let final_stats = monitor.get_stats();
-        assert!(final_stats.pressure_ratio > 0.5, "Should reach significant memory usage");
+        assert!(
+            final_stats.pressure_ratio > 0.5,
+            "Should reach significant memory usage"
+        );
 
         println!("✅ Memory pressure detection working correctly");
     }
@@ -222,7 +246,8 @@ mod memory_monitoring_tests {
 
         // Stress the memory system
         for i in 0..20 {
-            if monitor.allocate(5 * 1024 * 1024) { // 5MB chunks
+            if monitor.allocate(5 * 1024 * 1024) {
+                // 5MB chunks
                 println!("Allocation {}: 5MB", i + 1);
             }
             thread::sleep(Duration::from_millis(50));
@@ -231,7 +256,10 @@ mod memory_monitoring_tests {
         thread::sleep(Duration::from_millis(200)); // Let cleanup thread work
 
         let cleanup_count = cleanup_triggered.load(Ordering::Relaxed);
-        assert!(cleanup_count > 0, "Automatic cleanup should have been triggered");
+        assert!(
+            cleanup_count > 0,
+            "Automatic cleanup should have been triggered"
+        );
 
         println!("✅ Automatic cleanup triggered {} times", cleanup_count);
 
@@ -271,8 +299,12 @@ mod memory_leak_tests {
             }
 
             let arena_stats = arena.memory_stats();
-            println!("Cycle {}: {} k-mers allocated, {:.1}% utilization",
-                    cycle + 1, arena_stats.allocated_kmers, arena_stats.utilization * 100.0);
+            println!(
+                "Cycle {}: {} k-mers allocated, {:.1}% utilization",
+                cycle + 1,
+                arena_stats.allocated_kmers,
+                arena_stats.utilization * 100.0
+            );
 
             // Simulate arena cleanup
             drop(arena);
@@ -282,9 +314,11 @@ mod memory_leak_tests {
         let final_usage = monitor.current_usage.load(Ordering::Relaxed);
         let leak_amount = final_usage as i64 - initial_usage as i64;
 
-        assert!(leak_amount.abs() < 1024 * 1024, // < 1MB tolerance
-               "Potential memory leak detected: {}KB difference",
-               leak_amount / 1024);
+        assert!(
+            leak_amount.abs() < 1024 * 1024, // < 1MB tolerance
+            "Potential memory leak detected: {}KB difference",
+            leak_amount / 1024
+        );
 
         println!("✅ No significant memory leaks detected in k-mer arena");
 
@@ -311,7 +345,11 @@ mod memory_leak_tests {
             graph.build_from_reads(&reads, 21)?;
 
             let actual_memory = graph.memory_usage_mb();
-            println!("Cycle {}: Graph memory usage: {:.1}MB", cycle + 1, actual_memory);
+            println!(
+                "Cycle {}: Graph memory usage: {:.1}MB",
+                cycle + 1,
+                actual_memory
+            );
 
             // Cleanup
             drop(graph);
@@ -321,9 +359,11 @@ mod memory_leak_tests {
         let final_usage = monitor.current_usage.load(Ordering::Relaxed);
         let leak_amount = final_usage as i64 - initial_usage as i64;
 
-        assert!(leak_amount.abs() < 5 * 1024 * 1024, // < 5MB tolerance
-               "Potential memory leak in graph construction: {:.1}MB difference",
-               leak_amount as f64 / (1024.0 * 1024.0));
+        assert!(
+            leak_amount.abs() < 5 * 1024 * 1024, // < 5MB tolerance
+            "Potential memory leak in graph construction: {:.1}MB difference",
+            leak_amount as f64 / (1024.0 * 1024.0)
+        );
 
         println!("✅ No significant memory leaks detected in graph construction");
 
@@ -353,8 +393,12 @@ mod memory_leak_tests {
             let _stats = processor.process_kmer_stream(kmer_stream)?;
 
             let proc_stats = processor.get_streaming_stats();
-            println!("Cycle {}: Processor memory: {:.1}MB, utilization: {:.1}%",
-                    cycle + 1, proc_stats.memory_usage_mb, proc_stats.memory_utilization);
+            println!(
+                "Cycle {}: Processor memory: {:.1}MB, utilization: {:.1}%",
+                cycle + 1,
+                proc_stats.memory_usage_mb,
+                proc_stats.memory_utilization
+            );
 
             // Cleanup
             drop(processor);
@@ -364,9 +408,11 @@ mod memory_leak_tests {
         let final_usage = monitor.current_usage.load(Ordering::Relaxed);
         let leak_amount = final_usage as i64 - initial_usage as i64;
 
-        assert!(leak_amount.abs() < 2 * 1024 * 1024, // < 2MB tolerance
-               "Potential memory leak in streaming processor: {:.1}MB difference",
-               leak_amount as f64 / (1024.0 * 1024.0));
+        assert!(
+            leak_amount.abs() < 2 * 1024 * 1024, // < 2MB tolerance
+            "Potential memory leak in streaming processor: {:.1}MB difference",
+            leak_amount as f64 / (1024.0 * 1024.0)
+        );
 
         println!("✅ No significant memory leaks detected in streaming processor");
 
@@ -407,24 +453,34 @@ mod memory_optimization_tests {
             let batch_memory = batch_end - batch_start;
 
             let arena_stats = arena.memory_stats();
-            println!("Batch {}: {} k-mers, {:.1}KB batch memory, {:.1}% utilization",
-                    batch_num + 1, kmer_refs.len(),
-                    batch_memory as f64 / 1024.0,
-                    arena_stats.utilization * 100.0);
+            println!(
+                "Batch {}: {} k-mers, {:.1}KB batch memory, {:.1}% utilization",
+                batch_num + 1,
+                kmer_refs.len(),
+                batch_memory as f64 / 1024.0,
+                arena_stats.utilization * 100.0
+            );
 
             // Validate efficient memory usage
-            assert!(arena_stats.utilization > 0.3,
-                   "Arena utilization {:.1}% too low for batch {}",
-                   arena_stats.utilization * 100.0, batch_num + 1);
+            assert!(
+                arena_stats.utilization > 0.3,
+                "Arena utilization {:.1}% too low for batch {}",
+                arena_stats.utilization * 100.0,
+                batch_num + 1
+            );
         }
 
         let final_stats = arena.memory_stats();
-        assert!(final_stats.utilization > 0.5,
-               "Overall arena utilization {:.1}% should be > 50%",
-               final_stats.utilization * 100.0);
+        assert!(
+            final_stats.utilization > 0.5,
+            "Overall arena utilization {:.1}% should be > 50%",
+            final_stats.utilization * 100.0
+        );
 
-        println!("✅ Memory pool efficiency validated: {:.1}% utilization",
-                final_stats.utilization * 100.0);
+        println!(
+            "✅ Memory pool efficiency validated: {:.1}% utilization",
+            final_stats.utilization * 100.0
+        );
 
         Ok(())
     }
@@ -472,10 +528,15 @@ mod memory_optimization_tests {
         println!("  Queue length: {}", builder_stats.queue_length);
 
         // Validate memory efficiency
-        assert!(builder_stats.memory_usage_mb < 100,
-               "Memory usage {}MB exceeds 100MB limit", builder_stats.memory_usage_mb);
-        assert!(final_result.valid_edges > 8000,
-               "Should process most edges successfully");
+        assert!(
+            builder_stats.memory_usage_mb < 100,
+            "Memory usage {}MB exceeds 100MB limit",
+            builder_stats.memory_usage_mb
+        );
+        assert!(
+            final_result.valid_edges > 8000,
+            "Should process most edges successfully"
+        );
 
         println!("✅ Lock-free builder memory efficiency validated");
 
@@ -489,7 +550,10 @@ mod memory_optimization_tests {
         let num_threads = 4;
         let mut handles = Vec::new();
 
-        println!("🔄 Testing concurrent memory usage with {} threads...", num_threads);
+        println!(
+            "🔄 Testing concurrent memory usage with {} threads...",
+            num_threads
+        );
 
         for thread_id in 0..num_threads {
             let monitor_clone = Arc::clone(&monitor);
@@ -537,10 +601,16 @@ mod memory_optimization_tests {
         println!("  Total deallocations: {}", final_stats.deallocation_count);
 
         // Validate concurrent memory handling
-        assert!(final_stats.peak_usage_mb < 300.0,
-               "Peak memory {:.1}MB exceeded limit", final_stats.peak_usage_mb);
-        assert!(final_stats.current_usage_mb < 50.0,
-               "Final memory {:.1}MB should be low after cleanup", final_stats.current_usage_mb);
+        assert!(
+            final_stats.peak_usage_mb < 300.0,
+            "Peak memory {:.1}MB exceeded limit",
+            final_stats.peak_usage_mb
+        );
+        assert!(
+            final_stats.current_usage_mb < 50.0,
+            "Final memory {:.1}MB should be low after cleanup",
+            final_stats.current_usage_mb
+        );
 
         println!("✅ Concurrent memory usage handling validated");
 
@@ -570,7 +640,7 @@ mod laptop_specific_tests {
 
             let monitor = RealTimeMemoryMonitor::new(
                 (memory_limit_mb as f64 * 0.8) as usize, // Pressure at 80%
-                memory_limit_mb                          // Critical at 100%
+                memory_limit_mb,                         // Critical at 100%
             );
 
             // Simulate typical bioinformatics workload
@@ -582,7 +652,10 @@ mod laptop_specific_tests {
 
                 let estimated_memory = estimate_memory_usage(read_count, 100);
                 if !monitor.allocate(estimated_memory) {
-                    println!("  {} reads: SKIPPED (would exceed memory limit)", read_count);
+                    println!(
+                        "  {} reads: SKIPPED (would exceed memory limit)",
+                        read_count
+                    );
                     continue;
                 }
 
@@ -591,23 +664,36 @@ mod laptop_specific_tests {
                 let processing_time = start_time.elapsed();
 
                 let actual_memory = graph.memory_usage_mb();
-                println!("  {} reads: {:.1}MB memory, {:.2}s processing",
-                        read_count, actual_memory, processing_time.as_secs_f64());
+                println!(
+                    "  {} reads: {:.1}MB memory, {:.2}s processing",
+                    read_count,
+                    actual_memory,
+                    processing_time.as_secs_f64()
+                );
 
                 // Validate laptop constraints
-                assert!(actual_memory < memory_limit_mb as f64,
-                       "Memory usage {:.1}MB exceeds {} limit {}MB",
-                       actual_memory, scenario_name, memory_limit_mb);
+                assert!(
+                    actual_memory < memory_limit_mb as f64,
+                    "Memory usage {:.1}MB exceeds {} limit {}MB",
+                    actual_memory,
+                    scenario_name,
+                    memory_limit_mb
+                );
 
-                assert!(processing_time.as_secs() < 30,
-                       "Processing time {:.2}s too long for laptop", processing_time.as_secs_f64());
+                assert!(
+                    processing_time.as_secs() < 30,
+                    "Processing time {:.2}s too long for laptop",
+                    processing_time.as_secs_f64()
+                );
 
                 monitor.deallocate(estimated_memory);
             }
 
             let stats = monitor.get_stats();
-            println!("  Peak memory: {:.1}MB, Pressure ratio: {:.2}",
-                    stats.peak_usage_mb, stats.pressure_ratio);
+            println!(
+                "  Peak memory: {:.1}MB, Pressure ratio: {:.2}",
+                stats.peak_usage_mb, stats.pressure_ratio
+            );
 
             println!("✅ {} scenario validated", scenario_name);
         }
@@ -628,19 +714,28 @@ mod laptop_specific_tests {
             let size = 8 * 1024 * 1024; // 8MB chunks
             if monitor.allocate(size) {
                 allocations.push(size);
-                println!("  Allocation {}: {:.1}MB (total: {:.1}MB)",
-                        i + 1, size as f64 / (1024.0 * 1024.0),
-                        monitor.get_stats().current_usage_mb);
+                println!(
+                    "  Allocation {}: {:.1}MB (total: {:.1}MB)",
+                    i + 1,
+                    size as f64 / (1024.0 * 1024.0),
+                    monitor.get_stats().current_usage_mb
+                );
             } else {
                 println!("  Allocation {} blocked by critical threshold", i + 1);
                 break;
             }
         }
 
-        assert!(monitor.is_under_pressure(), "Should be under memory pressure");
+        assert!(
+            monitor.is_under_pressure(),
+            "Should be under memory pressure"
+        );
         let pressure_stats = monitor.get_stats();
-        println!("Memory pressure reached: {:.1}MB ({:.1}% of threshold)",
-                pressure_stats.current_usage_mb, pressure_stats.pressure_ratio * 100.0);
+        println!(
+            "Memory pressure reached: {:.1}MB ({:.1}% of threshold)",
+            pressure_stats.current_usage_mb,
+            pressure_stats.pressure_ratio * 100.0
+        );
 
         // Phase 2: Gradual memory recovery
         println!("\nPhase 2: Gradual memory recovery...");
@@ -651,21 +746,34 @@ mod laptop_specific_tests {
             monitor.deallocate(size);
 
             let stats = monitor.get_stats();
-            println!("  Recovery {}: freed {:.1}MB (remaining: {:.1}MB)",
-                    i + 1, size as f64 / (1024.0 * 1024.0), stats.current_usage_mb);
+            println!(
+                "  Recovery {}: freed {:.1}MB (remaining: {:.1}MB)",
+                i + 1,
+                size as f64 / (1024.0 * 1024.0),
+                stats.current_usage_mb
+            );
         }
 
         // Phase 3: Validate recovery
         let recovery_stats = monitor.get_stats();
-        assert!(!monitor.is_critical(), "Should no longer be at critical level");
-        assert!(recovery_stats.current_usage_mb < pressure_stats.current_usage_mb,
-               "Memory usage should have decreased");
+        assert!(
+            !monitor.is_critical(),
+            "Should no longer be at critical level"
+        );
+        assert!(
+            recovery_stats.current_usage_mb < pressure_stats.current_usage_mb,
+            "Memory usage should have decreased"
+        );
 
         println!("\n✅ Memory recovery validated:");
-        println!("  Peak: {:.1}MB -> Current: {:.1}MB",
-                pressure_stats.peak_usage_mb, recovery_stats.current_usage_mb);
-        println!("  Pressure ratio: {:.2} -> {:.2}",
-                pressure_stats.pressure_ratio, recovery_stats.pressure_ratio);
+        println!(
+            "  Peak: {:.1}MB -> Current: {:.1}MB",
+            pressure_stats.peak_usage_mb, recovery_stats.current_usage_mb
+        );
+        println!(
+            "  Pressure ratio: {:.2} -> {:.2}",
+            pressure_stats.pressure_ratio, recovery_stats.pressure_ratio
+        );
 
         Ok(())
     }
@@ -679,13 +787,17 @@ mod laptop_specific_tests {
         // Simulate fragmented allocation pattern
         let mut kmer_refs = Vec::new();
         let allocation_pattern = vec![
-            vec![1, 2, 3, 4, 5],       // Small allocations
-            vec![10, 15, 20],          // Medium allocations
-            vec![8, 12, 6, 9],         // Mixed sizes
+            vec![1, 2, 3, 4, 5], // Small allocations
+            vec![10, 15, 20],    // Medium allocations
+            vec![8, 12, 6, 9],   // Mixed sizes
         ];
 
         for (phase, sizes) in allocation_pattern.iter().enumerate() {
-            println!("Fragmentation phase {}: allocating {:?} k-mers", phase + 1, sizes);
+            println!(
+                "Fragmentation phase {}: allocating {:?} k-mers",
+                phase + 1,
+                sizes
+            );
 
             for &size in sizes {
                 let kmer_data = vec![0u64; size];
@@ -702,17 +814,24 @@ mod laptop_specific_tests {
             }
 
             let arena_stats = arena.memory_stats();
-            println!("  Arena utilization: {:.1}%", arena_stats.utilization * 100.0);
+            println!(
+                "  Arena utilization: {:.1}%",
+                arena_stats.utilization * 100.0
+            );
         }
 
         // Validate fragmentation handling
         let final_stats = arena.memory_stats();
-        assert!(final_stats.utilization > 0.4,
-               "Arena should handle fragmentation efficiently (utilization: {:.1}%)",
-               final_stats.utilization * 100.0);
+        assert!(
+            final_stats.utilization > 0.4,
+            "Arena should handle fragmentation efficiently (utilization: {:.1}%)",
+            final_stats.utilization * 100.0
+        );
 
-        println!("✅ Memory fragmentation handling validated: {:.1}% utilization",
-                final_stats.utilization * 100.0);
+        println!(
+            "✅ Memory fragmentation handling validated: {:.1}% utilization",
+            final_stats.utilization * 100.0
+        );
 
         Ok(())
     }
@@ -732,56 +851,74 @@ mod laptop_specific_tests {
 
 /// Create reads for memory leak testing
 fn create_leak_test_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
-    (0..count).map(|i| {
-        let sequence = format!("{:0width$}", i, width = length)
-            .chars()
-            .map(|c| match c {
-                '0' => 'A', '1' => 'C', '2' => 'G', '3' => 'T',
-                '4' => 'A', '5' => 'C', '6' => 'G', '7' => 'T',
-                '8' => 'A', '9' => 'C', _ => 'A',
-            })
-            .collect::<String>();
+    (0..count)
+        .map(|i| {
+            let sequence = format!("{:0width$}", i, width = length)
+                .chars()
+                .map(|c| match c {
+                    '0' => 'A',
+                    '1' => 'C',
+                    '2' => 'G',
+                    '3' => 'T',
+                    '4' => 'A',
+                    '5' => 'C',
+                    '6' => 'G',
+                    '7' => 'T',
+                    '8' => 'A',
+                    '9' => 'C',
+                    _ => 'A',
+                })
+                .collect::<String>();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "leak_test".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "leak_test".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create thread-specific reads for concurrent testing
-fn create_thread_specific_reads(thread_id: usize, count: usize, length: usize) -> Vec<CorrectedRead> {
-    (0..count).map(|i| {
-        let base_id = thread_id * 10000 + i;
-        let nucleotides = ['A', 'C', 'G', 'T'];
+fn create_thread_specific_reads(
+    thread_id: usize,
+    count: usize,
+    length: usize,
+) -> Vec<CorrectedRead> {
+    (0..count)
+        .map(|i| {
+            let base_id = thread_id * 10000 + i;
+            let nucleotides = ['A', 'C', 'G', 'T'];
 
-        let sequence: String = (0..length)
-            .map(|j| nucleotides[(base_id + j) % 4])
-            .collect();
+            let sequence: String = (0..length)
+                .map(|j| nucleotides[(base_id + j) % 4])
+                .collect();
 
-        CorrectedRead {
-            id: base_id,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: format!("thread_{}", thread_id),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: base_id,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: format!("thread_{}", thread_id),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create reads for laptop workload testing
@@ -794,23 +931,26 @@ fn create_laptop_workload_reads(count: usize, length: usize) -> Vec<CorrectedRea
         "AAGCTTAAGCTTAAGCTTAAGCTTAAGCTTAAGCTTAAGC",
     ];
 
-    (0..count).map(|i| {
-        let base_seq = &base_sequences[i % base_sequences.len()];
-        let start = (i * 3) % (base_seq.len() - length);
-        let sequence = base_seq[start..start + length].to_string();
+    (0..count)
+        .map(|i| {
+            let base_seq = &base_sequences[i % base_sequences.len()];
+            let start = (i * 3) % (base_seq.len() - length);
+            let sequence = base_seq[start..start + length].to_string();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![28 + (i % 8) as u8; length], // Variable quality
-            correction_metadata: CorrectionMetadata {
-                algorithm: "laptop_workload".to_string(),
-                confidence_threshold: 0.88,
-                context_window: 6,
-                correction_time_ms: 1,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![28 + (i % 8) as u8; length], // Variable quality
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "laptop_workload".to_string(),
+                    confidence_threshold: 0.88,
+                    context_window: 6,
+                    correction_time_ms: 1,
+                },
+                kmer_hash_cache: AHashMap::new(),
+            }
+        })
+        .collect()
 }

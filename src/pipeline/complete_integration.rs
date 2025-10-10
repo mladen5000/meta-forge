@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use indicatif;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -8,8 +9,10 @@ use tracing::{debug, info, instrument};
 use crate::utils::intermediate_output::{IntermediateOutputManager, OutputConfig, PipelineSection};
 use crate::utils::kraken_reporter::{KrakenClassification, KrakenReporter};
 use crate::utils::output_writers;
+use crate::utils::performance_analyzer::{
+    AnalysisConfig as PerfAnalysisConfig, PerformanceProfiler,
+};
 use crate::utils::progress_display::{MultiProgress, ProgressBar};
-use crate::utils::performance_analyzer::{PerformanceProfiler, AnalysisConfig as PerfAnalysisConfig};
 use tracing::warn;
 
 // use crate::assembly::adaptive_k::AssemblyGraphBuilder; // Now using AdvancedAssemblyGraphBuilder
@@ -337,13 +340,16 @@ impl MetagenomicsPipeline {
                 // Use custom config with CLI overrides
                 let mem = memory_mb.unwrap_or(4096); // Default 4GB
                 let cpu = threads.unwrap_or_else(num_cpus::get);
-                crate::assembly::laptop_assembly::LaptopConfig::custom(mem, cpu, 63)
-                    .unwrap_or_else(|_| crate::assembly::laptop_assembly::LaptopConfig::medium_memory())
+                crate::assembly::laptop_assembly::LaptopConfig::custom(mem, cpu, 63).unwrap_or_else(
+                    |_| crate::assembly::laptop_assembly::LaptopConfig::medium_memory(),
+                )
             };
 
             // Log the configuration being used
-            info!("💻 Using configuration: {} MB RAM, {} CPU cores",
-                laptop_config.memory_budget_mb, laptop_config.cpu_cores);
+            info!(
+                "💻 Using configuration: {} MB RAM, {} CPU cores",
+                laptop_config.memory_budget_mb, laptop_config.cpu_cores
+            );
 
             // Apply to pipeline config (these will be used by assembly modules)
             // Store in general config for reference
@@ -433,10 +439,14 @@ impl MetagenomicsPipeline {
         let preprocess_start = Instant::now();
         let (corrected_reads, qc_stats) = self.preprocess_inputs(inputs).await?;
         let preprocess_duration = preprocess_start.elapsed();
-        info!("✅ Preprocessing completed in {:.2}s", preprocess_duration.as_secs_f64());
+        info!(
+            "✅ Preprocessing completed in {:.2}s",
+            preprocess_duration.as_secs_f64()
+        );
 
         // Collect metrics after preprocessing
-        self.performance_profiler.collect_system_metrics("preprocessing")?;
+        self.performance_profiler
+            .collect_system_metrics("preprocessing")?;
 
         // Save preprocessing intermediate results
         self.output_manager.save_intermediate(
@@ -451,7 +461,9 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard FASTQ format for preprocessed reads
-        let preprocessing_dir = self.output_manager.get_section_dir(&PipelineSection::Preprocessing);
+        let preprocessing_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Preprocessing);
 
         // Write FASTQ and QC report in blocking tasks (sync I/O)
         let corrected_reads_clone = corrected_reads.clone();
@@ -459,18 +471,20 @@ impl MetagenomicsPipeline {
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_fastq(
                 &corrected_reads_clone,
-                preprocessing_dir_clone.join("corrected_reads.fastq")
+                preprocessing_dir_clone.join("corrected_reads.fastq"),
             )
-        }).await??;
+        })
+        .await??;
 
         let qc_stats_clone = qc_stats.clone();
         let preprocessing_dir_clone = preprocessing_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_qc_report(
                 &qc_stats_clone,
-                preprocessing_dir_clone.join("qc_report.txt")
+                preprocessing_dir_clone.join("qc_report.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved preprocessing intermediate files (JSON + FASTQ + QC report)");
 
@@ -479,10 +493,14 @@ impl MetagenomicsPipeline {
         let assembly_start = Instant::now();
         let assembly_results = self.run_assembly(&corrected_reads).await?;
         let assembly_duration = assembly_start.elapsed();
-        info!("✅ Assembly completed in {:.2}s", assembly_duration.as_secs_f64());
+        info!(
+            "✅ Assembly completed in {:.2}s",
+            assembly_duration.as_secs_f64()
+        );
 
         // Collect metrics after assembly
-        self.performance_profiler.collect_system_metrics("assembly")?;
+        self.performance_profiler
+            .collect_system_metrics("assembly")?;
 
         // Save assembly intermediate results
         self.output_manager.save_intermediate(
@@ -514,7 +532,9 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard bioinformatics formats for assembly
-        let assembly_dir = self.output_manager.get_section_dir(&PipelineSection::Assembly);
+        let assembly_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Assembly);
 
         // Write assembly outputs in blocking tasks (sync I/O)
         let contigs_clone = assembly_results.contigs.clone();
@@ -522,18 +542,20 @@ impl MetagenomicsPipeline {
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_contigs_fasta_detailed(
                 &contigs_clone,
-                assembly_dir_clone.join("contigs.fasta")
+                assembly_dir_clone.join("contigs.fasta"),
             )
-        }).await??;
+        })
+        .await??;
 
         let contigs_clone = assembly_results.contigs.clone();
         let assembly_dir_clone = assembly_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_gfa(
                 &contigs_clone,
-                assembly_dir_clone.join("assembly_graph.gfa")
+                assembly_dir_clone.join("assembly_graph.gfa"),
             )
-        }).await??;
+        })
+        .await??;
 
         let contigs_clone = assembly_results.contigs.clone();
         let n50 = assembly_results.assembly_stats.n50;
@@ -542,9 +564,10 @@ impl MetagenomicsPipeline {
             crate::utils::format_writers::write_assembly_stats(
                 &contigs_clone,
                 n50,
-                assembly_dir_clone.join("assembly_stats.txt")
+                assembly_dir_clone.join("assembly_stats.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved assembly intermediate files (JSON + FASTA + GFA + stats)");
 
@@ -565,7 +588,9 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard bioinformatics formats for features
-        let features_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
+        let features_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Classification);
 
         // Extract feature data into TSV format (FeatureVector has Array1<f64> fields)
         let feature_names = vec![
@@ -575,11 +600,15 @@ impl MetagenomicsPipeline {
             "feature_dim_3".to_string(),
         ];
 
-        let feature_data: Vec<(String, Vec<f64>)> = features.sequence_features.iter().map(|(idx, fv)| {
-            // FeatureVector has sequence_features as Array1<f64>
-            let feature_values = fv.sequence_features.to_vec();
-            (format!("contig_{}", idx), feature_values)
-        }).collect();
+        let feature_data: Vec<(String, Vec<f64>)> = features
+            .sequence_features
+            .iter()
+            .map(|(idx, fv)| {
+                // FeatureVector has sequence_features as Array1<f64>
+                let feature_values = fv.sequence_features.to_vec();
+                (format!("contig_{}", idx), feature_values)
+            })
+            .collect();
 
         // Write features in blocking tasks (sync I/O)
         let feature_data_clone = feature_data.clone();
@@ -589,9 +618,10 @@ impl MetagenomicsPipeline {
             crate::utils::format_writers::write_features_tsv(
                 &feature_data_clone,
                 &feature_names_clone,
-                features_dir_clone.join("feature_vectors.tsv")
+                features_dir_clone.join("feature_vectors.tsv"),
             )
-        }).await??;
+        })
+        .await??;
 
         let num_features = features.sequence_features.len();
         let num_dimensions = feature_names.len();
@@ -602,9 +632,10 @@ impl MetagenomicsPipeline {
                 num_features,
                 num_dimensions,
                 &feature_names_clone,
-                features_dir_clone.join("feature_summary.txt")
+                features_dir_clone.join("feature_summary.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved feature extraction intermediate files (JSON + TSV + summary)");
 
@@ -615,10 +646,14 @@ impl MetagenomicsPipeline {
             .classify_sequences(&assembly_results, &features)
             .await?;
         let classification_duration = classification_start.elapsed();
-        info!("✅ Classification completed in {:.2}s", classification_duration.as_secs_f64());
+        info!(
+            "✅ Classification completed in {:.2}s",
+            classification_duration.as_secs_f64()
+        );
 
         // Collect metrics after classification
-        self.performance_profiler.collect_system_metrics("classification")?;
+        self.performance_profiler
+            .collect_system_metrics("classification")?;
 
         // Save classification intermediate results
         self.output_manager.save_intermediate(
@@ -666,12 +701,23 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard bioinformatics formats for classification
-        let classification_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
+        let classification_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Classification);
 
         // Convert classifications to format expected by format_writers
-        let class_data: Vec<(String, String, String, f64, String)> = classifications.iter().map(|c| {
-            (c.contig_id.to_string(), c.taxonomy_id.to_string(), c.taxonomy_name.clone(), c.confidence, c.lineage.clone())
-        }).collect();
+        let class_data: Vec<(String, String, String, f64, String)> = classifications
+            .iter()
+            .map(|c| {
+                (
+                    c.contig_id.to_string(),
+                    c.taxonomy_id.to_string(),
+                    c.taxonomy_name.clone(),
+                    c.confidence,
+                    c.lineage.clone(),
+                )
+            })
+            .collect();
 
         // Write classification outputs in blocking tasks (sync I/O)
         let class_data_clone = class_data.clone();
@@ -679,19 +725,24 @@ impl MetagenomicsPipeline {
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_class_tsv(
                 &class_data_clone,
-                classification_dir_clone.join("taxonomic_assignments.tsv")
+                classification_dir_clone.join("taxonomic_assignments.tsv"),
             )
-        }).await??;
+        })
+        .await??;
 
         // Group classifications by taxonomy for Kraken report
-        let mut tax_counts: std::collections::HashMap<String, (String, f64)> = std::collections::HashMap::new();
+        let mut tax_counts: std::collections::HashMap<String, (String, f64)> =
+            std::collections::HashMap::new();
         for c in &classifications {
-            let entry = tax_counts.entry(c.taxonomy_name.clone()).or_insert((c.lineage.clone(), 0.0));
+            let entry = tax_counts
+                .entry(c.taxonomy_name.clone())
+                .or_insert((c.lineage.clone(), 0.0));
             entry.1 += 1.0;
         }
-        let kraken_data: Vec<(String, String, f64)> = tax_counts.into_iter().map(|(name, (lineage, count))| {
-            (name, lineage, count)
-        }).collect();
+        let kraken_data: Vec<(String, String, f64)> = tax_counts
+            .into_iter()
+            .map(|(name, (lineage, count))| (name, lineage, count))
+            .collect();
 
         let total_classifications = classifications.len();
         let classification_dir_clone = classification_dir.clone();
@@ -699,9 +750,10 @@ impl MetagenomicsPipeline {
             crate::utils::format_writers::write_kraken_report(
                 &kraken_data,
                 total_classifications,
-                classification_dir_clone.join("kraken_report.txt")
+                classification_dir_clone.join("kraken_report.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved classification intermediate files (JSON + TSV + Kraken report)");
 
@@ -723,23 +775,35 @@ impl MetagenomicsPipeline {
         )?;
 
         // ADDED: Write standard bioinformatics formats for abundance
-        let abundance_dir = self.output_manager.get_section_dir(&PipelineSection::Abundance);
+        let abundance_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Abundance);
 
         // Prepare abundance data from classifications (species-level)
-        let mut species_counts: std::collections::HashMap<String, (f64, f64, usize)> = std::collections::HashMap::new();
+        let mut species_counts: std::collections::HashMap<String, (f64, f64, usize)> =
+            std::collections::HashMap::new();
         for classification in &classifications {
-            let entry = species_counts.entry(classification.taxonomy_name.clone()).or_insert((0.0, 0.0, 0));
+            let entry = species_counts
+                .entry(classification.taxonomy_name.clone())
+                .or_insert((0.0, 0.0, 0));
             entry.0 += 1.0; // Count
             entry.2 += 1; // Number of contigs
         }
 
         // Convert to the format expected by write_abund_tsv
         let total_count: f64 = species_counts.values().map(|(count, _, _)| count).sum();
-        let abund_data: Vec<(String, f64, f64, usize)> = species_counts.iter().map(|(name, (count, _, num_contigs))| {
-            let rel_abund = if total_count > 0.0 { (count / total_count) * 100.0 } else { 0.0 };
-            let avg_cov = 30.0; // Mock value - would need actual coverage data
-            (name.clone(), rel_abund, avg_cov, *num_contigs)
-        }).collect();
+        let abund_data: Vec<(String, f64, f64, usize)> = species_counts
+            .iter()
+            .map(|(name, (count, _, num_contigs))| {
+                let rel_abund = if total_count > 0.0 {
+                    (count / total_count) * 100.0
+                } else {
+                    0.0
+                };
+                let avg_cov = 30.0; // Mock value - would need actual coverage data
+                (name.clone(), rel_abund, avg_cov, *num_contigs)
+            })
+            .collect();
 
         // Write abundance outputs in blocking tasks (sync I/O)
         let abund_data_clone = abund_data.clone();
@@ -747,22 +811,25 @@ impl MetagenomicsPipeline {
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_abund_tsv(
                 &abund_data_clone,
-                abundance_dir_clone.join("abundance_profile.tsv")
+                abundance_dir_clone.join("abundance_profile.tsv"),
             )
-        }).await??;
+        })
+        .await??;
 
         // Prepare Krona taxonomy data (count, full lineage)
-        let krona_data: Vec<(f64, String)> = classifications.iter().map(|c| {
-            (1.0, c.lineage.clone())
-        }).collect();
+        let krona_data: Vec<(f64, String)> = classifications
+            .iter()
+            .map(|c| (1.0, c.lineage.clone()))
+            .collect();
 
         let abundance_dir_clone = abundance_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_krona_tax(
                 &krona_data,
-                abundance_dir_clone.join("krona_input.txt")
+                abundance_dir_clone.join("krona_input.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         // Calculate diversity metrics
         let diversity_index = if !abund_data.is_empty() {
@@ -779,7 +846,8 @@ impl MetagenomicsPipeline {
         };
 
         // Find dominant taxon
-        let (dominant_taxon, dominant_abundance) = abund_data.iter()
+        let (dominant_taxon, dominant_abundance) = abund_data
+            .iter()
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(name, abund, _, _)| (name.clone(), *abund))
             .unwrap_or(("Unknown".to_string(), 0.0));
@@ -795,9 +863,10 @@ impl MetagenomicsPipeline {
                 &dominant_taxon_clone,
                 dominant_abundance,
                 diversity_index,
-                abundance_dir_clone.join("abundance_summary.txt")
+                abundance_dir_clone.join("abundance_summary.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved abundance estimation intermediate files (JSON + TSV + Krona + summary)");
 
@@ -849,7 +918,10 @@ impl MetagenomicsPipeline {
             &classifications,
         )?;
 
-        info!("✅ Standard outputs written to: {}", standard_output_dir.display());
+        info!(
+            "✅ Standard outputs written to: {}",
+            standard_output_dir.display()
+        );
         info!("   📄 cleaned_reads.fastq - Quality-controlled reads");
         info!("   📄 contigs.fasta - Assembled contigs");
         info!("   📄 assembly_stats.txt - Assembly statistics");
@@ -869,10 +941,14 @@ impl MetagenomicsPipeline {
         let optimization_report = self.performance_profiler.generate_optimization_report()?;
 
         // Save performance report
-        let perf_report_path = self.config.general.output_dir.join("performance_analysis.json");
+        let perf_report_path = self
+            .config
+            .general
+            .output_dir
+            .join("performance_analysis.json");
         std::fs::write(
             &perf_report_path,
-            serde_json::to_string_pretty(&optimization_report)?
+            serde_json::to_string_pretty(&optimization_report)?,
         )?;
         info!("   📄 performance_analysis.json - Performance bottleneck analysis");
 
@@ -1212,25 +1288,36 @@ impl MetagenomicsPipeline {
             .await?;
 
         // WRITE PREPROCESSING OUTPUTS
-        info!("📝 Writing preprocessing outputs for {} reads", corrected_reads.len());
-        let preprocessing_dir = self.output_manager.get_section_dir(&PipelineSection::Preprocessing);
+        info!(
+            "📝 Writing preprocessing outputs for {} reads",
+            corrected_reads.len()
+        );
+        let preprocessing_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Preprocessing);
         let corrected_reads_clone = corrected_reads.clone();
         let preprocessing_dir_clone = preprocessing_dir.clone();
         tokio::task::spawn_blocking(move || {
-            info!("  Writing FASTQ with {} reads to {}", corrected_reads_clone.len(), preprocessing_dir_clone.display());
+            info!(
+                "  Writing FASTQ with {} reads to {}",
+                corrected_reads_clone.len(),
+                preprocessing_dir_clone.display()
+            );
             crate::utils::format_writers::write_fastq(
                 &corrected_reads_clone,
-                preprocessing_dir_clone.join("corrected_reads.fastq")
+                preprocessing_dir_clone.join("corrected_reads.fastq"),
             )
-        }).await??;
+        })
+        .await??;
 
         let preprocessing_dir_clone = preprocessing_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::utils::format_writers::write_qc_report(
                 &qc_stats,
-                preprocessing_dir_clone.join("qc_report.txt")
+                preprocessing_dir_clone.join("qc_report.txt"),
             )
-        }).await??;
+        })
+        .await??;
 
         multi_progress.update_line(preprocess_line, "📋 Preprocessing: ✅ Complete".to_string());
 
@@ -1244,31 +1331,38 @@ impl MetagenomicsPipeline {
             .await?;
 
         // DEBUG: Check assembly results
-        info!("🔍 Assembly completed: {} contigs generated", assembly_results.contigs.len());
+        info!(
+            "🔍 Assembly completed: {} contigs generated",
+            assembly_results.contigs.len()
+        );
         if assembly_results.contigs.is_empty() {
             info!("⚠️  WARNING: No contigs were assembled! Cannot write assembly outputs.");
         }
 
         // WRITE ASSEMBLY OUTPUTS (only if we have contigs)
         if !assembly_results.contigs.is_empty() {
-            let assembly_dir = self.output_manager.get_section_dir(&PipelineSection::Assembly);
+            let assembly_dir = self
+                .output_manager
+                .get_section_dir(&PipelineSection::Assembly);
             let contigs_clone = assembly_results.contigs.clone();
             let assembly_dir_clone = assembly_dir.clone();
             tokio::task::spawn_blocking(move || {
                 crate::utils::format_writers::write_contigs_fasta_detailed(
                     &contigs_clone,
-                    assembly_dir_clone.join("contigs.fasta")
+                    assembly_dir_clone.join("contigs.fasta"),
                 )
-            }).await??;
+            })
+            .await??;
 
             let contigs_clone = assembly_results.contigs.clone();
             let assembly_dir_clone = assembly_dir.clone();
             tokio::task::spawn_blocking(move || {
                 crate::utils::format_writers::write_gfa(
                     &contigs_clone,
-                    assembly_dir_clone.join("assembly_graph.gfa")
+                    assembly_dir_clone.join("assembly_graph.gfa"),
                 )
-            }).await??;
+            })
+            .await??;
 
             let contigs_clone = assembly_results.contigs.clone();
             let n50 = assembly_results.assembly_stats.n50;
@@ -1277,10 +1371,14 @@ impl MetagenomicsPipeline {
                 crate::utils::format_writers::write_assembly_stats(
                     &contigs_clone,
                     n50,
-                    assembly_dir_clone.join("assembly_stats.txt")
+                    assembly_dir_clone.join("assembly_stats.txt"),
                 )
-            }).await??;
-            info!("✅ Wrote assembly outputs: {} contigs", assembly_results.contigs.len());
+            })
+            .await??;
+            info!(
+                "✅ Wrote assembly outputs: {} contigs",
+                assembly_results.contigs.len()
+            );
         }
 
         multi_progress.update_line(assembly_line, "🧬 Assembly: ✅ Complete".to_string());
@@ -1295,24 +1393,44 @@ impl MetagenomicsPipeline {
             .await?;
 
         // WRITE FEATURES OUTPUTS (to classification folder)
-        let features_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
-        let feature_names = vec!["feature_dim_0".to_string(), "feature_dim_1".to_string(), "feature_dim_2".to_string(), "feature_dim_3".to_string()];
-        let feature_data: Vec<(String, Vec<f64>)> = features.sequence_features.iter().map(|(idx, fv)| {
-            (format!("contig_{}", idx), fv.sequence_features.to_vec())
-        }).collect();
+        let features_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Classification);
+        let feature_names = vec![
+            "feature_dim_0".to_string(),
+            "feature_dim_1".to_string(),
+            "feature_dim_2".to_string(),
+            "feature_dim_3".to_string(),
+        ];
+        let feature_data: Vec<(String, Vec<f64>)> = features
+            .sequence_features
+            .iter()
+            .map(|(idx, fv)| (format!("contig_{}", idx), fv.sequence_features.to_vec()))
+            .collect();
 
         let feature_data_clone = feature_data.clone();
         let feature_names_clone = feature_names.clone();
         let features_dir_clone = features_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_features_tsv(&feature_data_clone, &feature_names_clone, features_dir_clone.join("feature_vectors.tsv"))
-        }).await??;
+            crate::utils::format_writers::write_features_tsv(
+                &feature_data_clone,
+                &feature_names_clone,
+                features_dir_clone.join("feature_vectors.tsv"),
+            )
+        })
+        .await??;
 
         let num_features = features.sequence_features.len();
         let features_dir_clone = features_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_features_summary(num_features, feature_names.len(), &feature_names, features_dir_clone.join("feature_summary.txt"))
-        }).await??;
+            crate::utils::format_writers::write_features_summary(
+                num_features,
+                feature_names.len(),
+                &feature_names,
+                features_dir_clone.join("feature_summary.txt"),
+            )
+        })
+        .await??;
 
         multi_progress.update_line(
             features_line,
@@ -1334,28 +1452,54 @@ impl MetagenomicsPipeline {
             .await?;
 
         // WRITE CLASSIFICATION OUTPUTS
-        let classification_dir = self.output_manager.get_section_dir(&PipelineSection::Classification);
-        let class_data: Vec<(String, String, String, f64, String)> = classifications.iter().map(|c| {
-            (c.contig_id.to_string(), c.taxonomy_id.to_string(), c.taxonomy_name.clone(), c.confidence, c.lineage.clone())
-        }).collect();
+        let classification_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Classification);
+        let class_data: Vec<(String, String, String, f64, String)> = classifications
+            .iter()
+            .map(|c| {
+                (
+                    c.contig_id.to_string(),
+                    c.taxonomy_id.to_string(),
+                    c.taxonomy_name.clone(),
+                    c.confidence,
+                    c.lineage.clone(),
+                )
+            })
+            .collect();
 
         let class_data_clone = class_data.clone();
         let classification_dir_clone = classification_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_class_tsv(&class_data_clone, classification_dir_clone.join("taxonomic_assignments.tsv"))
-        }).await??;
+            crate::utils::format_writers::write_class_tsv(
+                &class_data_clone,
+                classification_dir_clone.join("taxonomic_assignments.tsv"),
+            )
+        })
+        .await??;
 
-        let mut tax_counts: std::collections::HashMap<String, (String, f64)> = std::collections::HashMap::new();
+        let mut tax_counts: std::collections::HashMap<String, (String, f64)> =
+            std::collections::HashMap::new();
         for c in &classifications {
-            let entry = tax_counts.entry(c.taxonomy_name.clone()).or_insert((c.lineage.clone(), 0.0));
+            let entry = tax_counts
+                .entry(c.taxonomy_name.clone())
+                .or_insert((c.lineage.clone(), 0.0));
             entry.1 += 1.0;
         }
-        let kraken_data: Vec<(String, String, f64)> = tax_counts.into_iter().map(|(name, (lineage, count))| (name, lineage, count)).collect();
+        let kraken_data: Vec<(String, String, f64)> = tax_counts
+            .into_iter()
+            .map(|(name, (lineage, count))| (name, lineage, count))
+            .collect();
         let total_classifications = classifications.len();
         let classification_dir_clone = classification_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_kraken_report(&kraken_data, total_classifications, classification_dir_clone.join("kraken_report.txt"))
-        }).await??;
+            crate::utils::format_writers::write_kraken_report(
+                &kraken_data,
+                total_classifications,
+                classification_dir_clone.join("kraken_report.txt"),
+            )
+        })
+        .await??;
 
         multi_progress.update_line(
             classification_line,
@@ -1372,40 +1516,68 @@ impl MetagenomicsPipeline {
             .await?;
 
         // WRITE ABUNDANCE OUTPUTS
-        let abundance_dir = self.output_manager.get_section_dir(&PipelineSection::Abundance);
-        let mut species_counts: std::collections::HashMap<String, (f64, f64, usize)> = std::collections::HashMap::new();
+        let abundance_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Abundance);
+        let mut species_counts: std::collections::HashMap<String, (f64, f64, usize)> =
+            std::collections::HashMap::new();
         for classification in &classifications {
-            let entry = species_counts.entry(classification.taxonomy_name.clone()).or_insert((0.0, 0.0, 0));
+            let entry = species_counts
+                .entry(classification.taxonomy_name.clone())
+                .or_insert((0.0, 0.0, 0));
             entry.0 += 1.0;
             entry.2 += 1;
         }
         let total_count: f64 = species_counts.values().map(|(count, _, _)| count).sum();
-        let abund_data: Vec<(String, f64, f64, usize)> = species_counts.iter().map(|(name, (count, _, num_contigs))| {
-            let rel_abund = if total_count > 0.0 { (count / total_count) * 100.0 } else { 0.0 };
-            (name.clone(), rel_abund, 30.0, *num_contigs)
-        }).collect();
+        let abund_data: Vec<(String, f64, f64, usize)> = species_counts
+            .iter()
+            .map(|(name, (count, _, num_contigs))| {
+                let rel_abund = if total_count > 0.0 {
+                    (count / total_count) * 100.0
+                } else {
+                    0.0
+                };
+                (name.clone(), rel_abund, 30.0, *num_contigs)
+            })
+            .collect();
 
         let abund_data_clone = abund_data.clone();
         let abundance_dir_clone = abundance_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_abund_tsv(&abund_data_clone, abundance_dir_clone.join("abundance_profile.tsv"))
-        }).await??;
+            crate::utils::format_writers::write_abund_tsv(
+                &abund_data_clone,
+                abundance_dir_clone.join("abundance_profile.tsv"),
+            )
+        })
+        .await??;
 
-        let krona_data: Vec<(f64, String)> = classifications.iter().map(|c| (1.0, c.lineage.clone())).collect();
+        let krona_data: Vec<(f64, String)> = classifications
+            .iter()
+            .map(|c| (1.0, c.lineage.clone()))
+            .collect();
         let abundance_dir_clone = abundance_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_krona_tax(&krona_data, abundance_dir_clone.join("krona_input.txt"))
-        }).await??;
+            crate::utils::format_writers::write_krona_tax(
+                &krona_data,
+                abundance_dir_clone.join("krona_input.txt"),
+            )
+        })
+        .await??;
 
         let diversity_index = if !abund_data.is_empty() {
             let mut shannon = 0.0;
             for (_, rel_abund, _, _) in &abund_data {
                 let p = rel_abund / 100.0;
-                if p > 0.0 { shannon -= p * p.ln(); }
+                if p > 0.0 {
+                    shannon -= p * p.ln();
+                }
             }
             shannon
-        } else { 0.0 };
-        let (dominant_taxon, dominant_abundance) = abund_data.iter()
+        } else {
+            0.0
+        };
+        let (dominant_taxon, dominant_abundance) = abund_data
+            .iter()
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(name, abund, _, _)| (name.clone(), *abund))
             .unwrap_or(("Unknown".to_string(), 0.0));
@@ -1415,8 +1587,16 @@ impl MetagenomicsPipeline {
         let dominant_taxon_clone = dominant_taxon.clone();
         let abundance_dir_clone = abundance_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_abund_summary(num_classifications, num_taxa, &dominant_taxon_clone, dominant_abundance, diversity_index, abundance_dir_clone.join("abundance_summary.txt"))
-        }).await??;
+            crate::utils::format_writers::write_abund_summary(
+                num_classifications,
+                num_taxa,
+                &dominant_taxon_clone,
+                dominant_abundance,
+                diversity_index,
+                abundance_dir_clone.join("abundance_summary.txt"),
+            )
+        })
+        .await??;
 
         multi_progress.update_line(abundance_line, "📊 Abundance: ✅ Complete".to_string());
 
@@ -1437,17 +1617,24 @@ impl MetagenomicsPipeline {
             .await?;
 
         // WRITE REPORT OUTPUTS
-        let report_dir = self.output_manager.get_section_dir(&PipelineSection::Report);
-        let mut tax_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let report_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Report);
+        let mut tax_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for c in &report.taxonomic_composition {
             *tax_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
         }
-        let dominant_taxon = tax_counts.iter()
+        let dominant_taxon = tax_counts
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(name, _)| name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let processing_time_sec = report.performance_metrics.total_processing_time.as_secs_f64();
+        let processing_time_sec = report
+            .performance_metrics
+            .total_processing_time
+            .as_secs_f64();
         let sample_name_clone = report.sample_name.clone();
         let num_reads = report.performance_metrics.reads_processed as usize;
         let total_contigs = report.summary.total_contigs;
@@ -1456,17 +1643,42 @@ impl MetagenomicsPipeline {
         let dominant_taxon_clone = dominant_taxon.clone();
         let report_dir_clone = report_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_md_report(&sample_name_clone, num_reads, total_contigs, n50, unique_species, &dominant_taxon_clone, processing_time_sec, report_dir_clone.join("analysis_report.md"))
-        }).await??;
+            crate::utils::format_writers::write_md_report(
+                &sample_name_clone,
+                num_reads,
+                total_contigs,
+                n50,
+                unique_species,
+                &dominant_taxon_clone,
+                processing_time_sec,
+                report_dir_clone.join("analysis_report.md"),
+            )
+        })
+        .await??;
 
         let total_classifications = report.taxonomic_composition.len();
         let dominant_count = tax_counts.get(&dominant_taxon).unwrap_or(&0);
-        let dominant_abundance = if total_classifications > 0 { (*dominant_count as f64 / total_classifications as f64) * 100.0 } else { 0.0 };
+        let dominant_abundance = if total_classifications > 0 {
+            (*dominant_count as f64 / total_classifications as f64) * 100.0
+        } else {
+            0.0
+        };
         let sample_name_clone = report.sample_name.clone();
         let report_dir_clone = report_dir.clone();
         tokio::task::spawn_blocking(move || {
-            crate::utils::format_writers::write_html_report(&sample_name_clone, num_reads, total_contigs, n50, unique_species, &dominant_taxon, dominant_abundance, processing_time_sec, report_dir_clone.join("analysis_report.html"))
-        }).await??;
+            crate::utils::format_writers::write_html_report(
+                &sample_name_clone,
+                num_reads,
+                total_contigs,
+                n50,
+                unique_species,
+                &dominant_taxon,
+                dominant_abundance,
+                processing_time_sec,
+                report_dir_clone.join("analysis_report.html"),
+            )
+        })
+        .await??;
 
         multi_progress.update_line(report_line, "📝 Report: ✅ Complete".to_string());
 
@@ -1485,7 +1697,10 @@ impl MetagenomicsPipeline {
     }
 
     /// Preprocess input files with error correction
-    pub async fn preprocess_inputs(&self, inputs: &[PathBuf]) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
+    pub async fn preprocess_inputs(
+        &self,
+        inputs: &[PathBuf],
+    ) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
         use crate::qc::qc_stats::QCStats;
 
         info!("📋 Starting preprocessing of {} input files", inputs.len());
@@ -1570,14 +1785,21 @@ impl MetagenomicsPipeline {
             }
 
             // Accumulate quality/length sums (will average later)
-            combined_stats.mean_quality_before += stats.mean_quality_before * stats.reads_input as f64;
-            combined_stats.mean_quality_after += stats.mean_quality_after * stats.reads_passed as f64;
-            combined_stats.mean_length_before += stats.mean_length_before * stats.reads_input as f64;
+            combined_stats.mean_quality_before +=
+                stats.mean_quality_before * stats.reads_input as f64;
+            combined_stats.mean_quality_after +=
+                stats.mean_quality_after * stats.reads_passed as f64;
+            combined_stats.mean_length_before +=
+                stats.mean_length_before * stats.reads_input as f64;
             combined_stats.mean_length_after += stats.mean_length_after * stats.reads_passed as f64;
-            combined_stats.q20_percentage_before += stats.q20_percentage_before * stats.reads_input as f64;
-            combined_stats.q30_percentage_before += stats.q30_percentage_before * stats.reads_input as f64;
-            combined_stats.q20_percentage_after += stats.q20_percentage_after * stats.reads_passed as f64;
-            combined_stats.q30_percentage_after += stats.q30_percentage_after * stats.reads_passed as f64;
+            combined_stats.q20_percentage_before +=
+                stats.q20_percentage_before * stats.reads_input as f64;
+            combined_stats.q30_percentage_before +=
+                stats.q30_percentage_before * stats.reads_input as f64;
+            combined_stats.q20_percentage_after +=
+                stats.q20_percentage_after * stats.reads_passed as f64;
+            combined_stats.q30_percentage_after +=
+                stats.q30_percentage_after * stats.reads_passed as f64;
 
             all_reads.extend(reads.clone());
 
@@ -1646,9 +1868,12 @@ impl MetagenomicsPipeline {
         Ok((all_reads, combined_stats))
     }
 
-    async fn process_fastq_file(&self, file_path: &Path) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
-        use bio::io::fastq;
+    async fn process_fastq_file(
+        &self,
+        file_path: &Path,
+    ) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
         use crate::qc::{QCPipeline, QCPipelineConfig};
+        use bio::io::fastq;
         use colored::Colorize;
 
         info!("{}", "📖 Reading FASTQ file...".bright_cyan());
@@ -1678,24 +1903,45 @@ impl MetagenomicsPipeline {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             };
 
             raw_reads.push(read);
 
             if read_id % 50000 == 0 && read_id > 0 {
-                info!("  {} {}", "📊 Loaded".bright_blue(), format!("{} reads", read_id).white());
+                info!(
+                    "  {} {}",
+                    "📊 Loaded".bright_blue(),
+                    format!("{} reads", read_id).white()
+                );
             }
         }
 
-        info!("{} {}", "✅ Loaded".bright_green(), format!("{} total reads", raw_reads.len()).white().bold());
+        info!(
+            "{} {}",
+            "✅ Loaded".bright_green(),
+            format!("{} total reads", raw_reads.len()).white().bold()
+        );
 
         // Second pass: QC filtering and trimming
-        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+        info!(
+            "{}",
+            "🔬 Applying quality control filters...".bright_yellow()
+        );
 
         // Debug: Check first few reads
         if let Some(first_read) = raw_reads.first() {
-            let avg_qual = first_read.quality_scores.iter().map(|&q| q as f64).sum::<f64>() / first_read.quality_scores.len() as f64;
-            debug!("  First read: len={}, avg_qual_raw={:.1}", first_read.original.len(), avg_qual);
+            let avg_qual = first_read
+                .quality_scores
+                .iter()
+                .map(|&q| q as f64)
+                .sum::<f64>()
+                / first_read.quality_scores.len() as f64;
+            debug!(
+                "  First read: len={}, avg_qual_raw={:.1}",
+                first_read.original.len(),
+                avg_qual
+            );
         }
 
         let corrected_reads = qc_pipeline.process_reads(&raw_reads);
@@ -1704,9 +1950,15 @@ impl MetagenomicsPipeline {
         let qc_stats = qc_pipeline.stats();
 
         // Print detailed QC statistics with colors
-        println!("\n{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
         println!("{}", "   QUALITY CONTROL STATISTICS".bright_cyan().bold());
-        println!("{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
 
         let pass_rate = if qc_stats.reads_input > 0 {
             (qc_stats.reads_passed as f64 / qc_stats.reads_input as f64) * 100.0
@@ -1715,35 +1967,96 @@ impl MetagenomicsPipeline {
         };
 
         println!("\n{}", "📊 Input/Output Summary:".bright_blue().bold());
-        println!("  {} {}", "Input reads:".white(), format!("{:>10}", qc_stats.reads_input).yellow());
-        println!("  {} {}", "Passed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate).bright_green().bold());
-        println!("  {} {}", "Failed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red());
+        println!(
+            "  {} {}",
+            "Input reads:".white(),
+            format!("{:>10}", qc_stats.reads_input).yellow()
+        );
+        println!(
+            "  {} {}",
+            "Passed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate)
+                .bright_green()
+                .bold()
+        );
+        println!(
+            "  {} {}",
+            "Failed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red()
+        );
 
         if qc_stats.reads_failed > 0 {
             println!("\n{}", "❌ Failure Reasons:".bright_red().bold());
-            println!("  {} {:>10}", "Quality:".white(), qc_stats.reads_failed_quality.to_string().red());
-            println!("  {} {:>10}", "Length: ".white(), qc_stats.reads_failed_length.to_string().red());
+            println!(
+                "  {} {:>10}",
+                "Quality:".white(),
+                qc_stats.reads_failed_quality.to_string().red()
+            );
+            println!(
+                "  {} {:>10}",
+                "Length: ".white(),
+                qc_stats.reads_failed_length.to_string().red()
+            );
         }
 
         if qc_stats.adapters_detected > 0 {
             println!("\n{}", "✂️  Adapter Trimming:".bright_magenta().bold());
-            println!("  {} {:>10}", "Adapters detected:".white(), qc_stats.adapters_detected.to_string().magenta());
-            println!("  {} {:>10}", "Bases removed:   ".white(), qc_stats.bases_trimmed_adapter.to_string().magenta());
+            println!(
+                "  {} {:>10}",
+                "Adapters detected:".white(),
+                qc_stats.adapters_detected.to_string().magenta()
+            );
+            println!(
+                "  {} {:>10}",
+                "Bases removed:   ".white(),
+                qc_stats.bases_trimmed_adapter.to_string().magenta()
+            );
         }
 
         println!("\n{}", "📏 Length Statistics:".bright_blue().bold());
-        println!("  {} {:>10.1} bp", "Before:".white(), qc_stats.mean_length_before);
-        println!("  {} {:>10.1} bp", "After: ".white(), qc_stats.mean_length_after);
+        println!(
+            "  {} {:>10.1} bp",
+            "Before:".white(),
+            qc_stats.mean_length_before
+        );
+        println!(
+            "  {} {:>10.1} bp",
+            "After: ".white(),
+            qc_stats.mean_length_after
+        );
 
         println!("\n{}", "⭐ Quality Metrics:".bright_blue().bold());
-        println!("  {} Q{:.1}  →  Q{:.1}", "Average:".white(), qc_stats.mean_quality_before, qc_stats.mean_quality_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q20:    ".white(), qc_stats.q20_percentage_before, qc_stats.q20_percentage_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q30:    ".white(), qc_stats.q30_percentage_before, qc_stats.q30_percentage_after);
+        println!(
+            "  {} Q{:.1}  →  Q{:.1}",
+            "Average:".white(),
+            qc_stats.mean_quality_before,
+            qc_stats.mean_quality_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q20:    ".white(),
+            qc_stats.q20_percentage_before,
+            qc_stats.q20_percentage_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q30:    ".white(),
+            qc_stats.q30_percentage_before,
+            qc_stats.q30_percentage_after
+        );
 
-        println!("\n{}", "═══════════════════════════════════════════\n".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════\n".bright_cyan()
+        );
 
         if qc_stats.reads_passed == 0 && qc_stats.reads_input > 0 {
-            warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
+            warn!(
+                "{}",
+                "⚠️  Warning: All reads filtered out! Check quality settings."
+                    .bright_yellow()
+                    .bold()
+            );
         }
 
         Ok((corrected_reads, qc_stats))
@@ -1772,6 +2085,7 @@ impl MetagenomicsPipeline {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             };
 
             corrected_reads.push(corrected_read);
@@ -1806,6 +2120,7 @@ impl MetagenomicsPipeline {
                 corrections: r.corrections.clone(),
                 quality_scores: r.quality_scores.clone(),
                 correction_metadata: r.correction_metadata.clone(),
+                kmer_hash_cache: r.kmer_hash_cache.clone(),
             })
             .collect();
 
@@ -1821,7 +2136,11 @@ impl MetagenomicsPipeline {
             n90: Self::calculate_n90(&contigs),
             largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
             gc_content: Self::calculate_average_gc(&contigs),
-            coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
+            coverage_mean: if contigs.is_empty() {
+                0.0
+            } else {
+                contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64
+            },
             coverage_std: Self::calculate_coverage_std(&contigs),
         };
 
@@ -1906,15 +2225,19 @@ impl MetagenomicsPipeline {
         // This prevents counting fragments of same genome as separate species
         let bins = self.bin_contigs_by_coverage(&assembly_results.contigs);
 
-        info!("   📦 Binned {} contigs into {} genome bins",
-              assembly_results.contigs.len(), bins.len());
+        info!(
+            "   📦 Binned {} contigs into {} genome bins",
+            assembly_results.contigs.len(),
+            bins.len()
+        );
 
         let mut classifications = Vec::new();
 
         // Classify each BIN (not each contig) to get species count
         for (bin_id, contig_indices) in bins.iter().enumerate() {
             // Get representative contig (longest in bin)
-            let representative_idx = contig_indices.iter()
+            let representative_idx = contig_indices
+                .iter()
                 .max_by_key(|&&idx| assembly_results.contigs[idx].length)
                 .copied()
                 .unwrap_or(0);
@@ -1922,16 +2245,23 @@ impl MetagenomicsPipeline {
             let representative_contig = &assembly_results.contigs[representative_idx];
 
             // Calculate bin statistics
-            let bin_total_length: usize = contig_indices.iter()
+            let bin_total_length: usize = contig_indices
+                .iter()
                 .map(|&idx| assembly_results.contigs[idx].length)
                 .sum();
-            let bin_avg_coverage: f64 = contig_indices.iter()
+            let bin_avg_coverage: f64 = contig_indices
+                .iter()
                 .map(|&idx| assembly_results.contigs[idx].coverage)
-                .sum::<f64>() / contig_indices.len() as f64;
+                .sum::<f64>()
+                / contig_indices.len() as f64;
 
-            info!("   🔬 Bin {}: {} contigs, {:.1} kb total, {:.1}x coverage",
-                  bin_id + 1, contig_indices.len(),
-                  bin_total_length as f64 / 1000.0, bin_avg_coverage);
+            info!(
+                "   🔬 Bin {}: {} contigs, {:.1} kb total, {:.1}x coverage",
+                bin_id + 1,
+                contig_indices.len(),
+                bin_total_length as f64 / 1000.0,
+                bin_avg_coverage
+            );
 
             // Simple mock classification - would use actual ML models
             // In production, this would analyze k-mer composition, marker genes, etc.
@@ -1947,7 +2277,10 @@ impl MetagenomicsPipeline {
             classifications.push(classification);
         }
 
-        info!("✅ Classification complete: {} species identified", classifications.len());
+        info!(
+            "✅ Classification complete: {} species identified",
+            classifications.len()
+        );
         Ok(classifications)
     }
 
@@ -2052,7 +2385,8 @@ impl MetagenomicsPipeline {
             quality_metrics: QualityMetrics {
                 assembly_completeness: self.calculate_assembly_completeness(assembly_results),
                 classification_confidence: if !classifications.is_empty() {
-                    classifications.iter().map(|c| c.confidence).sum::<f64>() / classifications.len() as f64
+                    classifications.iter().map(|c| c.confidence).sum::<f64>()
+                        / classifications.len() as f64
                 } else {
                     0.0
                 },
@@ -2064,8 +2398,8 @@ impl MetagenomicsPipeline {
                 total_processing_time: elapsed_time,
                 peak_memory_usage: peak_memory,
                 reads_processed: abundance_profile.total_kmers / 4, // Estimate using k=4
-                errors_corrected: 0,  // TODO: Track from QC pipeline
-                repeats_resolved: 0,  // TODO: Track from assembly
+                errors_corrected: 0,                                // TODO: Track from QC pipeline
+                repeats_resolved: 0,                                // TODO: Track from assembly
             },
         };
 
@@ -2080,7 +2414,9 @@ impl MetagenomicsPipeline {
         let output_dir = &self.output_manager.run_dir;
 
         // ADDED: Also write standard format reports to the report section directory
-        let report_dir = self.output_manager.get_section_dir(&PipelineSection::Report);
+        let report_dir = self
+            .output_manager
+            .get_section_dir(&PipelineSection::Report);
 
         // Generate Kraken-style reports
         self.generate_kraken_reports(report).await?;
@@ -2111,16 +2447,21 @@ impl MetagenomicsPipeline {
 
         // ADDED: Write standard markdown and HTML reports to report directory
         // Find dominant taxon from classifications
-        let mut tax_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut tax_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for c in &report.taxonomic_composition {
             *tax_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
         }
-        let dominant_taxon = tax_counts.iter()
+        let dominant_taxon = tax_counts
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(name, _)| name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let processing_time_sec = report.performance_metrics.total_processing_time.as_secs_f64();
+        let processing_time_sec = report
+            .performance_metrics
+            .total_processing_time
+            .as_secs_f64();
         let sample_name = report.sample_name.clone();
         let num_reads = report.performance_metrics.reads_processed as usize;
         let total_contigs = report.summary.total_contigs;
@@ -2139,9 +2480,10 @@ impl MetagenomicsPipeline {
                 unique_species,
                 &dominant_taxon_clone,
                 processing_time_sec,
-                report_dir_clone.join("analysis_report.md")
+                report_dir_clone.join("analysis_report.md"),
             )
-        }).await??;
+        })
+        .await??;
 
         // Calculate dominant taxon abundance
         let total_classifications = report.taxonomic_composition.len();
@@ -2165,9 +2507,10 @@ impl MetagenomicsPipeline {
                 &dominant_taxon,
                 dominant_abundance,
                 processing_time_sec,
-                report_dir_clone.join("analysis_report.html")
+                report_dir_clone.join("analysis_report.html"),
             )
-        }).await??;
+        })
+        .await??;
 
         info!("💾 Saved report intermediate files (JSON + HTML + TSV + Markdown)");
 
@@ -2263,9 +2606,11 @@ impl MetagenomicsPipeline {
         );
 
         // Count contigs per species
-        let mut species_counts: std::collections::HashMap<String, (usize, f64, String)> = std::collections::HashMap::new();
+        let mut species_counts: std::collections::HashMap<String, (usize, f64, String)> =
+            std::collections::HashMap::new();
         for classification in &report.taxonomic_composition {
-            let entry = species_counts.entry(classification.taxonomy_name.clone())
+            let entry = species_counts
+                .entry(classification.taxonomy_name.clone())
                 .or_insert((0, 0.0, classification.method.clone()));
             entry.0 += 1;
             entry.1 += classification.confidence;
@@ -2274,13 +2619,17 @@ impl MetagenomicsPipeline {
         // Add taxonomic table rows
         let mut species_rows = String::new();
         let mut sorted_species: Vec<_> = species_counts.iter().collect();
-        sorted_species.sort_by(|a, b| b.1.0.cmp(&a.1.0)); // Sort by count descending
+        sorted_species.sort_by(|a, b| b.1 .0.cmp(&a.1 .0)); // Sort by count descending
 
-        for (species, (count, total_conf, method)) in sorted_species.iter().take(20) { // Top 20
+        for (species, (count, total_conf, method)) in sorted_species.iter().take(20) {
+            // Top 20
             let avg_conf = total_conf / *count as f64;
             species_rows.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{:.2}%</td><td>{}</td></tr>",
-                species, count, avg_conf * 100.0, method
+                species,
+                count,
+                avg_conf * 100.0,
+                method
             ));
         }
 
@@ -2313,7 +2662,10 @@ impl MetagenomicsPipeline {
             report.quality_metrics.coverage_uniformity * 100.0,
             report.summary.unique_species,
             report.summary.diversity_index,
-            report.performance_metrics.total_processing_time.as_secs_f64(),
+            report
+                .performance_metrics
+                .total_processing_time
+                .as_secs_f64(),
             report.performance_metrics.peak_memory_usage as f64 / (1024.0 * 1024.0),
             report.performance_metrics.reads_processed,
             report.abundance_data.unique_kmers,
@@ -2466,14 +2818,21 @@ impl MetagenomicsPipeline {
             }
 
             // Accumulate quality/length sums (will average later)
-            combined_stats.mean_quality_before += stats.mean_quality_before * stats.reads_input as f64;
-            combined_stats.mean_quality_after += stats.mean_quality_after * stats.reads_passed as f64;
-            combined_stats.mean_length_before += stats.mean_length_before * stats.reads_input as f64;
+            combined_stats.mean_quality_before +=
+                stats.mean_quality_before * stats.reads_input as f64;
+            combined_stats.mean_quality_after +=
+                stats.mean_quality_after * stats.reads_passed as f64;
+            combined_stats.mean_length_before +=
+                stats.mean_length_before * stats.reads_input as f64;
             combined_stats.mean_length_after += stats.mean_length_after * stats.reads_passed as f64;
-            combined_stats.q20_percentage_before += stats.q20_percentage_before * stats.reads_input as f64;
-            combined_stats.q30_percentage_before += stats.q30_percentage_before * stats.reads_input as f64;
-            combined_stats.q20_percentage_after += stats.q20_percentage_after * stats.reads_passed as f64;
-            combined_stats.q30_percentage_after += stats.q30_percentage_after * stats.reads_passed as f64;
+            combined_stats.q20_percentage_before +=
+                stats.q20_percentage_before * stats.reads_input as f64;
+            combined_stats.q30_percentage_before +=
+                stats.q30_percentage_before * stats.reads_input as f64;
+            combined_stats.q20_percentage_after +=
+                stats.q20_percentage_after * stats.reads_passed as f64;
+            combined_stats.q30_percentage_after +=
+                stats.q30_percentage_after * stats.reads_passed as f64;
 
             all_reads.extend(reads);
         }
@@ -2502,8 +2861,8 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<(Vec<CorrectedRead>, crate::qc::qc_stats::QCStats)> {
-        use bio::io::fastq;
         use crate::qc::{QCPipeline, QCPipelineConfig};
+        use bio::io::fastq;
         use colored::Colorize;
 
         info!("{}", "📖 Reading FASTQ file...".bright_cyan());
@@ -2537,6 +2896,7 @@ impl MetagenomicsPipeline {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             };
 
             raw_reads.push(read);
@@ -2557,16 +2917,21 @@ impl MetagenomicsPipeline {
         );
 
         // Calculate input statistics (optimized - single pass)
-        let (total_input_bases, total_quality_sum, total_quality_count) = raw_reads
-            .iter()
-            .fold((0usize, 0u64, 0usize), |(bases, qsum, qcount), r| {
-                let read_qsum: u32 = r.quality_scores.iter().map(|&q| q.saturating_sub(33) as u32).sum();
-                (
-                    bases + r.corrected.len(),
-                    qsum + read_qsum as u64,
-                    qcount + r.quality_scores.len(),
-                )
-            });
+        let (total_input_bases, total_quality_sum, total_quality_count) =
+            raw_reads
+                .iter()
+                .fold((0usize, 0u64, 0usize), |(bases, qsum, qcount), r| {
+                    let read_qsum: u32 = r
+                        .quality_scores
+                        .iter()
+                        .map(|&q| q.saturating_sub(33) as u32)
+                        .sum();
+                    (
+                        bases + r.corrected.len(),
+                        qsum + read_qsum as u64,
+                        qcount + r.quality_scores.len(),
+                    )
+                });
 
         let avg_read_length = if !raw_reads.is_empty() {
             total_input_bases as f64 / raw_reads.len() as f64
@@ -2594,7 +2959,8 @@ impl MetagenomicsPipeline {
         );
 
         // Show QC configuration (use qc_config which we have access to)
-        let qc_config_msg = if qc_config.enable_adapter_trimming && qc_config.enable_quality_filter {
+        let qc_config_msg = if qc_config.enable_adapter_trimming && qc_config.enable_quality_filter
+        {
             format!(
                 "🔧 QC config: Min Q{} (avg Q{:.1}), ≥{}bp length, adapter trimming enabled",
                 qc_config.quality_config.min_quality,
@@ -2614,26 +2980,34 @@ impl MetagenomicsPipeline {
         info!("{}", qc_config_msg.bright_blue());
 
         // Second pass: QC filtering and trimming (ultra-fast with progress)
-        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+        info!(
+            "{}",
+            "🔬 Applying quality control filters...".bright_yellow()
+        );
 
         let total_reads = raw_reads.len();
         let mut qc_pb = ProgressBar::new(total_reads as u64, "QC filtering");
 
         // Process with progress updates
-        let corrected_reads = qc_pipeline.process_reads_with_progress(&raw_reads, |processed, total| {
-            qc_pb.update(processed as u64);
-            if processed % 1000 == 0 || processed == total {
-                multi_progress.update_line(
-                    line_id,
-                    format!("📋 Preprocessing: 🔬 QC filtering {}/{} reads", processed, total),
-                );
-            }
-        });
+        let corrected_reads =
+            qc_pipeline.process_reads_with_progress(&raw_reads, |processed, total| {
+                qc_pb.update(processed as u64);
+                if processed % 1000 == 0 || processed == total {
+                    multi_progress.update_line(
+                        line_id,
+                        format!(
+                            "📋 Preprocessing: 🔬 QC filtering {}/{} reads",
+                            processed, total
+                        ),
+                    );
+                }
+            });
 
         qc_pb.finish();
         multi_progress.update_line(
             line_id,
-            format!("📋 Preprocessing: ✅ QC complete - {}/{} reads passed ({:.1}%)",
+            format!(
+                "📋 Preprocessing: ✅ QC complete - {}/{} reads passed ({:.1}%)",
                 corrected_reads.len(),
                 total_reads,
                 (corrected_reads.len() as f64 / total_reads as f64) * 100.0
@@ -2644,9 +3018,15 @@ impl MetagenomicsPipeline {
         let qc_stats = qc_pipeline.stats();
 
         // Print detailed QC statistics with colors
-        println!("\n{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
         println!("{}", "   QUALITY CONTROL STATISTICS".bright_cyan().bold());
-        println!("{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
 
         let pass_rate = if qc_stats.reads_input > 0 {
             (qc_stats.reads_passed as f64 / qc_stats.reads_input as f64) * 100.0
@@ -2655,40 +3035,105 @@ impl MetagenomicsPipeline {
         };
 
         println!("\n{}", "📊 Input/Output Summary:".bright_blue().bold());
-        println!("  {} {}", "Input reads:".white(), format!("{:>10}", qc_stats.reads_input).yellow());
-        println!("  {} {}", "Passed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate).bright_green().bold());
-        println!("  {} {}", "Failed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red());
+        println!(
+            "  {} {}",
+            "Input reads:".white(),
+            format!("{:>10}", qc_stats.reads_input).yellow()
+        );
+        println!(
+            "  {} {}",
+            "Passed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate)
+                .bright_green()
+                .bold()
+        );
+        println!(
+            "  {} {}",
+            "Failed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red()
+        );
 
         if qc_stats.reads_failed > 0 {
             println!("\n{}", "❌ Failure Reasons:".bright_red().bold());
-            println!("  {} {:>10}", "Quality:".white(), qc_stats.reads_failed_quality.to_string().red());
-            println!("  {} {:>10}", "Length: ".white(), qc_stats.reads_failed_length.to_string().red());
+            println!(
+                "  {} {:>10}",
+                "Quality:".white(),
+                qc_stats.reads_failed_quality.to_string().red()
+            );
+            println!(
+                "  {} {:>10}",
+                "Length: ".white(),
+                qc_stats.reads_failed_length.to_string().red()
+            );
         }
 
         if qc_stats.adapters_detected > 0 {
             println!("\n{}", "✂️  Adapter Trimming:".bright_magenta().bold());
-            println!("  {} {:>10}", "Adapters detected:".white(), qc_stats.adapters_detected.to_string().magenta());
-            println!("  {} {:>10}", "Bases removed:   ".white(), qc_stats.bases_trimmed_adapter.to_string().magenta());
+            println!(
+                "  {} {:>10}",
+                "Adapters detected:".white(),
+                qc_stats.adapters_detected.to_string().magenta()
+            );
+            println!(
+                "  {} {:>10}",
+                "Bases removed:   ".white(),
+                qc_stats.bases_trimmed_adapter.to_string().magenta()
+            );
         }
 
         println!("\n{}", "📏 Length Statistics:".bright_blue().bold());
-        println!("  {} {:>10.1} bp", "Before:".white(), qc_stats.mean_length_before);
-        println!("  {} {:>10.1} bp", "After: ".white(), qc_stats.mean_length_after);
+        println!(
+            "  {} {:>10.1} bp",
+            "Before:".white(),
+            qc_stats.mean_length_before
+        );
+        println!(
+            "  {} {:>10.1} bp",
+            "After: ".white(),
+            qc_stats.mean_length_after
+        );
 
         println!("\n{}", "⭐ Quality Metrics:".bright_blue().bold());
-        println!("  {} Q{:.1}  →  Q{:.1}", "Average:".white(), qc_stats.mean_quality_before, qc_stats.mean_quality_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q20:    ".white(), qc_stats.q20_percentage_before, qc_stats.q20_percentage_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q30:    ".white(), qc_stats.q30_percentage_before, qc_stats.q30_percentage_after);
+        println!(
+            "  {} Q{:.1}  →  Q{:.1}",
+            "Average:".white(),
+            qc_stats.mean_quality_before,
+            qc_stats.mean_quality_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q20:    ".white(),
+            qc_stats.q20_percentage_before,
+            qc_stats.q20_percentage_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q30:    ".white(),
+            qc_stats.q30_percentage_before,
+            qc_stats.q30_percentage_after
+        );
 
-        println!("\n{}", "═══════════════════════════════════════════\n".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════\n".bright_cyan()
+        );
 
         if qc_stats.reads_passed == 0 && qc_stats.reads_input > 0 {
-            warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
+            warn!(
+                "{}",
+                "⚠️  Warning: All reads filtered out! Check quality settings."
+                    .bright_yellow()
+                    .bold()
+            );
         }
 
         multi_progress.update_line(
             line_id,
-            format!("📋 Preprocessing: ✅ QC Complete ({}/{} passed)", corrected_reads.len(), raw_reads.len()),
+            format!(
+                "📋 Preprocessing: ✅ QC Complete ({}/{} passed)",
+                corrected_reads.len(),
+                raw_reads.len()
+            ),
         );
 
         Ok((corrected_reads, qc_stats))
@@ -2719,20 +3164,27 @@ impl MetagenomicsPipeline {
                 corrections: r.corrections.clone(),
                 quality_scores: r.quality_scores.clone(),
                 correction_metadata: r.correction_metadata.clone(),
+                kmer_hash_cache: r.kmer_hash_cache.clone(),
             })
             .collect();
 
-        // The advanced builder provides comprehensive progress reporting internally
+        // Create an indicatif progress bar for the assembly process.
+        let pb = indicatif::ProgressBar::new(assembly_reads.len() as u64);
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reads ({percent}%) {msg}")
+                .unwrap()
+                .progress_chars("█▓▒░ "),
+        );
+        pb.set_message("Assembling contigs");
+
+        // Use the progress-enabled assembly function.
+        let contigs = assembler.assemble_with_progress(&assembly_reads, pb)?;
+
         multi_progress.update_line(
             line_id,
-            format!(
-                "🧬 Assembly: Enhanced verbose progress active for {} reads",
-                reads.len()
-            ),
+            format!("🧬 Assembly: ✅ Complete - {} contigs", contigs.len()),
         );
-
-        // Use laptop assembler which provides efficient assembly
-        let contigs = assembler.assemble(&assembly_reads)?;
 
         // Create basic assembly stats from contigs
         let assembly_stats = AssemblyStats {
@@ -2742,7 +3194,11 @@ impl MetagenomicsPipeline {
             n90: Self::calculate_n90(&contigs),
             largest_contig: contigs.iter().map(|c| c.length).max().unwrap_or(0),
             gc_content: Self::calculate_average_gc(&contigs),
-            coverage_mean: if contigs.is_empty() { 0.0 } else { contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64 },
+            coverage_mean: if contigs.is_empty() {
+                0.0
+            } else {
+                contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64
+            },
             coverage_std: Self::calculate_coverage_std(&contigs),
         };
 
@@ -2759,7 +3215,7 @@ impl MetagenomicsPipeline {
             println!("💾 Storing assembly results in database...");
             let _assembly_id = db.store_assembly_results(
                 &assembly_stats,
-                &self.output_manager.run_id,  // Use actual run ID from output manager
+                &self.output_manager.run_id, // Use actual run ID from output manager
                 &serde_json::to_string(&self.config)?,
             )?;
             println!("✅ Assembly results stored successfully");
@@ -2810,9 +3266,11 @@ impl MetagenomicsPipeline {
         let pb = ProgressBar::new(total_contigs as u64);
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} contigs ({per_sec}) {msg}")
+                .template(
+                    "[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} contigs ({per_sec}) {msg}",
+                )
                 .unwrap()
-                .progress_chars("█▓▒░ ")
+                .progress_chars("█▓▒░ "),
         );
 
         // Phase 1: Composition & Basic Features
@@ -2828,35 +3286,39 @@ impl MetagenomicsPipeline {
 
         // Process in parallel with progress updates
         let chunk_size = (total_contigs / num_cpus::get()).max(10);
-        assembly.contigs.par_chunks(chunk_size).enumerate().for_each(|(chunk_idx, chunk)| {
-            let extractor = extractor.clone();
-            let current_phase = chunk_idx % 5 + 1;
+        assembly
+            .contigs
+            .par_chunks(chunk_size)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                let extractor = extractor.clone();
+                let current_phase = chunk_idx % 5 + 1;
 
-            // Update phase message periodically
-            let phase_msg = match current_phase {
-                1 => "Phase 1/5: Composition analysis",
-                2 => "Phase 2/5: Codon usage patterns",
-                3 => "Phase 3/5: Sequence patterns",
-                4 => "Phase 4/5: Complexity metrics",
-                5 => "Phase 5/5: K-mer features",
-                _ => "Processing features",
-            };
+                // Update phase message periodically
+                let phase_msg = match current_phase {
+                    1 => "Phase 1/5: Composition analysis",
+                    2 => "Phase 2/5: Codon usage patterns",
+                    3 => "Phase 3/5: Sequence patterns",
+                    4 => "Phase 4/5: Complexity metrics",
+                    5 => "Phase 5/5: K-mer features",
+                    _ => "Processing features",
+                };
 
-            for contig in chunk {
-                match extractor.extract_sequence_features(&contig.sequence) {
-                    Ok(contig_features) => {
-                        let mut features = features_mutex.lock().unwrap();
-                        features.add_sequence_features(contig.id, contig_features);
+                for contig in chunk {
+                    match extractor.extract_sequence_features(&contig.sequence) {
+                        Ok(contig_features) => {
+                            let mut features = features_mutex.lock().unwrap();
+                            features.add_sequence_features(contig.id, contig_features);
+                        }
+                        Err(e) => {
+                            warn!("Failed to extract features for contig {}: {}", contig.id, e);
+                        }
                     }
-                    Err(e) => {
-                        warn!("Failed to extract features for contig {}: {}", contig.id, e);
-                    }
+                    pb_clone.inc(1);
                 }
-                pb_clone.inc(1);
-            }
 
-            pb_clone.set_message(phase_msg);
-        });
+                pb_clone.set_message(phase_msg);
+            });
 
         pb.finish_with_message("✅ Complete");
 
@@ -2864,7 +3326,10 @@ impl MetagenomicsPipeline {
 
         multi_progress.update_line(
             line_id,
-            format!("🔍 Feature Extraction: ✅ Extracted features for {} contigs", features.sequence_features.len()),
+            format!(
+                "🔍 Feature Extraction: ✅ Extracted features for {} contigs",
+                features.sequence_features.len()
+            ),
         );
 
         Ok(features)
@@ -2877,15 +3342,18 @@ impl MetagenomicsPipeline {
         multi_progress: &mut MultiProgress,
         line_id: usize,
     ) -> Result<Vec<TaxonomicClassification>> {
-        multi_progress.update_line(line_id, "🏷️  Classification: Loading ML classifier...".to_string());
+        multi_progress.update_line(
+            line_id,
+            "🏷️  Classification: Loading ML classifier...".to_string(),
+        );
 
         // Initialize the ML-based contig classifier
-        use crate::ml::simple_classifier::{SimpleContigClassifier, SimpleClassifierConfig};
+        use crate::ml::simple_classifier::{SimpleClassifierConfig, SimpleContigClassifier};
 
         let classifier_config = SimpleClassifierConfig {
-            kmer_size: 4,  // Tetranucleotide frequencies
-            min_contig_length: 1000,  // Minimum contig length for classification
-            num_bins: 10,  // Default number of bins
+            kmer_size: 4,            // Tetranucleotide frequencies
+            min_contig_length: 1000, // Minimum contig length for classification
+            num_bins: 10,            // Default number of bins
             ..Default::default()
         };
 
@@ -2927,9 +3395,15 @@ impl MetagenomicsPipeline {
 
         multi_progress.update_line(
             line_id,
-            format!("🏷️  Classification: ✅ Classified {} sequences into {} bins",
-                    classifications.len(),
-                    classifications.iter().map(|c| c.taxonomy_id).collect::<std::collections::HashSet<_>>().len()),
+            format!(
+                "🏷️  Classification: ✅ Classified {} sequences into {} bins",
+                classifications.len(),
+                classifications
+                    .iter()
+                    .map(|c| c.taxonomy_id)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            ),
         );
 
         Ok(classifications)
@@ -2953,7 +3427,10 @@ impl MetagenomicsPipeline {
         let mut total_kmers_processed = 0u64;
         let k = 4usize; // Tetranucleotide
 
-        multi_progress.update_line(line_id, "📊 Abundance: Processing k-mers from reads...".to_string());
+        multi_progress.update_line(
+            line_id,
+            "📊 Abundance: Processing k-mers from reads...".to_string(),
+        );
 
         for (i, read) in reads.iter().enumerate() {
             let seq = read.corrected.as_bytes();
@@ -2979,7 +3456,10 @@ impl MetagenomicsPipeline {
 
         multi_progress.update_line(
             line_id,
-            format!("📊 Abundance: ✅ Found {} unique k-mers from {} total reads", unique_kmers, total_reads),
+            format!(
+                "📊 Abundance: ✅ Found {} unique k-mers from {} total reads",
+                unique_kmers, total_reads
+            ),
         );
 
         Ok(AbundanceProfile {
@@ -3036,8 +3516,8 @@ impl MetagenomicsPipeline {
                 total_processing_time: elapsed_time,
                 peak_memory_usage: peak_memory,
                 reads_processed: abundance.total_kmers / 4, // Estimate reads from total k-mers (k=4)
-                errors_corrected: 0,  // TODO: Track from QC pipeline
-                repeats_resolved: 0,  // TODO: Track from assembly
+                errors_corrected: 0,                        // TODO: Track from QC pipeline
+                repeats_resolved: 0,                        // TODO: Track from assembly
             },
         };
 
@@ -3144,7 +3624,8 @@ impl MetagenomicsPipeline {
         let variance = contigs
             .iter()
             .map(|c| (c.coverage - mean).powi(2))
-            .sum::<f64>() / (contigs.len() - 1) as f64;
+            .sum::<f64>()
+            / (contigs.len() - 1) as f64;
 
         variance.sqrt()
     }
@@ -3157,7 +3638,8 @@ impl MetagenomicsPipeline {
 
         // Heuristic: completeness based on N50 ratio and contig count
         // Higher N50 relative to total length = better assembly
-        let n50_ratio = assembly.assembly_stats.n50 as f64 / assembly.assembly_stats.total_length as f64;
+        let n50_ratio =
+            assembly.assembly_stats.n50 as f64 / assembly.assembly_stats.total_length as f64;
         let contig_penalty = 1.0 / (1.0 + (assembly.contigs.len() as f64 / 100.0).ln());
 
         // Score from 0-1, combining N50 quality and contig fragmentation
@@ -3697,6 +4179,7 @@ mod integration_tests {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             CorrectedRead {
                 id: 1,
@@ -3710,6 +4193,7 @@ mod integration_tests {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             CorrectedRead {
                 id: 2,
@@ -3723,6 +4207,7 @@ mod integration_tests {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
         ];
 

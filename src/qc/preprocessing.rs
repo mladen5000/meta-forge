@@ -12,8 +12,8 @@ use colored::Colorize;
 use std::path::Path;
 use tracing::{debug, info};
 
-use crate::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use super::{QCPipeline, QCPipelineConfig};
+use crate::core::data_structures::{CorrectedRead, CorrectionMetadata};
 
 /// File format types supported by the preprocessor
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,18 +45,21 @@ impl Preprocessor {
 
     /// Detect file format from extension
     pub fn detect_file_format(&self, path: &Path) -> Result<FileFormat> {
-        let extension = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let format = match extension.to_lowercase().as_str() {
             "fastq" | "fq" => FileFormat::Fastq,
             "gz" if path.to_str().unwrap_or("").contains(".fastq.")
-                || path.to_str().unwrap_or("").contains(".fq.") => FileFormat::FastqGz,
+                || path.to_str().unwrap_or("").contains(".fq.") =>
+            {
+                FileFormat::FastqGz
+            }
             "fasta" | "fa" | "fna" => FileFormat::Fasta,
             "gz" if path.to_str().unwrap_or("").contains(".fasta.")
-                || path.to_str().unwrap_or("").contains(".fa.") => FileFormat::FastaGz,
+                || path.to_str().unwrap_or("").contains(".fa.") =>
+            {
+                FileFormat::FastaGz
+            }
             _ => FileFormat::Unknown,
         };
 
@@ -66,8 +69,7 @@ impl Preprocessor {
     /// Process a FASTQ file with QC pipeline
     pub fn process_fastq_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
         info!("{}", "📖 Reading FASTQ file...".bright_cyan());
-        let reader = fastq::Reader::from_file(file_path)
-            .context("Failed to open FASTQ file")?;
+        let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
 
         // Create QC pipeline
         let mut qc_pipeline = QCPipeline::new(self.qc_config.clone());
@@ -92,25 +94,45 @@ impl Preprocessor {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             };
 
             raw_reads.push(read);
 
             if read_id % 50000 == 0 && read_id > 0 {
-                info!("  {} {}", "📊 Loaded".bright_blue(), format!("{} reads", read_id).white());
+                info!(
+                    "  {} {}",
+                    "📊 Loaded".bright_blue(),
+                    format!("{} reads", read_id).white()
+                );
             }
         }
 
-        info!("{} {}", "✅ Loaded".bright_green(), format!("{} total reads", raw_reads.len()).white().bold());
+        info!(
+            "{} {}",
+            "✅ Loaded".bright_green(),
+            format!("{} total reads", raw_reads.len()).white().bold()
+        );
 
         // Second pass: QC filtering and trimming
-        info!("{}", "🔬 Applying quality control filters...".bright_yellow());
+        info!(
+            "{}",
+            "🔬 Applying quality control filters...".bright_yellow()
+        );
 
         // Debug: Check first few reads
         if let Some(first_read) = raw_reads.first() {
-            let avg_qual = first_read.quality_scores.iter().map(|&q| q as f64).sum::<f64>()
+            let avg_qual = first_read
+                .quality_scores
+                .iter()
+                .map(|&q| q as f64)
+                .sum::<f64>()
                 / first_read.quality_scores.len() as f64;
-            debug!("  First read: len={}, avg_qual_raw={:.1}", first_read.original.len(), avg_qual);
+            debug!(
+                "  First read: len={}, avg_qual_raw={:.1}",
+                first_read.original.len(),
+                avg_qual
+            );
         }
 
         let corrected_reads = qc_pipeline.process_reads(&raw_reads);
@@ -122,7 +144,12 @@ impl Preprocessor {
         self.print_qc_stats(&qc_stats);
 
         if qc_stats.reads_passed == 0 && qc_stats.reads_input > 0 {
-            tracing::warn!("{}", "⚠️  Warning: All reads filtered out! Check quality settings.".bright_yellow().bold());
+            tracing::warn!(
+                "{}",
+                "⚠️  Warning: All reads filtered out! Check quality settings."
+                    .bright_yellow()
+                    .bold()
+            );
         }
 
         Ok(corrected_reads)
@@ -131,8 +158,7 @@ impl Preprocessor {
     /// Process a FASTA file (no QC, just load)
     pub fn process_fasta_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
         info!("{}", "📖 Reading FASTA file...".bright_cyan());
-        let reader = fasta::Reader::from_file(file_path)
-            .context("Failed to open FASTA file")?;
+        let reader = fasta::Reader::from_file(file_path).context("Failed to open FASTA file")?;
 
         let mut corrected_reads = Vec::new();
 
@@ -152,16 +178,27 @@ impl Preprocessor {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             };
 
             corrected_reads.push(corrected_read);
 
             if read_id % 50000 == 0 && read_id > 0 {
-                info!("  {} {}", "📊 Loaded".bright_blue(), format!("{} reads", read_id).white());
+                info!(
+                    "  {} {}",
+                    "📊 Loaded".bright_blue(),
+                    format!("{} reads", read_id).white()
+                );
             }
         }
 
-        info!("{} {}", "✅ Loaded".bright_green(), format!("{} total reads", corrected_reads.len()).white().bold());
+        info!(
+            "{} {}",
+            "✅ Loaded".bright_green(),
+            format!("{} total reads", corrected_reads.len())
+                .white()
+                .bold()
+        );
 
         Ok(corrected_reads)
     }
@@ -170,9 +207,15 @@ impl Preprocessor {
     fn print_qc_stats(&self, qc_stats: &crate::qc::QCStats) {
         use colored::Colorize;
 
-        println!("\n{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
         println!("{}", "   QUALITY CONTROL STATISTICS".bright_cyan().bold());
-        println!("{}", "═══════════════════════════════════════════".bright_cyan());
+        println!(
+            "{}",
+            "═══════════════════════════════════════════".bright_cyan()
+        );
 
         let pass_rate = if qc_stats.reads_input > 0 {
             (qc_stats.reads_passed as f64 / qc_stats.reads_input as f64) * 100.0
@@ -181,32 +224,88 @@ impl Preprocessor {
         };
 
         println!("\n{}", "📊 Input/Output Summary:".bright_blue().bold());
-        println!("  {} {}", "Input reads:".white(), format!("{:>10}", qc_stats.reads_input).yellow());
-        println!("  {} {}", "Passed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate).bright_green().bold());
-        println!("  {} {}", "Failed:     ".white(), format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red());
+        println!(
+            "  {} {}",
+            "Input reads:".white(),
+            format!("{:>10}", qc_stats.reads_input).yellow()
+        );
+        println!(
+            "  {} {}",
+            "Passed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_passed, pass_rate)
+                .bright_green()
+                .bold()
+        );
+        println!(
+            "  {} {}",
+            "Failed:     ".white(),
+            format!("{:>10} ({:.1}%)", qc_stats.reads_failed, 100.0 - pass_rate).bright_red()
+        );
 
         if qc_stats.reads_failed > 0 {
             println!("\n{}", "❌ Failure Reasons:".bright_red().bold());
-            println!("  {} {:>10}", "Quality:".white(), qc_stats.reads_failed_quality.to_string().red());
-            println!("  {} {:>10}", "Length: ".white(), qc_stats.reads_failed_length.to_string().red());
+            println!(
+                "  {} {:>10}",
+                "Quality:".white(),
+                qc_stats.reads_failed_quality.to_string().red()
+            );
+            println!(
+                "  {} {:>10}",
+                "Length: ".white(),
+                qc_stats.reads_failed_length.to_string().red()
+            );
         }
 
         if qc_stats.adapters_detected > 0 {
             println!("\n{}", "✂️  Adapter Trimming:".bright_magenta().bold());
-            println!("  {} {:>10}", "Adapters detected:".white(), qc_stats.adapters_detected.to_string().magenta());
-            println!("  {} {:>10}", "Bases removed:   ".white(), qc_stats.bases_trimmed_adapter.to_string().magenta());
+            println!(
+                "  {} {:>10}",
+                "Adapters detected:".white(),
+                qc_stats.adapters_detected.to_string().magenta()
+            );
+            println!(
+                "  {} {:>10}",
+                "Bases removed:   ".white(),
+                qc_stats.bases_trimmed_adapter.to_string().magenta()
+            );
         }
 
         println!("\n{}", "📏 Length Statistics:".bright_blue().bold());
-        println!("  {} {:>10.1} bp", "Before:".white(), qc_stats.mean_length_before);
-        println!("  {} {:>10.1} bp", "After: ".white(), qc_stats.mean_length_after);
+        println!(
+            "  {} {:>10.1} bp",
+            "Before:".white(),
+            qc_stats.mean_length_before
+        );
+        println!(
+            "  {} {:>10.1} bp",
+            "After: ".white(),
+            qc_stats.mean_length_after
+        );
 
         println!("\n{}", "⭐ Quality Metrics:".bright_blue().bold());
-        println!("  {} Q{:.1}  →  Q{:.1}", "Average:".white(), qc_stats.mean_quality_before, qc_stats.mean_quality_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q20:    ".white(), qc_stats.q20_percentage_before, qc_stats.q20_percentage_after);
-        println!("  {} {:.1}%  →  {:.1}%", "Q30:    ".white(), qc_stats.q30_percentage_before, qc_stats.q30_percentage_after);
+        println!(
+            "  {} Q{:.1}  →  Q{:.1}",
+            "Average:".white(),
+            qc_stats.mean_quality_before,
+            qc_stats.mean_quality_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q20:    ".white(),
+            qc_stats.q20_percentage_before,
+            qc_stats.q20_percentage_after
+        );
+        println!(
+            "  {} {:.1}%  →  {:.1}%",
+            "Q30:    ".white(),
+            qc_stats.q30_percentage_before,
+            qc_stats.q30_percentage_after
+        );
 
-        println!("\n{}", "═══════════════════════════════════════════\n".bright_cyan());
+        println!(
+            "\n{}",
+            "═══════════════════════════════════════════\n".bright_cyan()
+        );
     }
 }
 

@@ -540,6 +540,7 @@ impl PairedRead {
                 context_window: 10,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }
     }
 }

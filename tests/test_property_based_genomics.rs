@@ -625,6 +625,7 @@ mod assembly_invariants {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: AHashMap::new(),
         }
     }
 

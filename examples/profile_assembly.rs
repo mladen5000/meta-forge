@@ -7,6 +7,7 @@ use meta_forge::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig};
 use meta_forge::core::data_structures::CorrectedRead;
 use meta_forge::utils::assembly_profiler::{AssemblyProfiler, ProfileSummary};
 use std::collections::HashMap;
+use ahash::AHashMap;
 
 fn main() -> Result<()> {
     // Generate synthetic test data
@@ -98,6 +99,7 @@ fn generate_test_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: AHashMap::new(),
             }
         })
         .collect()

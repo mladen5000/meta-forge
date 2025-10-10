@@ -14,12 +14,12 @@
 use anyhow::Result;
 use meta_forge::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig};
 use meta_forge::assembly::performance_optimizations::{
-    CacheOptimizedGraph, OptimizationConfig, PerformanceMode, PerformanceBenchmark,
-    SIMDNucleotideOps
+    CacheOptimizedGraph, OptimizationConfig, PerformanceBenchmark, PerformanceMode,
+    SIMDNucleotideOps,
 };
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
-use std::time::{Instant, Duration};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /* ========================================================================= */
 /*                        PERFORMANCE REGRESSION TRACKING                  */
@@ -42,27 +42,27 @@ impl PerformanceBaseline {
     fn laptop_4gb() -> Self {
         Self {
             max_assembly_time_per_1k_reads: 10.0, // 10 seconds per 1000 reads
-            max_memory_usage_mb: 1024.0,           // 1GB limit
-            min_simd_speedup: 1.0,                 // At least no regression
-            max_contig_ratio: 0.5,                 // Should merge reads significantly
+            max_memory_usage_mb: 1024.0,          // 1GB limit
+            min_simd_speedup: 1.0,                // At least no regression
+            max_contig_ratio: 0.5,                // Should merge reads significantly
         }
     }
 
     fn laptop_8gb() -> Self {
         Self {
-            max_assembly_time_per_1k_reads: 5.0,   // 5 seconds per 1000 reads
-            max_memory_usage_mb: 2048.0,           // 2GB limit
-            min_simd_speedup: 1.2,                 // 20% improvement expected
-            max_contig_ratio: 0.4,                 // Better merging with more memory
+            max_assembly_time_per_1k_reads: 5.0, // 5 seconds per 1000 reads
+            max_memory_usage_mb: 2048.0,         // 2GB limit
+            min_simd_speedup: 1.2,               // 20% improvement expected
+            max_contig_ratio: 0.4,               // Better merging with more memory
         }
     }
 
     fn laptop_16gb() -> Self {
         Self {
-            max_assembly_time_per_1k_reads: 3.0,   // 3 seconds per 1000 reads
-            max_memory_usage_mb: 4096.0,           // 4GB limit
-            min_simd_speedup: 1.5,                 // 50% improvement expected
-            max_contig_ratio: 0.3,                 // Excellent merging
+            max_assembly_time_per_1k_reads: 3.0, // 3 seconds per 1000 reads
+            max_memory_usage_mb: 4096.0,         // 4GB limit
+            min_simd_speedup: 1.5,               // 50% improvement expected
+            max_contig_ratio: 0.3,               // Excellent merging
         }
     }
 }
@@ -75,9 +75,21 @@ mod performance_regression_tests {
     #[test]
     fn test_assembly_performance_baseline() -> Result<()> {
         let test_cases = vec![
-            ("4GB Laptop", LaptopConfig::low_memory(), PerformanceBaseline::laptop_4gb()),
-            ("8GB Laptop", LaptopConfig::medium_memory(), PerformanceBaseline::laptop_8gb()),
-            ("16GB Laptop", LaptopConfig::high_memory(), PerformanceBaseline::laptop_16gb()),
+            (
+                "4GB Laptop",
+                LaptopConfig::low_memory(),
+                PerformanceBaseline::laptop_4gb(),
+            ),
+            (
+                "8GB Laptop",
+                LaptopConfig::medium_memory(),
+                PerformanceBaseline::laptop_8gb(),
+            ),
+            (
+                "16GB Laptop",
+                LaptopConfig::high_memory(),
+                PerformanceBaseline::laptop_16gb(),
+            ),
         ];
 
         for (config_name, config, baseline) in test_cases {
@@ -96,16 +108,26 @@ mod performance_regression_tests {
             let contig_ratio = contigs.len() as f64 / reads.len() as f64;
 
             // Validate against baseline
-            assert!(assembly_time <= baseline.max_assembly_time_per_1k_reads,
-                   "{}: Assembly time {:.2}s exceeds baseline {:.2}s",
-                   config_name, assembly_time, baseline.max_assembly_time_per_1k_reads);
+            assert!(
+                assembly_time <= baseline.max_assembly_time_per_1k_reads,
+                "{}: Assembly time {:.2}s exceeds baseline {:.2}s",
+                config_name,
+                assembly_time,
+                baseline.max_assembly_time_per_1k_reads
+            );
 
-            assert!(contig_ratio <= baseline.max_contig_ratio,
-                   "{}: Contig ratio {:.3} exceeds baseline {:.3}",
-                   config_name, contig_ratio, baseline.max_contig_ratio);
+            assert!(
+                contig_ratio <= baseline.max_contig_ratio,
+                "{}: Contig ratio {:.3} exceeds baseline {:.3}",
+                config_name,
+                contig_ratio,
+                baseline.max_contig_ratio
+            );
 
-            println!("✅ {}: {:.2}s assembly, {:.3} contig ratio - WITHIN BASELINE",
-                    config_name, assembly_time, contig_ratio);
+            println!(
+                "✅ {}: {:.2}s assembly, {:.3} contig ratio - WITHIN BASELINE",
+                config_name, assembly_time, contig_ratio
+            );
         }
 
         Ok(())
@@ -126,12 +148,20 @@ mod performance_regression_tests {
             let result = benchmark.benchmark_nucleotide_counting(sequence);
 
             let baseline = PerformanceBaseline::laptop_8gb();
-            assert!(result.speedup >= baseline.min_simd_speedup,
-                   "SIMD speedup {:.2}x below baseline {:.2}x for {}KB sequence",
-                   result.speedup, baseline.min_simd_speedup, sequence.len() / 1000);
+            assert!(
+                result.speedup >= baseline.min_simd_speedup,
+                "SIMD speedup {:.2}x below baseline {:.2}x for {}KB sequence",
+                result.speedup,
+                baseline.min_simd_speedup,
+                sequence.len() / 1000
+            );
 
-            println!("✅ SIMD test {}: {:.2}x speedup on {}KB sequence",
-                    i + 1, result.speedup, sequence.len() / 1000);
+            println!(
+                "✅ SIMD test {}: {:.2}x speedup on {}KB sequence",
+                i + 1,
+                result.speedup,
+                sequence.len() / 1000
+            );
         }
 
         Ok(())
@@ -141,9 +171,21 @@ mod performance_regression_tests {
     #[test]
     fn test_memory_usage_regression() -> Result<()> {
         let configs = vec![
-            ("Low Memory", LaptopConfig::low_memory(), PerformanceBaseline::laptop_4gb()),
-            ("Medium Memory", LaptopConfig::medium_memory(), PerformanceBaseline::laptop_8gb()),
-            ("High Memory", LaptopConfig::high_memory(), PerformanceBaseline::laptop_16gb()),
+            (
+                "Low Memory",
+                LaptopConfig::low_memory(),
+                PerformanceBaseline::laptop_4gb(),
+            ),
+            (
+                "Medium Memory",
+                LaptopConfig::medium_memory(),
+                PerformanceBaseline::laptop_8gb(),
+            ),
+            (
+                "High Memory",
+                LaptopConfig::high_memory(),
+                PerformanceBaseline::laptop_16gb(),
+            ),
         ];
 
         for (name, config, baseline) in configs {
@@ -154,12 +196,18 @@ mod performance_regression_tests {
             graph.build_from_reads(&reads, 21)?;
             let memory_usage = graph.memory_usage_mb();
 
-            assert!(memory_usage <= baseline.max_memory_usage_mb,
-                   "{}: Memory usage {:.1}MB exceeds baseline {:.1}MB",
-                   name, memory_usage, baseline.max_memory_usage_mb);
+            assert!(
+                memory_usage <= baseline.max_memory_usage_mb,
+                "{}: Memory usage {:.1}MB exceeds baseline {:.1}MB",
+                name,
+                memory_usage,
+                baseline.max_memory_usage_mb
+            );
 
-            println!("✅ {}: {:.1}MB memory usage - WITHIN BASELINE",
-                    name, memory_usage);
+            println!(
+                "✅ {}: {:.1}MB memory usage - WITHIN BASELINE",
+                name, memory_usage
+            );
         }
 
         Ok(())
@@ -193,12 +241,17 @@ mod performance_regression_tests {
         let size_factor = *large_size as f64 / small_size as f64;
 
         // Should scale better than O(n²)
-        assert!(scaling_factor < size_factor * size_factor,
-               "Performance scaling {:.2}x worse than quadratic for {}x data increase",
-               scaling_factor, size_factor);
+        assert!(
+            scaling_factor < size_factor * size_factor,
+            "Performance scaling {:.2}x worse than quadratic for {}x data increase",
+            scaling_factor,
+            size_factor
+        );
 
-        println!("✅ Performance scaling: {:.2}x slower for {}x more data (acceptable)",
-                scaling_factor, size_factor);
+        println!(
+            "✅ Performance scaling: {:.2}x slower for {}x more data (acceptable)",
+            scaling_factor, size_factor
+        );
 
         Ok(())
     }
@@ -254,12 +307,20 @@ mod quality_regression_tests {
         for (config_name, quality) in &quality_results {
             if *config_name != "Unoptimized" {
                 let quality_ratio = quality / unoptimized_quality;
-                assert!(quality_ratio >= 0.9,
-                       "{} quality {:.3} is {:.1}% of unoptimized {:.3}",
-                       config_name, quality, quality_ratio * 100.0, unoptimized_quality);
+                assert!(
+                    quality_ratio >= 0.9,
+                    "{} quality {:.3} is {:.1}% of unoptimized {:.3}",
+                    config_name,
+                    quality,
+                    quality_ratio * 100.0,
+                    unoptimized_quality
+                );
 
-                println!("✅ {}: {:.1}% of unoptimized quality retained",
-                        config_name, quality_ratio * 100.0);
+                println!(
+                    "✅ {}: {:.1}% of unoptimized quality retained",
+                    config_name,
+                    quality_ratio * 100.0
+                );
             }
         }
 
@@ -279,17 +340,27 @@ mod quality_regression_tests {
 
             // Test compact k-mer representation
             let expected_kmers = test_sequence.len() - k + 1;
-            let kmer_iter = meta_forge::assembly::performance_optimizations::ZeroCopyKmerIterator::new(test_sequence, k);
+            let kmer_iter =
+                meta_forge::assembly::performance_optimizations::ZeroCopyKmerIterator::new(
+                    test_sequence,
+                    k,
+                );
             let actual_kmers = kmer_iter.count();
 
-            assert_eq!(actual_kmers, expected_kmers,
-                      "K-mer count mismatch for k={}: expected {}, got {}",
-                      k, expected_kmers, actual_kmers);
+            assert_eq!(
+                actual_kmers, expected_kmers,
+                "K-mer count mismatch for k={}: expected {}, got {}",
+                k, expected_kmers, actual_kmers
+            );
 
             // Test SIMD nucleotide counting accuracy
             let gc_content = SIMDNucleotideOps::gc_content_simd(test_sequence);
-            assert!(gc_content >= 0.0 && gc_content <= 1.0,
-                   "GC content {:.3} out of valid range for k={}", gc_content, k);
+            assert!(
+                gc_content >= 0.0 && gc_content <= 1.0,
+                "GC content {:.3} out of valid range for k={}",
+                gc_content,
+                k
+            );
 
             println!("✅ K-mer processing accuracy maintained for k={}", k);
         }
@@ -319,11 +390,16 @@ mod quality_regression_tests {
         let max_contigs = *contig_counts.iter().max().unwrap();
         let variation = (max_contigs - min_contigs) as f64 / min_contigs as f64;
 
-        assert!(variation <= 0.1,
-               "Contig count variation {:.1}% exceeds 10% threshold", variation * 100.0);
+        assert!(
+            variation <= 0.1,
+            "Contig count variation {:.1}% exceeds 10% threshold",
+            variation * 100.0
+        );
 
-        println!("✅ Contig generation consistency: {:.1}% variation across runs",
-                variation * 100.0);
+        println!(
+            "✅ Contig generation consistency: {:.1}% variation across runs",
+            variation * 100.0
+        );
 
         Ok(())
     }
@@ -381,8 +457,12 @@ mod ci_cd_integration_tests {
         assert!(duration.as_secs() < 10, "Should complete quickly in CI/CD");
         assert!(contigs.len() < reads.len(), "Should merge some reads");
 
-        println!("✅ CI/CD smoke test: {} reads -> {} contigs in {:.2}s",
-                reads.len(), contigs.len(), duration.as_secs_f64());
+        println!(
+            "✅ CI/CD smoke test: {} reads -> {} contigs in {:.2}s",
+            reads.len(),
+            contigs.len(),
+            duration.as_secs_f64()
+        );
 
         Ok(())
     }
@@ -434,12 +514,24 @@ mod ci_cd_integration_tests {
         // Log metrics for CI/CD tracking
         println!("METRIC:simd_speedup:{:.2}", simd_result.speedup);
         println!("METRIC:kmer_speedup:{:.2}", kmer_result.speedup);
-        println!("METRIC:simd_time_ms:{:.2}", simd_result.optimized_time_ns as f64 / 1_000_000.0);
-        println!("METRIC:kmer_time_ms:{:.2}", kmer_result.optimized_time_ns as f64 / 1_000_000.0);
+        println!(
+            "METRIC:simd_time_ms:{:.2}",
+            simd_result.optimized_time_ns as f64 / 1_000_000.0
+        );
+        println!(
+            "METRIC:kmer_time_ms:{:.2}",
+            kmer_result.optimized_time_ns as f64 / 1_000_000.0
+        );
 
         // Basic performance thresholds for CI/CD
-        assert!(simd_result.speedup >= 0.8, "SIMD performance regression detected");
-        assert!(kmer_result.speedup >= 0.8, "K-mer processing regression detected");
+        assert!(
+            simd_result.speedup >= 0.8,
+            "SIMD performance regression detected"
+        );
+        assert!(
+            kmer_result.speedup >= 0.8,
+            "K-mer processing regression detected"
+        );
 
         println!("✅ CI/CD performance metrics within acceptable ranges");
 
@@ -463,10 +555,16 @@ mod ci_cd_integration_tests {
         graph.build_from_reads(&reads, 15)?;
         let memory_usage = graph.memory_usage_mb();
 
-        assert!(memory_usage <= 512.0,
-               "Memory usage {:.1}MB exceeds CI/CD limit of 512MB", memory_usage);
+        assert!(
+            memory_usage <= 512.0,
+            "Memory usage {:.1}MB exceeds CI/CD limit of 512MB",
+            memory_usage
+        );
 
-        println!("✅ CI/CD memory constraint test: {:.1}MB usage", memory_usage);
+        println!(
+            "✅ CI/CD memory constraint test: {:.1}MB usage",
+            memory_usage
+        );
 
         Ok(())
     }
@@ -480,55 +578,61 @@ mod ci_cd_integration_tests {
 fn create_benchmark_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let base_sequence = "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG";
 
-    (0..count).map(|i| {
-        let start = (i * 2) % (base_sequence.len() - length);
-        let sequence = base_sequence[start..start + length].to_string();
+    (0..count)
+        .map(|i| {
+            let start = (i * 2) % (base_sequence.len() - length);
+            let sequence = base_sequence[start..start + length].to_string();
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "benchmark".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "benchmark".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: Vec::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create reads that stress memory usage
 fn create_memory_stress_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
-    (0..count).map(|i| {
-        // Create unique sequences to maximize memory usage
-        let mut sequence = String::with_capacity(length);
-        for j in 0..length {
-            let nucleotide = match (i + j) % 4 {
-                0 => 'A',
-                1 => 'C',
-                2 => 'G',
-                _ => 'T',
-            };
-            sequence.push(nucleotide);
-        }
+    (0..count)
+        .map(|i| {
+            // Create unique sequences to maximize memory usage
+            let mut sequence = String::with_capacity(length);
+            for j in 0..length {
+                let nucleotide = match (i + j) % 4 {
+                    0 => 'A',
+                    1 => 'C',
+                    2 => 'G',
+                    _ => 'T',
+                };
+                sequence.push(nucleotide);
+            }
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![25; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "memory_stress".to_string(),
-                confidence_threshold: 0.85,
-                context_window: 7,
-                correction_time_ms: 1,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![25; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "memory_stress".to_string(),
+                    confidence_threshold: 0.85,
+                    context_window: 7,
+                    correction_time_ms: 1,
+                },
+                kmer_hash_cache: Vec::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create reference dataset with known characteristics
@@ -557,6 +661,7 @@ fn create_reference_dataset() -> Vec<CorrectedRead> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         });
 
         start += read_length - overlap;
@@ -570,27 +675,30 @@ fn create_reference_dataset() -> Vec<CorrectedRead> {
 fn create_deterministic_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let pattern = "ATCGATCG";
 
-    (0..count).map(|i| {
-        let mut sequence = String::with_capacity(length);
-        while sequence.len() < length {
-            sequence.push_str(pattern);
-        }
-        sequence.truncate(length);
+    (0..count)
+        .map(|i| {
+            let mut sequence = String::with_capacity(length);
+            while sequence.len() < length {
+                sequence.push_str(pattern);
+            }
+            sequence.truncate(length);
 
-        CorrectedRead {
-            id: i,
-            original: sequence.clone(),
-            corrected: sequence,
-            corrections: Vec::new(),
-            quality_scores: vec![30; length],
-            correction_metadata: CorrectionMetadata {
-                algorithm: "deterministic".to_string(),
-                confidence_threshold: 0.9,
-                context_window: 5,
-                correction_time_ms: 0,
-            },
-        }
-    }).collect()
+            CorrectedRead {
+                id: i,
+                original: sequence.clone(),
+                corrected: sequence,
+                corrections: Vec::new(),
+                quality_scores: vec![30; length],
+                correction_metadata: CorrectionMetadata {
+                    algorithm: "deterministic".to_string(),
+                    confidence_threshold: 0.9,
+                    context_window: 5,
+                    correction_time_ms: 0,
+                },
+                kmer_hash_cache: Vec::new(),
+            }
+        })
+        .collect()
 }
 
 /// Create test sequence for performance benchmarking

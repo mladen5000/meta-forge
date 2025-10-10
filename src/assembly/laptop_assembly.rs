@@ -10,17 +10,17 @@
 //! This module consolidates the best practices from multiple optimization modules
 //! into a single, efficient, and maintainable implementation.
 
-use crate::core::data_structures::{CorrectedRead, AssemblyStats, Contig, ContigType};
-use crate::assembly::adaptive_k::{AdaptiveKSelector, AdaptiveKConfig};
-use anyhow::{anyhow, Result};
+use crate::assembly::adaptive_k::{AdaptiveKConfig, AdaptiveKSelector};
+use crate::core::data_structures::{AssemblyStats, Contig, ContigType, CorrectedRead};
 use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, Result};
+use colored::Colorize;
 use dashmap::DashMap;
+use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use rayon::prelude::*;
 use std::time::{Duration, Instant};
-use indicatif::{ProgressBar, ProgressStyle};
-use colored::Colorize;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -45,9 +45,9 @@ impl LaptopConfig {
     /// Configuration for 4GB laptops (conservative)
     pub fn low_memory() -> Self {
         Self {
-            memory_budget_mb: 1024,  // Use only 1GB for assembly
+            memory_budget_mb: 2048, // Increased from 1GB to 2GB
             cpu_cores: 2,
-            chunk_size: 500,
+            chunk_size: 2000, // Increased from 500 for better batching
             max_k: 21,
         }
     }
@@ -55,9 +55,9 @@ impl LaptopConfig {
     /// Configuration for 8GB laptops (balanced)
     pub fn medium_memory() -> Self {
         Self {
-            memory_budget_mb: 2048,  // Use 2GB for assembly
+            memory_budget_mb: 4096, // Increased from 2GB to 4GB
             cpu_cores: 4,
-            chunk_size: 1000,
+            chunk_size: 5000, // Increased from 1000 for better batching
             max_k: 31,
         }
     }
@@ -65,9 +65,9 @@ impl LaptopConfig {
     /// Configuration for 16GB+ laptops (performance)
     pub fn high_memory() -> Self {
         Self {
-            memory_budget_mb: 4096,  // Use 4GB for assembly
+            memory_budget_mb: 12288, // Increased from 4GB to 12GB
             cpu_cores: num_cpus::get(),
-            chunk_size: 2000,
+            chunk_size: 10000, // Increased from 2000 for better batching
             max_k: 63,
         }
     }
@@ -78,13 +78,22 @@ impl LaptopConfig {
         let cpu_cores = num_cpus::get();
 
         if total_memory_gb <= 4.0 {
-            println!("🔧 Auto-detected: Low memory system ({:.1} GB RAM, {} cores)", total_memory_gb, cpu_cores);
+            println!(
+                "🔧 Auto-detected: Low memory system ({:.1} GB RAM, {} cores)",
+                total_memory_gb, cpu_cores
+            );
             Self::low_memory()
         } else if total_memory_gb <= 8.0 {
-            println!("🔧 Auto-detected: Medium memory system ({:.1} GB RAM, {} cores)", total_memory_gb, cpu_cores);
+            println!(
+                "🔧 Auto-detected: Medium memory system ({:.1} GB RAM, {} cores)",
+                total_memory_gb, cpu_cores
+            );
             Self::medium_memory()
         } else {
-            println!("🔧 Auto-detected: High memory system ({:.1} GB RAM, {} cores)", total_memory_gb, cpu_cores);
+            println!(
+                "🔧 Auto-detected: High memory system ({:.1} GB RAM, {} cores)",
+                total_memory_gb, cpu_cores
+            );
             Self::high_memory()
         }
     }
@@ -106,7 +115,10 @@ impl LaptopConfig {
     /// Create custom configuration with validation
     pub fn custom(memory_budget_mb: usize, cpu_cores: usize, max_k: usize) -> Result<Self> {
         if memory_budget_mb < 256 {
-            return Err(anyhow!("Memory budget too low: {} MB (minimum 256 MB)", memory_budget_mb));
+            return Err(anyhow!(
+                "Memory budget too low: {} MB (minimum 256 MB)",
+                memory_budget_mb
+            ));
         }
         if cpu_cores == 0 {
             return Err(anyhow!("CPU cores must be at least 1"));
@@ -159,11 +171,7 @@ unsafe fn hash_kmer_simd(sequence: &[u8], k: usize) -> u64 {
         // A/a(65/97) -> 0, C/c(67/99) -> 1, G/g(71/103) -> 2, T/t(84/116) -> 3
         let mask_a = _mm_set1_epi8(0x06); // Mask bits 1-2
         let shifted = _mm_srli_epi64(chunk, 1);
-        let masked = _mm_and_si128(shifted, mask_a);
-
-        // Extract and pack into hash
-        let bytes: [u8; 16] = std::mem::transmute(masked);
-        for (i, &byte) in bytes.iter().enumerate().take(16.min(k - chunk_idx * 16)) {
+        for (_i, &byte) in bytes.iter().enumerate().take(16.min(k - chunk_idx * 16)) {
             hash = (hash << 2) | ((byte & 0x03) as u64);
         }
     }
@@ -247,7 +255,11 @@ pub struct RollingKmerHash {
 impl RollingKmerHash {
     pub fn new(k: usize) -> Self {
         let base_power = 4u64.pow((k - 1) as u32);
-        Self { hash: 0, k, base_power }
+        Self {
+            hash: 0,
+            k,
+            base_power,
+        }
     }
 
     /// Initialize hash from first k bytes
@@ -255,7 +267,9 @@ impl RollingKmerHash {
     pub fn init(&mut self, sequence: &[u8]) -> u64 {
         self.hash = 0;
         for &byte in &sequence[..self.k.min(sequence.len())] {
-            self.hash = self.hash.wrapping_mul(4)
+            self.hash = self
+                .hash
+                .wrapping_mul(4)
                 .wrapping_add(Self::nucleotide_value(byte));
         }
         self.hash
@@ -265,8 +279,12 @@ impl RollingKmerHash {
     #[inline]
     pub fn roll(&mut self, old_byte: u8, new_byte: u8) -> u64 {
         let old_val = Self::nucleotide_value(old_byte);
-        self.hash = self.hash.wrapping_sub(old_val.wrapping_mul(self.base_power));
-        self.hash = self.hash.wrapping_mul(4)
+        self.hash = self
+            .hash
+            .wrapping_sub(old_val.wrapping_mul(self.base_power));
+        self.hash = self
+            .hash
+            .wrapping_mul(4)
             .wrapping_add(Self::nucleotide_value(new_byte));
         self.hash
     }
@@ -421,7 +439,8 @@ impl BoundedKmerCounter {
 
         // If over capacity, use softer threshold - keep count >= 1 initially
         // Only if still over capacity after that, use count >= 2
-        if self.counts.len() > self.max_kmers * 11 / 10 { // 110% threshold
+        if self.counts.len() > self.max_kmers * 15 / 10 {
+            // 150% threshold
             // First pass: remove only true singletons (count == 1)
             self.counts.retain(|_, &mut count| count >= 2);
 
@@ -433,10 +452,12 @@ impl BoundedKmerCounter {
         }
 
         let total_removed = before_size - self.counts.len();
-        self.memory_usage.fetch_sub(total_removed * 12, Ordering::Relaxed);
+        self.memory_usage
+            .fetch_sub(total_removed * 12, Ordering::Relaxed);
 
         if total_removed > 0 {
-            self.kmers_dropped.fetch_add(total_removed, Ordering::Relaxed);
+            self.kmers_dropped
+                .fetch_add(total_removed, Ordering::Relaxed);
         }
     }
 
@@ -484,7 +505,6 @@ impl BoundedKmerCounter {
             Self::quickselect(&mut right, k - left.len() - middle.len())
         }
     }
-
 
     /// Get k-mers above threshold
     pub fn get_frequent_kmers(&self, min_count: u32) -> Vec<(u64, u32)> {
@@ -553,15 +573,25 @@ impl LaptopAssemblyGraph {
 
     /// Build graph from reads using memory-bounded processing with timeout
     pub fn build_from_reads(&mut self, reads: &[CorrectedRead], k: usize) -> Result<()> {
-        self.build_from_reads_with_timeout(reads, k, Duration::from_secs(300)) // 5 minute timeout
+        self.build_from_reads_with_timeout(reads, k, Duration::from_secs(300), None) // 5 minute timeout
     }
 
     /// Build graph with configurable timeout
-    pub fn build_from_reads_with_timeout(&mut self, reads: &[CorrectedRead], k: usize, timeout: Duration) -> Result<()> {
+    pub fn build_from_reads_with_timeout(
+        &mut self,
+        reads: &[CorrectedRead],
+        k: usize,
+        timeout: Duration,
+        progress_bar: Option<ProgressBar>,
+    ) -> Result<()> {
         let start_time = Instant::now();
 
         if k > self.config.max_k {
-            return Err(anyhow!("K-mer size {} exceeds maximum {}", k, self.config.max_k));
+            return Err(anyhow!(
+                "K-mer size {} exceeds maximum {}",
+                k,
+                self.config.max_k
+            ));
         }
 
         // Configure rayon for maximum CPU utilization
@@ -572,10 +602,19 @@ impl LaptopAssemblyGraph {
         // Process reads in chunks to control memory usage
         let chunks: Vec<_> = reads.chunks(self.config.chunk_size).collect();
 
-        eprintln!("{} Processing {} reads in {} chunks (k={}, timeout={}s)",
-                "🧬".bright_cyan(), reads.len(), chunks.len(), k, timeout.as_secs());
-        eprintln!("   {} CPU cores: {} (target: 90% utilization)",
-                "🚀".bright_green(), self.config.cpu_cores);
+        eprintln!(
+            "{} Processing {} reads in {} chunks (k={}, timeout={}s)",
+            "🧬".bright_cyan(),
+            reads.len(),
+            chunks.len(),
+            k,
+            timeout.as_secs()
+        );
+        eprintln!(
+            "   {} CPU cores: {} (target: 90% utilization)",
+            "🚀".bright_green(),
+            self.config.cpu_cores
+        );
 
         // Use bounded k-mer counter to prevent memory explosion
         let kmer_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / 4);
@@ -584,75 +623,89 @@ impl LaptopAssemblyGraph {
         // IDIOM FIX: Use RwLock instead of Mutex for read-heavy parallel access (3-5x speedup)
         let counter_rwlock = Arc::new(std::sync::RwLock::new(kmer_counter));
 
-        // Create progress bar for k-mer counting
-        // NOTE: Fine-grained chunking means progress updates in batches, not linearly
-        let pb_kmer = ProgressBar::new(reads.len() as u64);
-        pb_kmer.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reads ({percent}%) {msg}")
-                .unwrap()
-                .progress_chars("█▓▒░ ")
-        );
-        pb_kmer.set_message("Counting k-mers (parallel batches)");
+        // Use the provided progress bar or create a new one if not provided
+        let pb_kmer = progress_bar.unwrap_or_else(|| {
+            let pb = ProgressBar::new(reads.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} reads ({percent}%) {msg}")
+                    .unwrap()
+                    .progress_chars("█▓▒░ ")
+            );
+            pb.set_message("Counting k-mers (parallel batches)");
+            pb
+        });
 
         if self.config.cpu_cores > 1 {
             // AGGRESSIVE parallel processing - use ALL cores
             #[cfg(target_arch = "x86_64")]
-            let simd_status = if is_x86_feature_detected!("sse2") { "SSE2 SIMD" } else { "scalar" };
+            let simd_status = if is_x86_feature_detected!("sse2") {
+                "SSE2 SIMD"
+            } else {
+                "scalar"
+            };
             #[cfg(target_arch = "aarch64")]
             let simd_status = "NEON SIMD";
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let simd_status = "scalar";
 
-            eprintln!("   {} Using {} threads for k-mer counting ({})",
-                    "⚡".bright_yellow(), self.config.cpu_cores, simd_status.bright_green());
+            eprintln!(
+                "   {} Using {} threads for k-mer counting ({})",
+                "⚡".bright_yellow(),
+                self.config.cpu_cores,
+                simd_status.bright_green()
+            );
 
             // Fine-grained parallelism: split into more chunks than cores for better load balancing
             // Use smaller multiplier (2x instead of 4x) for smoother progress updates
-            let chunk_size = (reads.len() / (self.config.cpu_cores * 2)).max(50);
+            let chunk_size = (reads.len() / (self.config.cpu_cores * 2)).max(100);
             let fine_chunks: Vec<_> = reads.chunks(chunk_size).collect();
-            let pb_kmer_clone = pb_kmer.clone();
 
+            let pb_kmer_clone = pb_kmer.clone();
             fine_chunks.par_iter().try_for_each(|chunk| -> Result<()> {
                 if start_time.elapsed() > timeout {
-                    return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
+                    return Err(anyhow!(
+                        "Assembly timeout after {} seconds",
+                        timeout.as_secs()
+                    ));
                 }
 
-                let mut local_counter = BoundedKmerCounter::new(self.config.memory_budget_mb / (2 * self.config.cpu_cores));
-                self.process_chunk_for_counting(chunk, k, &mut local_counter)?;
+                let mut chunk_with_cache: Vec<_> = chunk.to_vec();
+                let mut local_counter = BoundedKmerCounter::new(
+                    self.config.memory_budget_mb / (2 * self.config.cpu_cores),
+                );
+                self.process_chunk_for_counting(&mut chunk_with_cache, k, &mut local_counter)?;
 
-                // Update progress
-                pb_kmer_clone.inc(chunk.len() as u64);
+                let kmers_to_merge: Vec<(u64, u32)> =
+                    local_counter.get_frequent_kmers(1).into_iter().collect();
 
-                // IDIOM FIX: Batch merge and use write lock (was holding lock during entire loop)
-                let kmers_to_merge: Vec<(u64, u32)> = local_counter
-                    .get_frequent_kmers(1)
-                    .into_iter()
-                    .collect();
-
-                // Acquire write lock only once for bulk insert
                 {
-                    let mut main_counter = counter_rwlock.write()
-                        .map_err(|e| anyhow!("RwLock poisoned: {:?}", e))?;
+                    let mut main_counter = counter_rwlock.write().unwrap();
                     for (hash, count) in kmers_to_merge {
                         for _ in 0..count {
                             main_counter.add_kmer(hash);
                         }
                     }
-                } // Lock released immediately
-
+                }
+                
+                pb_kmer_clone.inc(chunk.len() as u64);
                 Ok(())
             })?;
         } else {
             // Sequential processing for single core or small datasets
             for chunk in &chunks {
                 if start_time.elapsed() > timeout {
-                    return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
+                    return Err(anyhow!(
+                        "Assembly timeout after {} seconds",
+                        timeout.as_secs()
+                    ));
                 }
 
-                let mut counter = counter_rwlock.write()
+                let mut counter = counter_rwlock
+                    .write()
                     .map_err(|e| anyhow!("RwLock poisoned: {:?}", e))?;
-                self.process_chunk_for_counting(chunk, k, &mut counter)?;
+                let mut chunk_with_cache = chunk.to_vec();
+                self.process_chunk_for_counting(&mut chunk_with_cache, k, &mut counter)?;
                 pb_kmer.inc(chunk.len() as u64);
             }
         }
@@ -666,20 +719,26 @@ impl LaptopAssemblyGraph {
             .map_err(|e| anyhow!("RwLock poisoned: {:?}", e))?;
 
         let (unique_kmers, total_seen, dropped, memory_used) = kmer_counter.get_stats();
-        eprintln!("{} K-mer counting: {} unique, {} total, {} dropped, {:.1} MB used",
-                "📊".bright_blue(),
-                unique_kmers.to_string().bright_white(),
-                total_seen.to_string().bright_white(),
-                dropped.to_string().bright_yellow(),
-                (memory_used as f64 / (1024.0 * 1024.0)));
+        eprintln!(
+            "{} K-mer counting: {} unique, {} total, {} dropped, {:.1} MB used",
+            "📊".bright_blue(),
+            unique_kmers.to_string().bright_white(),
+            total_seen.to_string().bright_white(),
+            dropped.to_string().bright_yellow(),
+            (memory_used as f64 / (1024.0 * 1024.0))
+        );
 
         // Phase 2: Build graph using frequent k-mers
         // IDIOM FIX: Use into_iter() to consume directly, avoid intermediate allocation
         let frequent_kmers = kmer_counter.get_frequent_kmers(2); // Min coverage of 2
-        let frequent_set: AHashSet<u64> = frequent_kmers.into_iter().map(|(hash, _)| hash).collect();
+        let frequent_set: AHashSet<u64> =
+            frequent_kmers.into_iter().map(|(hash, _)| hash).collect();
 
-        eprintln!("{} Building graph with {} frequent k-mers",
-                "🔗".bright_green(), frequent_set.len().to_string().bright_white());
+        eprintln!(
+            "{} Building graph with {} frequent k-mers",
+            "🔗".bright_green(),
+            frequent_set.len().to_string().bright_white()
+        );
 
         // Pre-allocate edge capacity to reduce allocations
         let estimated_edges = frequent_set.len() * 2; // Conservative estimate
@@ -704,41 +763,56 @@ impl LaptopAssemblyGraph {
 
         // Process chunks with progress tracking and AGGRESSIVE parallel execution
         if self.config.cpu_cores > 1 {
-            eprintln!("   {} Using {} threads for graph building (lock-free parallel edge creation)",
-                    "⚡".bright_yellow(), self.config.cpu_cores);
+            eprintln!(
+                "   {} Using {} threads for graph building (lock-free parallel edge creation)",
+                "⚡".bright_yellow(),
+                self.config.cpu_cores
+            );
 
             // Create lock-free collections for parallel insertion using DashMap
             let nodes_map = Arc::new(DashMap::<u64, GraphNode>::new());
             let edges_map = Arc::new(DashMap::<(u64, u64), u32>::new()); // edge -> weight counter
             let pb_graph_clone = pb_graph.clone();
 
-            chunks.par_iter().enumerate().try_for_each(|(chunk_idx, chunk)| -> Result<()> {
-                if start_time.elapsed() > timeout {
-                    return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
-                }
+            chunks
+                .par_iter()
+                .enumerate()
+                .try_for_each(|(chunk_idx, chunk)| -> Result<()> {
+                    if start_time.elapsed() > timeout {
+                        return Err(anyhow!(
+                            "Assembly timeout after {} seconds",
+                            timeout.as_secs()
+                        ));
+                    }
 
-                // Process chunk locally
-                let (local_nodes, local_edges) = self.process_chunk_parallel(chunk, k, &frequent_vec)?;
+                    let mut chunk_with_cache = chunk.to_vec();
+                    // Process chunk locally
+                    let (local_nodes, local_edges) =
+                        self.process_chunk_parallel(&mut chunk_with_cache, k, &frequent_vec)?;
 
-                // Update progress
-                pb_graph_clone.inc(1);
+                    // Update progress
+                    pb_graph_clone.inc(1);
 
-                // Merge results into shared collections (lock-free)
-                for (hash, node) in local_nodes {
-                    nodes_map.entry(hash)
-                        .and_modify(|existing| existing.coverage = existing.coverage.saturating_add(node.coverage))
-                        .or_insert(node);
-                }
+                    // Merge results into shared collections (lock-free)
+                    for (hash, node) in local_nodes {
+                        nodes_map
+                            .entry(hash)
+                            .and_modify(|existing| {
+                                existing.coverage = existing.coverage.saturating_add(node.coverage)
+                            })
+                            .or_insert(node);
+                    }
 
-                for edge in local_edges {
-                    let edge_key = (edge.from_hash, edge.to_hash);
-                    edges_map.entry(edge_key)
-                        .and_modify(|weight| *weight = weight.saturating_add(edge.weight))
-                        .or_insert(edge.weight);
-                }
+                    for edge in local_edges {
+                        let edge_key = (edge.from_hash, edge.to_hash);
+                        edges_map
+                            .entry(edge_key)
+                            .and_modify(|weight| *weight = weight.saturating_add(edge.weight))
+                            .or_insert(edge.weight);
+                    }
 
-                Ok(())
-            })?;
+                    Ok(())
+                })?;
 
             // Extract results from DashMap (unwrap Arc first)
             let nodes_map = Arc::try_unwrap(nodes_map)
@@ -747,18 +821,30 @@ impl LaptopAssemblyGraph {
                 .map_err(|_| anyhow!("Failed to unwrap edges DashMap"))?;
 
             self.nodes = nodes_map.into_iter().collect();
-            self.edges = edges_map.into_iter()
-                .map(|((from_hash, to_hash), weight)| GraphEdge { from_hash, to_hash, weight })
+            self.edges = edges_map
+                .into_iter()
+                .map(|((from_hash, to_hash), weight)| GraphEdge {
+                    from_hash,
+                    to_hash,
+                    weight,
+                })
                 .collect();
-
         } else {
             // Sequential processing with progress tracking
             for (chunk_idx, chunk) in chunks.iter().enumerate() {
                 if start_time.elapsed() > timeout {
-                    return Err(anyhow!("Assembly timeout after {} seconds", timeout.as_secs()));
+                    return Err(anyhow!(
+                        "Assembly timeout after {} seconds",
+                        timeout.as_secs()
+                    ));
                 }
 
-                self.process_chunk_for_graph_building_optimized(chunk, k, &frequent_vec)?;
+                let mut chunk_with_cache = chunk.to_vec();
+                self.process_chunk_for_graph_building_optimized(
+                    &mut chunk_with_cache,
+                    k,
+                    &frequent_vec,
+                )?;
                 pb_graph.inc(1);
             }
         }
@@ -769,24 +855,37 @@ impl LaptopAssemblyGraph {
         self.deduplicate_edges();
 
         // MetaSPAdes-style graph cleanup
-        eprintln!("{} Cleaning up low-coverage nodes...", "🧹".bright_magenta());
+        eprintln!(
+            "{} Cleaning up low-coverage nodes...",
+            "🧹".bright_magenta()
+        );
         self.cleanup_low_coverage_nodes(2);
 
         // Remove tips (dead-end branches) - MetaSPAdes standard
         // Threshold: 2×k (e.g., 42bp for k=21)
         let max_tip_length = k * 2;
-        eprintln!("{} Removing tips (dead-end branches ≤{}bp)...", "✂️".bright_magenta(), max_tip_length);
+        eprintln!(
+            "{} Removing tips (dead-end branches ≤{}bp)...",
+            "✂️".bright_magenta(),
+            max_tip_length
+        );
         let tips_removed = self.remove_tips(max_tip_length);
         if tips_removed > 0 {
-            eprintln!("   {} Removed {} tips", "✓".bright_green(), tips_removed.to_string().bright_white());
+            eprintln!(
+                "   {} Removed {} tips",
+                "✓".bright_green(),
+                tips_removed.to_string().bright_white()
+            );
         }
 
         self.calculate_stats();
 
-        eprintln!("{} Graph built: {} nodes, {} edges",
-                "✅".bright_green(),
-                self.nodes.len().to_string().bright_white(),
-                self.edges.len().to_string().bright_white());
+        eprintln!(
+            "{} Graph built: {} nodes, {} edges",
+            "✅".bright_green(),
+            self.nodes.len().to_string().bright_white(),
+            self.edges.len().to_string().bright_white()
+        );
 
         Ok(())
     }
@@ -794,9 +893,9 @@ impl LaptopAssemblyGraph {
     /// Process chunk for parallel graph building
     fn process_chunk_parallel(
         &self,
-        chunk: &[CorrectedRead],
+        chunk: &mut [CorrectedRead],
         k: usize,
-        frequent_kmers_sorted: &[u64]
+        frequent_kmers_sorted: &[u64],
     ) -> Result<(AHashMap<u64, GraphNode>, Vec<GraphEdge>)> {
         // OPTIMIZATION: Pre-allocate capacity (15-20% speedup)
         let estimated_nodes = chunk.len() * k;
@@ -808,69 +907,48 @@ impl LaptopAssemblyGraph {
         let frequent_set: AHashSet<u64> = frequent_kmers_sorted.iter().copied().collect();
 
         for read in chunk {
-            if read.corrected.len() < k + 1 {
+            if read.corrected.len() < k {
                 continue;
             }
 
-            let sequence = read.corrected.as_bytes();
-            let mut rolling_hash = RollingKmerHash::new(k);
+            if read.kmer_hash_cache.is_empty() {
+                read.populate_kmer_hash_cache(k);
+            }
+
             let mut prev_kmer_data: Option<(CompactKmer, u64)> = None;
-
-            // Initialize rolling hash with first k-mer
-            if sequence.len() >= k {
-                if let Ok(kmer) = CompactKmer::new(&read.corrected[0..k]) {
-                    let kmer_hash = rolling_hash.init(&sequence[0..k]);
-
-                    if frequent_set.contains(&kmer_hash) {
-                        match local_nodes.get_mut(&kmer_hash) {
-                            Some(node) => node.coverage = node.coverage.saturating_add(1),
-                            None => {
-                                local_nodes.insert(kmer_hash, GraphNode {
-                                    kmer: kmer.clone(),
-                                    coverage: 1,
-                                    in_degree: 0,
-                                    out_degree: 0,
-                                });
-                            }
-                        }
-                        prev_kmer_data = Some((kmer, kmer_hash));
-                    }
+            for (i, &kmer_hash) in read.kmer_hash_cache.iter().enumerate() {
+                if !frequent_set.contains(&kmer_hash) {
+                    prev_kmer_data = None;
+                    continue;
                 }
 
-                // Roll through remaining k-mers
-                for i in k..sequence.len() {
-                    if let Ok(kmer) = CompactKmer::new(&read.corrected[i - k + 1..i + 1]) {
-                        let kmer_hash = rolling_hash.roll(sequence[i - k], sequence[i]);
-
-                        if !frequent_set.contains(&kmer_hash) {
-                            prev_kmer_data = None;
-                            continue;
-                        }
-
-                        // Add/update node locally
-                        match local_nodes.get_mut(&kmer_hash) {
-                            Some(node) => node.coverage = node.coverage.saturating_add(1),
-                            None => {
-                                local_nodes.insert(kmer_hash, GraphNode {
+                // Add/update node locally
+                if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
+                    match local_nodes.get_mut(&kmer_hash) {
+                        Some(node) => node.coverage = node.coverage.saturating_add(1),
+                        None => {
+                            local_nodes.insert(
+                                kmer_hash,
+                                GraphNode {
                                     kmer: kmer.clone(),
                                     coverage: 1,
                                     in_degree: 0,
                                     out_degree: 0,
-                                });
-                            }
+                                },
+                            );
                         }
-
-                        // Add edge if we have previous k-mer
-                        if let Some((_, prev_hash)) = prev_kmer_data {
-                            local_edges.push(GraphEdge {
-                                from_hash: prev_hash,
-                                to_hash: kmer_hash,
-                                weight: 1,
-                            });
-                        }
-
-                        prev_kmer_data = Some((kmer, kmer_hash));
                     }
+
+                    // Add edge if we have previous k-mer
+                    if let Some((_, prev_hash)) = prev_kmer_data {
+                        local_edges.push(GraphEdge {
+                            from_hash: prev_hash,
+                            to_hash: kmer_hash,
+                            weight: 1,
+                        });
+                    }
+
+                    prev_kmer_data = Some((kmer, kmer_hash));
                 }
             }
         }
@@ -881,9 +959,9 @@ impl LaptopAssemblyGraph {
     /// Process chunk for k-mer counting phase (SIMD + rolling hash optimized)
     fn process_chunk_for_counting(
         &self,
-        chunk: &[CorrectedRead],
+        chunk: &mut [CorrectedRead],
         k: usize,
-        counter: &mut BoundedKmerCounter
+        counter: &mut BoundedKmerCounter,
     ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
@@ -901,21 +979,13 @@ impl LaptopAssemblyGraph {
 
         // Fallback: rolling hash (still fast, but no SIMD)
         for read in chunk {
-            if read.corrected.len() < k {
-                continue;
+            // Populate cache if it's empty
+            if read.kmer_hash_cache.is_empty() {
+                read.populate_kmer_hash_cache(k);
             }
 
-            let sequence = read.corrected.as_bytes();
-            let mut rolling_hash = RollingKmerHash::new(k);
-
-            if sequence.len() >= k {
-                let hash = rolling_hash.init(&sequence[0..k]);
+            for &hash in &read.kmer_hash_cache {
                 counter.add_kmer(hash);
-
-                for i in k..sequence.len() {
-                    let hash = rolling_hash.roll(sequence[i - k], sequence[i]);
-                    counter.add_kmer(hash);
-                }
             }
         }
         Ok(())
@@ -925,29 +995,22 @@ impl LaptopAssemblyGraph {
     #[cfg(target_arch = "x86_64")]
     fn process_chunk_simd(
         &self,
-        chunk: &[CorrectedRead],
+        chunk: &mut [CorrectedRead],
         k: usize,
-        counter: &mut BoundedKmerCounter
+        counter: &mut BoundedKmerCounter,
     ) -> Result<()> {
         for read in chunk {
             if read.corrected.len() < k {
                 continue;
             }
 
-            let sequence = read.corrected.as_bytes();
-
-            // Use SIMD for first k-mer hash
-            unsafe {
-                let first_hash = hash_kmer_simd(&sequence[0..k], k);
-                counter.add_kmer(first_hash);
+            // Populate cache if it's empty
+            if read.kmer_hash_cache.is_empty() {
+                read.populate_kmer_hash_cache(k);
             }
 
-            // Use rolling hash for subsequent k-mers (still faster than SIMD for each)
-            let mut rolling_hash = RollingKmerHash::new(k);
-            rolling_hash.init(&sequence[0..k]); // Initialize state
-
-            for i in k..sequence.len() {
-                let hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+            // Use the cached hashes
+            for &hash in &read.kmer_hash_cache {
                 counter.add_kmer(hash);
             }
         }
@@ -958,29 +1021,22 @@ impl LaptopAssemblyGraph {
     #[cfg(target_arch = "aarch64")]
     fn process_chunk_simd(
         &self,
-        chunk: &[CorrectedRead],
+        chunk: &mut [CorrectedRead],
         k: usize,
-        counter: &mut BoundedKmerCounter
+        counter: &mut BoundedKmerCounter,
     ) -> Result<()> {
         for read in chunk {
             if read.corrected.len() < k {
                 continue;
             }
 
-            let sequence = read.corrected.as_bytes();
-
-            // Use NEON SIMD for first k-mer hash
-            unsafe {
-                let first_hash = hash_kmer_simd(&sequence[0..k], k);
-                counter.add_kmer(first_hash);
+            // Populate cache if it's empty
+            if read.kmer_hash_cache.is_empty() {
+                read.populate_kmer_hash_cache(k);
             }
 
-            // Use rolling hash for subsequent k-mers
-            let mut rolling_hash = RollingKmerHash::new(k);
-            rolling_hash.init(&sequence[0..k]);
-
-            for i in k..sequence.len() {
-                let hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+            // Use the cached hashes
+            for &hash in &read.kmer_hash_cache {
                 counter.add_kmer(hash);
             }
         }
@@ -990,54 +1046,41 @@ impl LaptopAssemblyGraph {
     /// Process chunk for graph building phase (optimized version with rolling hash)
     fn process_chunk_for_graph_building_optimized(
         &mut self,
-        chunk: &[CorrectedRead],
+        chunk: &mut [CorrectedRead],
         k: usize,
-        frequent_kmers_sorted: &[u64]
+        frequent_kmers_sorted: &[u64],
     ) -> Result<()> {
         // Batch nodes and edges for more efficient insertion
         let mut new_nodes = Vec::new();
         let mut new_edges = Vec::new();
 
         for read in chunk {
-            if read.corrected.len() < k + 1 {
+            if read.corrected.len() < k {
                 continue;
             }
 
-            let sequence = read.corrected.as_bytes();
-            let mut rolling_hash = RollingKmerHash::new(k);
+            if read.kmer_hash_cache.is_empty() {
+                read.populate_kmer_hash_cache(k);
+            }
+
             let mut prev_kmer_data: Option<(CompactKmer, u64)> = None;
 
-            // Initialize with first k-mer
-            if sequence.len() >= k {
-                if let Ok(kmer) = CompactKmer::new(&read.corrected[0..k]) {
-                    let kmer_hash = rolling_hash.init(&sequence[0..k]);
-
-                    if frequent_kmers_sorted.binary_search(&kmer_hash).is_ok() {
-                        new_nodes.push(kmer.clone());
-                        prev_kmer_data = Some((kmer, kmer_hash));
-                    }
+            for (i, &kmer_hash) in read.kmer_hash_cache.iter().enumerate() {
+                if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
+                    prev_kmer_data = None;
+                    continue;
                 }
 
-                // Roll through remaining k-mers
-                for i in k..sequence.len() {
-                    if let Ok(kmer) = CompactKmer::new(&read.corrected[i - k + 1..i + 1]) {
-                        let kmer_hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+                if let Ok(kmer) = CompactKmer::new(&read.corrected[i..i + k]) {
+                    // Batch node for later insertion
+                    new_nodes.push(kmer.clone());
 
-                        if frequent_kmers_sorted.binary_search(&kmer_hash).is_err() {
-                            prev_kmer_data = None;
-                            continue;
-                        }
-
-                        // Batch node for later insertion
-                        new_nodes.push(kmer.clone());
-
-                        // Batch edge if we have previous k-mer
-                        if let Some((_, prev_hash)) = prev_kmer_data {
-                            new_edges.push((prev_hash, kmer_hash));
-                        }
-
-                        prev_kmer_data = Some((kmer, kmer_hash));
+                    // Batch edge if we have previous k-mer
+                    if let Some((_, prev_hash)) = prev_kmer_data {
+                        new_edges.push((prev_hash, kmer_hash));
                     }
+
+                    prev_kmer_data = Some((kmer, kmer_hash));
                 }
             }
         }
@@ -1076,8 +1119,6 @@ impl LaptopAssemblyGraph {
         }
     }
 
-
-
     /// Add edge between nodes (fast version for batch insertion)
     fn add_edge_fast(&mut self, from_hash: u64, to_hash: u64) {
         // Skip duplicate check for performance - handle duplicates later
@@ -1096,18 +1137,22 @@ impl LaptopAssemblyGraph {
         }
     }
 
-
     /// Remove duplicate edges created during batch insertion
     fn deduplicate_edges(&mut self) {
         let before_count = self.edges.len();
 
         // OPTIMIZATION: Use AHashSet for O(n) deduplication (2x speedup vs sort+dedup)
         let mut edge_set: AHashSet<(u64, u64)> = AHashSet::with_capacity(self.edges.len());
-        self.edges.retain(|e| edge_set.insert((e.from_hash, e.to_hash)));
+        self.edges
+            .retain(|e| edge_set.insert((e.from_hash, e.to_hash)));
 
         let removed = before_count - self.edges.len();
         if removed > 0 {
-            eprintln!("   {} Removed {} duplicate edges", "🧹".bright_magenta(), removed.to_string().bright_white());
+            eprintln!(
+                "   {} Removed {} duplicate edges",
+                "🧹".bright_magenta(),
+                removed.to_string().bright_white()
+            );
         }
     }
 
@@ -1128,10 +1173,12 @@ impl LaptopAssemblyGraph {
         let removed_edges = before_edges - self.edges.len();
 
         if removed_nodes > 0 {
-            eprintln!("   {} Removed {} low-coverage nodes and {} orphaned edges",
-                    "🧹".bright_magenta(),
-                    removed_nodes.to_string().bright_white(),
-                    removed_edges.to_string().bright_white());
+            eprintln!(
+                "   {} Removed {} low-coverage nodes and {} orphaned edges",
+                "🧹".bright_magenta(),
+                removed_nodes.to_string().bright_white(),
+                removed_edges.to_string().bright_white()
+            );
         }
     }
 
@@ -1194,10 +1241,12 @@ impl LaptopAssemblyGraph {
         let mut visited = AHashSet::new();
         let mut contig_id = 0;
 
-        eprintln!("{} Generating contigs from {} nodes, {} edges",
-                "🔍".bright_cyan(),
-                self.nodes.len().to_string().bright_white(),
-                self.edges.len().to_string().bright_white());
+        eprintln!(
+            "{} Generating contigs from {} nodes, {} edges",
+            "🔍".bright_cyan(),
+            self.nodes.len().to_string().bright_white(),
+            self.edges.len().to_string().bright_white()
+        );
 
         // Create progress bar for contig generation if not provided
         let pb_owned;
@@ -1220,16 +1269,28 @@ impl LaptopAssemblyGraph {
         let mut incoming: AHashMap<u64, Vec<u64>> = AHashMap::new();
 
         for edge in &self.edges {
-            outgoing.entry(edge.from_hash).or_default().push(edge.to_hash);
-            incoming.entry(edge.to_hash).or_default().push(edge.from_hash);
+            outgoing
+                .entry(edge.from_hash)
+                .or_default()
+                .push(edge.to_hash);
+            incoming
+                .entry(edge.to_hash)
+                .or_default()
+                .push(edge.from_hash);
         }
 
         // CRITICAL FIX: If no edges, this indicates severe fragmentation
         // DO NOT create single k-mer contigs - biologically meaningless
         if self.edges.is_empty() && !self.nodes.is_empty() {
-            pb.println(format!("   {} No edges found in graph - severe fragmentation detected", "⚠️".bright_red()));
+            pb.println(format!(
+                "   {} No edges found in graph - severe fragmentation detected",
+                "⚠️".bright_red()
+            ));
             pb.println("      This indicates k-mer size is too large for read length/overlap");
-            pb.println(format!("      {}: Use smaller k-mer size (try k=15-21)", "Recommendation".bright_yellow()));
+            pb.println(format!(
+                "      {}: Use smaller k-mer size (try k=15-21)",
+                "Recommendation".bright_yellow()
+            ));
             pb.finish_and_clear();
             return Ok(Vec::new());
         }
@@ -1247,7 +1308,9 @@ impl LaptopAssemblyGraph {
 
             // Start from nodes that are likely contig starts or isolated nodes
             if in_count == 0 || out_count != 1 || in_count != 1 {
-                if let Some(contig) = self.trace_contig_with_pb(node_hash, &outgoing, &mut visited, pb)? {
+                if let Some(contig) =
+                    self.trace_contig_with_pb(node_hash, &outgoing, &mut visited, pb)?
+                {
                     contigs.push(Contig {
                         id: contig_id,
                         sequence: contig.sequence,
@@ -1270,12 +1333,15 @@ impl LaptopAssemblyGraph {
         // Any unvisited nodes at this point are isolated/low-quality k-mers that didn't form paths
         let unvisited_count = self.nodes.len() - visited.len();
         if unvisited_count > 0 {
-            eprintln!("   {} Skipped {} isolated nodes (single k-mers, not valid contigs)",
-                    "ℹ️".bright_blue(), unvisited_count.to_string().bright_white());
+            eprintln!(
+                "   {} Skipped {} isolated nodes (single k-mers, not valid contigs)",
+                "ℹ️".bright_blue(),
+                unvisited_count.to_string().bright_white()
+            );
         }
 
         // MetaSPAdes-standard filtering: Apply strict quality thresholds
-        let k = if let Some(first_contig) = contigs.first() {
+        let k = if let Some(_first_contig) = contigs.first() {
             // Estimate k from first contig's sequence
             21 // Default assumption
         } else {
@@ -1305,9 +1371,9 @@ impl LaptopAssemblyGraph {
         let before_filter = contigs.len();
         contigs.retain(|c| {
             c.length >= min_length
-            && c.coverage >= min_coverage
-            && c.coverage >= min_uniform_coverage
-            && c.coverage <= max_uniform_coverage
+                && c.coverage >= min_coverage
+                && c.coverage >= min_uniform_coverage
+                && c.coverage <= max_uniform_coverage
         });
         let after_filter = contigs.len();
 
@@ -1319,23 +1385,34 @@ impl LaptopAssemblyGraph {
                     min_uniform_coverage, max_uniform_coverage);
         }
 
-        eprintln!("   {} Generated {} valid contigs (≥{}bp, ≥{:.1}x, median {:.1}x ±50%)",
-                "✨".bright_green(),
-                contigs.len().to_string().bright_white(),
-                min_length, min_coverage, median_coverage);
+        eprintln!(
+            "   {} Generated {} valid contigs (≥{}bp, ≥{:.1}x, median {:.1}x ±50%)",
+            "✨".bright_green(),
+            contigs.len().to_string().bright_white(),
+            min_length,
+            min_coverage,
+            median_coverage
+        );
 
         // Calculate and report quality metrics
         if !contigs.is_empty() {
             let total_bp: usize = contigs.iter().map(|c| c.length).sum();
             let avg_length = total_bp as f64 / contigs.len() as f64;
-            let avg_coverage: f64 = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
+            let avg_coverage: f64 =
+                contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len() as f64;
             let max_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
 
             eprintln!("   {} Assembly metrics:", "📊".bright_blue());
-            eprintln!("      - Total bases: {}", total_bp.to_string().bright_white());
+            eprintln!(
+                "      - Total bases: {}",
+                total_bp.to_string().bright_white()
+            );
             eprintln!("      - Average length: {:.1} bp", avg_length);
             eprintln!("      - Average coverage: {:.1}x", avg_coverage);
-            eprintln!("      - Longest contig: {} bp", max_length.to_string().bright_white());
+            eprintln!(
+                "      - Longest contig: {} bp",
+                max_length.to_string().bright_white()
+            );
 
             // Calculate N50
             let n50 = self.calculate_n50(&contigs);
@@ -1351,14 +1428,19 @@ impl LaptopAssemblyGraph {
         let budget = self.config.memory_budget_mb as f64;
 
         if current_usage > budget * 0.9 {
-            println!("⚠️  Emergency cleanup: {:.1}MB usage (budget: {:.1}MB)", current_usage, budget);
+            println!(
+                "⚠️  Emergency cleanup: {:.1}MB usage (budget: {:.1}MB)",
+                current_usage, budget
+            );
 
             // More aggressive node cleanup
             let before_nodes = self.nodes.len();
             self.cleanup_low_coverage_nodes(3); // Higher threshold
 
             // Remove isolated nodes (no edges)
-            let edge_nodes: AHashSet<u64> = self.edges.iter()
+            let edge_nodes: AHashSet<u64> = self
+                .edges
+                .iter()
                 .flat_map(|e| [e.from_hash, e.to_hash])
                 .collect();
 
@@ -1369,7 +1451,10 @@ impl LaptopAssemblyGraph {
                 println!("   🧹 Removed {} isolated nodes", removed_isolated);
             }
 
-            println!("   📊 Memory after cleanup: {:.1}MB", self.memory_usage_mb());
+            println!(
+                "   📊 Memory after cleanup: {:.1}MB",
+                self.memory_usage_mb()
+            );
         }
 
         Ok(())
@@ -1461,9 +1546,11 @@ impl LaptopAssemblyGraph {
         }
 
         if path.len() >= MAX_PATH_LENGTH {
-            let msg = format!("   {} Path length exceeded {}bp, possible circular reference - stopping",
-                             "⚠️".bright_yellow(),
-                             MAX_PATH_LENGTH * 21); // Approximate bp length
+            let msg = format!(
+                "   {} Path length exceeded {}bp, possible circular reference - stopping",
+                "⚠️".bright_yellow(),
+                MAX_PATH_LENGTH * 21
+            ); // Approximate bp length
             if let Some(pb) = pb_opt {
                 pb.println(msg);
             } else {
@@ -1562,7 +1649,6 @@ impl LaptopAssemblyGraph {
     pub fn stats(&self) -> &AssemblyStats {
         &self.stats
     }
-
 }
 
 /// Simple contig structure for internal use
@@ -1595,43 +1681,110 @@ impl LaptopAssembler {
         self.assemble_with_timeout(reads, Duration::from_secs(600)) // 10 minute default timeout
     }
 
+    /// Perform assembly with progress reporting integrated into a MultiProgress manager.
+    pub fn assemble_with_progress(
+        &self,
+        reads: &[CorrectedRead],
+        progress_bar: ProgressBar,
+    ) -> Result<Vec<Contig>> {
+        progress_bar.set_length(reads.len() as u64);
+        progress_bar.set_position(0);
+        progress_bar.set_message("Starting assembly...");
+
+        // Auto-select k-mer size
+        let k = self.select_optimal_k(reads)?;
+        progress_bar.set_message(format!("Selected k={}", k));
+
+        // Build graph with the provided progress bar
+        let mut graph = LaptopAssemblyGraph::new(self.config.clone());
+        graph.build_from_reads_with_timeout(
+            reads,
+            k,
+            Duration::from_secs(600),
+            Some(progress_bar.clone()),
+        )?;
+
+        // Generate contigs
+        graph.generate_contigs_internal(Some(&progress_bar))
+    }
+
     /// Perform assembly with configurable timeout
-    pub fn assemble_with_timeout(&self, reads: &[CorrectedRead], timeout: Duration) -> Result<Vec<Contig>> {
+    pub fn assemble_with_timeout(
+        &self,
+        reads: &[CorrectedRead],
+        timeout: Duration,
+    ) -> Result<Vec<Contig>> {
         let start_time = Instant::now();
 
         eprintln!("{} Starting laptop-optimized assembly", "🚀".bright_cyan());
-        eprintln!("   {} Input: {} reads", "📊".bright_blue(), reads.len().to_string().bright_white());
-        eprintln!("   {} Memory budget: {} MB", "💾".bright_blue(), self.config.memory_budget_mb.to_string().bright_white());
-        eprintln!("   {} CPU cores: {}", "⚙️".bright_blue(), self.config.cpu_cores.to_string().bright_white());
-        eprintln!("   {} Timeout: {} seconds", "⏱️".bright_blue(), timeout.as_secs().to_string().bright_white());
+        eprintln!(
+            "   {} Input: {} reads",
+            "📊".bright_blue(),
+            reads.len().to_string().bright_white()
+        );
+        eprintln!(
+            "   {} Memory budget: {} MB",
+            "💾".bright_blue(),
+            self.config.memory_budget_mb.to_string().bright_white()
+        );
+        eprintln!(
+            "   {} CPU cores: {}",
+            "⚙️".bright_blue(),
+            self.config.cpu_cores.to_string().bright_white()
+        );
+        eprintln!(
+            "   {} Timeout: {} seconds",
+            "⏱️".bright_blue(),
+            timeout.as_secs().to_string().bright_white()
+        );
 
         // Auto-select k-mer size based on read characteristics
         let k = self.select_optimal_k(reads)?;
-        eprintln!("   {} Selected k-mer size: {}", "🧬".bright_green(), k.to_string().bright_white());
+        eprintln!(
+            "   {} Selected k-mer size: {}",
+            "🧬".bright_green(),
+            k.to_string().bright_white()
+        );
 
         // Build graph with timeout
         let mut graph = LaptopAssemblyGraph::new(self.config.clone());
 
-        match graph.build_from_reads_with_timeout(reads, k, timeout) {
+        match graph.build_from_reads_with_timeout(reads, k, timeout, None) {
             Err(e) if e.to_string().contains("timeout") => {
-                eprintln!("{} Assembly timed out, attempting recovery...", "⚠️".bright_red());
+                eprintln!(
+                    "{} Assembly timed out, attempting recovery...",
+                    "⚠️".bright_red()
+                );
 
                 // Try emergency cleanup and continue with partial data
                 graph.emergency_cleanup()?;
 
                 if graph.nodes.is_empty() {
-                    return Err(anyhow!("Assembly failed: no data after timeout and cleanup"));
+                    return Err(anyhow!(
+                        "Assembly failed: no data after timeout and cleanup"
+                    ));
                 }
 
-                eprintln!("{} Continuing with partial graph: {} nodes",
-                        "🔄".bright_yellow(), graph.nodes.len().to_string().bright_white());
+                eprintln!(
+                    "{} Continuing with partial graph: {} nodes",
+                    "🔄".bright_yellow(),
+                    graph.nodes.len().to_string().bright_white()
+                );
             }
             Err(e) => return Err(e),
             Ok(()) => {}
         }
 
-        eprintln!("   {} Memory usage: {:.1} MB", "📈".bright_blue(), graph.memory_usage_mb());
-        eprintln!("   {} Build time: {:.1}s", "🕐".bright_blue(), start_time.elapsed().as_secs_f64());
+        eprintln!(
+            "   {} Memory usage: {:.1} MB",
+            "📈".bright_blue(),
+            graph.memory_usage_mb()
+        );
+        eprintln!(
+            "   {} Build time: {:.1}s",
+            "🕐".bright_blue(),
+            start_time.elapsed().as_secs_f64()
+        );
 
         // Generate contigs
         let contigs = graph.generate_contigs()?;
@@ -1671,18 +1824,32 @@ impl LaptopAssembler {
 
         eprintln!("   {} Assembly quality metrics:", "📏".bright_blue());
         eprintln!("      - Average read length: {:.1} bp", avg_read_length);
-        eprintln!("      - Average contig length: {:.1} bp ({:.1}x reads)",
-                 avg_contig_length, avg_contig_length / avg_read_length.max(1.0));
-        eprintln!("      - Longest contig: {} bp ({:.1}x reads)",
-                 max_contig_length, max_contig_length as f64 / avg_read_length.max(1.0));
-        eprintln!("      - Total assembly: {} bp", total_contig_bp.to_string().bright_white());
+        eprintln!(
+            "      - Average contig length: {:.1} bp ({:.1}x reads)",
+            avg_contig_length,
+            avg_contig_length / avg_read_length.max(1.0)
+        );
+        eprintln!(
+            "      - Longest contig: {} bp ({:.1}x reads)",
+            max_contig_length,
+            max_contig_length as f64 / avg_read_length.max(1.0)
+        );
+        eprintln!(
+            "      - Total assembly: {} bp",
+            total_contig_bp.to_string().bright_white()
+        );
 
         // Warning if contigs are suspiciously short
         if avg_contig_length < avg_read_length * 2.0 {
             eprintln!("   {} WARNING: Average contig length ({:.1}bp) is less than 2x read length ({:.1}bp)",
                      "⚠️".bright_red(), avg_contig_length, avg_read_length);
-            eprintln!("      This suggests minimal read overlap - assembly may be highly fragmented");
-            eprintln!("      {}: contigs should be 5-100x longer than reads for good assembly", "Expected".bright_yellow());
+            eprintln!(
+                "      This suggests minimal read overlap - assembly may be highly fragmented"
+            );
+            eprintln!(
+                "      {}: contigs should be 5-100x longer than reads for good assembly",
+                "Expected".bright_yellow()
+            );
             eprintln!("      Possible causes:");
             eprintln!("        - Low sequencing depth (need >10x coverage)");
             eprintln!("        - High error rate in reads (need better quality filtering)");
@@ -1701,10 +1868,12 @@ impl LaptopAssembler {
             ));
         }
 
-        eprintln!("{} Assembly complete: {} contigs in {:.1}s",
-                "✅".bright_green(),
-                contigs.len().to_string().bright_white(),
-                start_time.elapsed().as_secs_f64());
+        eprintln!(
+            "{} Assembly complete: {} contigs in {:.1}s",
+            "✅".bright_green(),
+            contigs.len().to_string().bright_white(),
+            start_time.elapsed().as_secs_f64()
+        );
 
         Ok(contigs)
     }
@@ -1747,8 +1916,10 @@ mod tests {
         let (unique, total, dropped, memory) = counter.get_stats();
         assert!(unique <= counter.max_kmers);
         assert_eq!(total, 100000);
-        println!("Stats: {} unique, {} total, {} dropped, {} bytes",
-                unique, total, dropped, memory);
+        println!(
+            "Stats: {} unique, {} total, {} dropped, {} bytes",
+            unique, total, dropped, memory
+        );
     }
 
     #[test]
@@ -1773,6 +1944,7 @@ mod tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             });
         }
 
@@ -1813,6 +1985,7 @@ mod tests {
                     confidence_threshold: 0.95,
                     context_window: 5,
                     correction_time_ms: 0,
+                    kmer_hash_cache: Vec::new(),
                 },
             },
             CorrectedRead {
@@ -1827,6 +2000,7 @@ mod tests {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
         ];
 
@@ -1837,13 +2011,21 @@ mod tests {
             Ok(contigs) => {
                 println!("Generated {} contigs", contigs.len());
                 for (i, contig) in contigs.iter().enumerate() {
-                    println!("Contig {}: len={}, cov={:.1}", i, contig.length, contig.coverage);
+                    println!(
+                        "Contig {}: len={}, cov={:.1}",
+                        i, contig.length, contig.coverage
+                    );
                 }
                 // With optimizations, we should get results quickly
-                assert!(!contigs.is_empty(), "Should generate contigs with longer reads");
+                assert!(
+                    !contigs.is_empty(),
+                    "Should generate contigs with longer reads"
+                );
             }
             Err(e) if e.to_string().contains("timeout") => {
-                println!("⚠️  Assembly timed out - this indicates the optimizations may need more work");
+                println!(
+                    "⚠️  Assembly timed out - this indicates the optimizations may need more work"
+                );
                 // Don't fail the test, but indicate performance needs improvement
             }
             Err(e) => panic!("Assembly failed: {}", e),

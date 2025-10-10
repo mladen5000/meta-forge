@@ -141,7 +141,7 @@ impl CSRAssemblyGraph {
         // Collect all edges with their source nodes
         for (i, &target) in self.edge_targets.iter().enumerate() {
             // Find source node for this edge (simplified - in practice, track during insertion)
-            for (source_idx, &source_hash) in self.node_hashes.iter().enumerate() {
+            for (source_idx, &_source_hash) in self.node_hashes.iter().enumerate() {
                 // This is inefficient - in practice, track source during edge insertion
                 edges.push((source_idx as u32, target, self.edge_weights[i]));
                 break; // For now, just add to first node

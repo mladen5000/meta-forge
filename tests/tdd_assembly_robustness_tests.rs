@@ -30,6 +30,7 @@ mod assembly_robustness_tests {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: HashMap::new(),
         }
     }
 

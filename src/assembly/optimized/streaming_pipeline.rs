@@ -10,7 +10,6 @@ use crate::assembly::optimized::{
 use crate::assembly::laptop_assembly::CompactKmer;
 use crate::core::data_structures::{CorrectedRead, Contig};
 use anyhow::{anyhow, Result};
-use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -327,7 +326,7 @@ impl StreamingAssemblyPipeline {
                 // Handle backpressure
                 self.metrics.backpressure_events.fetch_add(1, Ordering::Relaxed);
 
-                let timeout = Duration::from_millis(self.config.backpressure_timeout_ms);
+                let _timeout = Duration::from_millis(self.config.backpressure_timeout_ms);
                 // Wait for memory availability if needed
                 if self.resource_manager.memory_pressure() > 0.8 {
                     thread::sleep(Duration::from_millis(10));

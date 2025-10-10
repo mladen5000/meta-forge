@@ -6,8 +6,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 /// Core data structures for the enhanced metagenomics pipeline
-/// Implements proper k-mer handling, minimizer extraction, and graph structures
+const COMPLEMENT: [u8; 256] = {
+    let mut table = [0u8; 256];
+    table[b'A' as usize] = b'T';
+    table[b'T' as usize] = b'A';
+    table[b'G' as usize] = b'C';
+    table[b'C' as usize] = b'G';
+    table[b'N' as usize] = b'N';
+    table
+};
 
+/// Implements proper k-mer handling, minimizer extraction, and graph structures
 /// Canonical k-mer representation with efficient hashing
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CanonicalKmer {
@@ -373,8 +382,9 @@ impl GraphEdge {
 
     fn update_confidence(&mut self) {
         // Confidence based on number of supporting reads
-        self.confidence = (self.weight as f64).ln() / 10.0;
-        self.confidence = self.confidence.min(1.0).max(0.1);
+        //self.confidence = (self.weight as f64).ln() / 10.0;
+        //self.confidence = self.confidence.min(1.0).max(0.1);
+        self.confidence = 1.0 - (1.0 / (1.0 + (self.weight as f64)));
 
         // Update edge type based on weight
         self.edge_type = match self.weight {
@@ -787,6 +797,59 @@ pub struct CorrectedRead {
     pub corrections: Vec<BaseCorrection>,
     pub quality_scores: Vec<u8>,
     pub correction_metadata: CorrectionMetadata,
+    #[serde(skip)]
+    pub kmer_hash_cache: Vec<u64>,
+}
+
+impl CorrectedRead {
+    pub fn new(
+        id: usize,
+        original: String,
+        corrected: String,
+        corrections: Vec<BaseCorrection>,
+        quality_scores: Vec<u8>,
+        correction_metadata: CorrectionMetadata,
+    ) -> Self {
+        Self {
+            id,
+            original,
+            corrected,
+            corrections,
+            quality_scores,
+            correction_metadata,
+            kmer_hash_cache: Vec::new(),
+        }
+    }
+
+    /// Populates the k-mer hash cache for a given k-mer size.
+    /// This is designed to be called once per read per k-mer size to avoid re-computation.
+    pub fn populate_kmer_hash_cache(&mut self, k: usize) {
+        // Clear existing cache if k is different or if we need to re-calculate
+        if !self.kmer_hash_cache.is_empty() {
+            // A more sophisticated cache would store hashes for multiple k-sizes,
+            // but for this implementation, we'll just re-populate.
+            self.kmer_hash_cache.clear();
+        }
+
+        let sequence = self.corrected.as_bytes();
+        if sequence.len() < k {
+            return;
+        }
+
+        // Using a rolling hash for efficiency
+        use crate::assembly::laptop_assembly::RollingKmerHash;
+        let mut rolling_hash = RollingKmerHash::new(k);
+
+        // Initial k-mer
+        let hash = rolling_hash.init(&sequence[0..k]);
+        self.kmer_hash_cache.push(hash);
+
+        // Subsequent k-mers
+        for i in k..sequence.len() {
+            let hash = rolling_hash.roll(sequence[i - k], sequence[i]);
+            self.kmer_hash_cache.push(hash);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1227,6 +1290,7 @@ mod tests {
                 context_window: 3,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         };
 
         chunk.add_read(read).unwrap();

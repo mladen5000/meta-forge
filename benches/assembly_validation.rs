@@ -8,6 +8,7 @@ use meta_forge::utils::benchmark_validator::{
 };
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use std::collections::HashMap;
+use ahash::AHashMap;
 
 /// Create test dataset for benchmarking
 fn create_benchmark_dataset(name: &str, size: usize) -> Vec<CorrectedRead> {
@@ -27,6 +28,7 @@ fn create_benchmark_dataset(name: &str, size: usize) -> Vec<CorrectedRead> {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: AHashMap::new(),
             }
         })
         .collect()
