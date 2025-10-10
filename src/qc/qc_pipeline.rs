@@ -2,8 +2,6 @@
 //!
 //! Combines quality filtering, adapter trimming, and statistics
 
-use ahash::AHashMap;
-
 use super::qc_stats::FailureReason;
 use super::{
     AdapterConfig, AdapterMatch, AdapterTrimmer, QCStats, QualityFilter, QualityFilterConfig,
@@ -427,6 +425,7 @@ mod tests {
                 context_window: 0,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }
     }
 

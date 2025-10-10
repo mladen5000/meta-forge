@@ -7,7 +7,7 @@
 //! - Coverage filtering
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::collections::HashMap;
 
 /// Phase timing information

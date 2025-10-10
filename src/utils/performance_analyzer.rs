@@ -4,7 +4,7 @@
 //! Comprehensive performance analysis and bottleneck detection for metagenomic assembly.
 //! Provides real-time monitoring, resource profiling, and optimization recommendations.
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

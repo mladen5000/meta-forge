@@ -68,6 +68,15 @@ impl Preprocessor {
 
     /// Process a FASTQ file with QC pipeline
     pub fn process_fastq_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
+        self.process_fastq_file_with_kmer_cache(file_path, None)
+    }
+
+    /// Process a FASTQ file with QC pipeline and optionally pre-populate k-mer cache
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the FASTQ file
+    /// * `k_size` - Optional k-mer size to pre-populate cache. If None, cache is not populated.
+    pub fn process_fastq_file_with_kmer_cache(&self, file_path: &Path, k_size: Option<usize>) -> Result<Vec<CorrectedRead>> {
         info!("{}", "📖 Reading FASTQ file...".bright_cyan());
         let reader = fastq::Reader::from_file(file_path).context("Failed to open FASTQ file")?;
 
@@ -135,7 +144,7 @@ impl Preprocessor {
             );
         }
 
-        let corrected_reads = qc_pipeline.process_reads(&raw_reads);
+        let mut corrected_reads = qc_pipeline.process_reads(&raw_reads);
 
         // Get and display QC stats
         let qc_stats = qc_pipeline.stats();
@@ -152,11 +161,42 @@ impl Preprocessor {
             );
         }
 
+        // Pre-populate k-mer hash cache if k_size is specified
+        if let Some(k) = k_size {
+            info!("{}", format!("🧬 Pre-populating k-mer cache (k={})...", k).bright_cyan());
+            let start = std::time::Instant::now();
+
+            use rayon::prelude::*;
+            corrected_reads.par_iter_mut().for_each(|read| {
+                read.populate_kmer_hash_cache(k);
+            });
+
+            let elapsed = start.elapsed();
+            info!(
+                "{}",
+                format!(
+                    "✅ K-mer cache populated for {} reads in {:.2}s",
+                    corrected_reads.len(),
+                    elapsed.as_secs_f64()
+                )
+                .bright_green()
+            );
+        }
+
         Ok(corrected_reads)
     }
 
     /// Process a FASTA file (no QC, just load)
     pub fn process_fasta_file(&self, file_path: &Path) -> Result<Vec<CorrectedRead>> {
+        self.process_fasta_file_with_kmer_cache(file_path, None)
+    }
+
+    /// Process a FASTA file and optionally pre-populate k-mer cache
+    ///
+    /// # Arguments
+    /// * `file_path` - Path to the FASTA file
+    /// * `k_size` - Optional k-mer size to pre-populate cache. If None, cache is not populated.
+    pub fn process_fasta_file_with_kmer_cache(&self, file_path: &Path, k_size: Option<usize>) -> Result<Vec<CorrectedRead>> {
         info!("{}", "📖 Reading FASTA file...".bright_cyan());
         let reader = fasta::Reader::from_file(file_path).context("Failed to open FASTA file")?;
 
@@ -199,6 +239,28 @@ impl Preprocessor {
                 .white()
                 .bold()
         );
+
+        // Pre-populate k-mer hash cache if k_size is specified
+        if let Some(k) = k_size {
+            info!("{}", format!("🧬 Pre-populating k-mer cache (k={})...", k).bright_cyan());
+            let start = std::time::Instant::now();
+
+            use rayon::prelude::*;
+            corrected_reads.par_iter_mut().for_each(|read| {
+                read.populate_kmer_hash_cache(k);
+            });
+
+            let elapsed = start.elapsed();
+            info!(
+                "{}",
+                format!(
+                    "✅ K-mer cache populated for {} reads in {:.2}s",
+                    corrected_reads.len(),
+                    elapsed.as_secs_f64()
+                )
+                .bright_green()
+            );
+        }
 
         Ok(corrected_reads)
     }

@@ -1,6 +1,5 @@
 /// Standard bioinformatics format writers for intermediate outputs
 /// Provides FASTQ, GFA, and other standard format exports
-
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -10,12 +9,13 @@ use tracing::info;
 use crate::core::data_structures::{Contig, CorrectedRead};
 
 /// Write corrected reads to FASTQ format (standard preprocessing output)
-pub fn write_fastq<P: AsRef<Path>>(
-    reads: &[CorrectedRead],
-    output_path: P,
-) -> Result<()> {
+pub fn write_fastq<P: AsRef<Path>>(reads: &[CorrectedRead], output_path: P) -> Result<()> {
     let path = output_path.as_ref();
-    info!("🔍 write_fastq called with {} reads, writing to: {}", reads.len(), path.display());
+    info!(
+        "🔍 write_fastq called with {} reads, writing to: {}",
+        reads.len(),
+        path.display()
+    );
 
     if reads.is_empty() {
         info!("⚠️  WARNING: No reads to write!");
@@ -43,16 +43,17 @@ pub fn write_fastq<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("✅ Successfully wrote {} reads to FASTQ: {}", reads.len(), path.display());
+    info!(
+        "✅ Successfully wrote {} reads to FASTQ: {}",
+        reads.len(),
+        path.display()
+    );
     Ok(())
 }
 
 /// Write assembly graph to GFA format (Graphical Fragment Assembly)
 /// GFA is the standard format for assembly graphs used by MetaSPAdes, Bandage, etc.
-pub fn write_gfa<P: AsRef<Path>>(
-    contigs: &[Contig],
-    output_path: P,
-) -> Result<()> {
+pub fn write_gfa<P: AsRef<Path>>(contigs: &[Contig], output_path: P) -> Result<()> {
     let path = output_path.as_ref();
     let file = File::create(path)
         .with_context(|| format!("Failed to create GFA file: {}", path.display()))?;
@@ -87,7 +88,11 @@ pub fn write_gfa<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("📊 Wrote {} segments to GFA: {}", contigs.len(), path.display());
+    info!(
+        "📊 Wrote {} segments to GFA: {}",
+        contigs.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -119,7 +124,11 @@ pub fn write_contigs_fasta_detailed<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("📝 Wrote {} contigs to FASTA: {}", contigs.len(), path.display());
+    info!(
+        "📝 Wrote {} contigs to FASTA: {}",
+        contigs.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -136,21 +145,33 @@ pub fn write_assembly_stats<P: AsRef<Path>>(
 
     let num_contigs = contigs.len();
     let total_length: usize = contigs.iter().map(|c| c.length).sum();
-    let avg_length = if num_contigs > 0 { total_length / num_contigs } else { 0 };
-    let avg_coverage: f64 = contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs.max(1) as f64;
+    let avg_length = if num_contigs > 0 {
+        total_length / num_contigs
+    } else {
+        0
+    };
+    let avg_coverage: f64 =
+        contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs.max(1) as f64;
     let max_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
     let min_length = contigs.iter().map(|c| c.length).min().unwrap_or(0);
 
-    let avg_gc: f64 = contigs.iter()
+    let avg_gc: f64 = contigs
+        .iter()
         .map(|c| calculate_gc_content(&c.sequence))
-        .sum::<f64>() / num_contigs.max(1) as f64;
+        .sum::<f64>()
+        / num_contigs.max(1) as f64;
 
     writeln!(writer, "Assembly Statistics")?;
     writeln!(writer, "===================")?;
     writeln!(writer)?;
     writeln!(writer, "Contig Metrics:")?;
     writeln!(writer, "  Number of contigs: {}", num_contigs)?;
-    writeln!(writer, "  Total assembly length: {} bp ({:.2} Mb)", total_length, total_length as f64 / 1_000_000.0)?;
+    writeln!(
+        writer,
+        "  Total assembly length: {} bp ({:.2} Mb)",
+        total_length,
+        total_length as f64 / 1_000_000.0
+    )?;
     writeln!(writer, "  Average contig length: {} bp", avg_length)?;
     writeln!(writer, "  Longest contig: {} bp", max_length)?;
     writeln!(writer, "  Shortest contig: {} bp", min_length)?;
@@ -158,8 +179,19 @@ pub fn write_assembly_stats<P: AsRef<Path>>(
     writeln!(writer)?;
     writeln!(writer, "Coverage Metrics:")?;
     writeln!(writer, "  Average coverage: {:.2}x", avg_coverage)?;
-    writeln!(writer, "  Max coverage: {:.2}x", contigs.iter().map(|c| c.coverage).fold(0.0, f64::max))?;
-    writeln!(writer, "  Min coverage: {:.2}x", contigs.iter().map(|c| c.coverage).fold(f64::INFINITY, f64::min))?;
+    writeln!(
+        writer,
+        "  Max coverage: {:.2}x",
+        contigs.iter().map(|c| c.coverage).fold(0.0, f64::max)
+    )?;
+    writeln!(
+        writer,
+        "  Min coverage: {:.2}x",
+        contigs
+            .iter()
+            .map(|c| c.coverage)
+            .fold(f64::INFINITY, f64::min)
+    )?;
     writeln!(writer)?;
     writeln!(writer, "Composition:")?;
     writeln!(writer, "  Average GC content: {:.2}%", avg_gc * 100.0)?;
@@ -208,48 +240,100 @@ pub fn write_qc_report<P: AsRef<Path>>(
         0.0
     };
 
-    writeln!(writer, "╔══════════════════════════════════════════════════════════════════╗")?;
-    writeln!(writer, "║            QUALITY CONTROL REPORT - MetaForge                    ║")?;
-    writeln!(writer, "╚══════════════════════════════════════════════════════════════════╝")?;
+    writeln!(
+        writer,
+        "╔══════════════════════════════════════════════════════════════════╗"
+    )?;
+    writeln!(
+        writer,
+        "║            QUALITY CONTROL REPORT - MetaForge                    ║"
+    )?;
+    writeln!(
+        writer,
+        "╚══════════════════════════════════════════════════════════════════╝"
+    )?;
     writeln!(writer)?;
 
     // ═══ Input Statistics ═══
     writeln!(writer, "═══ INPUT STATISTICS ═══")?;
     writeln!(writer, "  Total reads:              {}", stats.reads_input)?;
-    writeln!(writer, "  Total bases:              {} bp ({:.2} Mb)",
-             stats.total_bases_before,
-             stats.total_bases_before as f64 / 1_000_000.0)?;
-    writeln!(writer, "  Average read length:      {:.1} bp", stats.mean_length_before)?;
-    writeln!(writer, "  Average quality score:    Q{:.1}", stats.mean_quality_before)?;
-    writeln!(writer, "  Q20 bases:                {:.2}%", stats.q20_percentage_before)?;
-    writeln!(writer, "  Q30 bases:                {:.2}%", stats.q30_percentage_before)?;
+    writeln!(
+        writer,
+        "  Total bases:              {} bp ({:.2} Mb)",
+        stats.total_bases_before,
+        stats.total_bases_before as f64 / 1_000_000.0
+    )?;
+    writeln!(
+        writer,
+        "  Average read length:      {:.1} bp",
+        stats.mean_length_before
+    )?;
+    writeln!(
+        writer,
+        "  Average quality score:    Q{:.1}",
+        stats.mean_quality_before
+    )?;
+    writeln!(
+        writer,
+        "  Q20 bases:                {:.2}%",
+        stats.q20_percentage_before
+    )?;
+    writeln!(
+        writer,
+        "  Q30 bases:                {:.2}%",
+        stats.q30_percentage_before
+    )?;
     writeln!(writer)?;
 
     // ═══ Filtering Results ═══
     writeln!(writer, "═══ FILTERING RESULTS ═══")?;
-    writeln!(writer, "  ✅ Reads passed:          {} ({:.2}%)", stats.reads_passed, retained_pct)?;
-    writeln!(writer, "  ❌ Reads filtered:        {} ({:.2}%)", stats.reads_failed, filtered_pct)?;
+    writeln!(
+        writer,
+        "  ✅ Reads passed:          {} ({:.2}%)",
+        stats.reads_passed, retained_pct
+    )?;
+    writeln!(
+        writer,
+        "  ❌ Reads filtered:        {} ({:.2}%)",
+        stats.reads_failed, filtered_pct
+    )?;
     writeln!(writer)?;
 
     writeln!(writer, "  Failure breakdown:")?;
-    writeln!(writer, "    • Low quality:          {} ({:.1}%)",
-             stats.reads_failed_quality,
-             (stats.reads_failed_quality as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
-    writeln!(writer, "    • Too short:            {} ({:.1}%)",
-             stats.reads_failed_length,
-             (stats.reads_failed_length as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
-    writeln!(writer, "    • Adapter issues:       {} ({:.1}%)",
-             stats.reads_failed_adapter,
-             (stats.reads_failed_adapter as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
+    writeln!(
+        writer,
+        "    • Low quality:          {} ({:.1}%)",
+        stats.reads_failed_quality,
+        (stats.reads_failed_quality as f64 / stats.reads_input.max(1) as f64) * 100.0
+    )?;
+    writeln!(
+        writer,
+        "    • Too short:            {} ({:.1}%)",
+        stats.reads_failed_length,
+        (stats.reads_failed_length as f64 / stats.reads_input.max(1) as f64) * 100.0
+    )?;
+    writeln!(
+        writer,
+        "    • Adapter issues:       {} ({:.1}%)",
+        stats.reads_failed_adapter,
+        (stats.reads_failed_adapter as f64 / stats.reads_input.max(1) as f64) * 100.0
+    )?;
     writeln!(writer)?;
 
     // ═══ Adapter Detection ═══
     if stats.adapters_detected > 0 {
         writeln!(writer, "═══ ADAPTER DETECTION & TRIMMING ═══")?;
-        writeln!(writer, "  Adapters detected:        {} ({:.1}% of input reads)",
-                 stats.adapters_detected,
-                 (stats.adapters_detected as f64 / stats.reads_input.max(1) as f64) * 100.0)?;
-        writeln!(writer, "  Bases trimmed (adapter):  {} bp", stats.bases_trimmed_adapter)?;
+        writeln!(
+            writer,
+            "  Adapters detected:        {} ({:.1}% of input reads)",
+            stats.adapters_detected,
+            (stats.adapters_detected as f64 / stats.reads_input.max(1) as f64) * 100.0
+        )?;
+        writeln!(
+            writer,
+            "  Bases trimmed (adapter):  {} bp",
+            stats.bases_trimmed_adapter
+        )?;
         writeln!(writer)?;
 
         if !stats.adapter_types.is_empty() {
@@ -262,10 +346,13 @@ pub fn write_qc_report<P: AsRef<Path>>(
                 } else {
                     adapter.clone()
                 };
-                writeln!(writer, "    • {}: {} occurrences ({:.1}%)",
-                         adapter_name,
-                         count,
-                         (*count as f64 / stats.adapters_detected.max(1) as f64) * 100.0)?;
+                writeln!(
+                    writer,
+                    "    • {}: {} occurrences ({:.1}%)",
+                    adapter_name,
+                    count,
+                    (*count as f64 / stats.adapters_detected.max(1) as f64) * 100.0
+                )?;
             }
             writeln!(writer)?;
         }
@@ -273,23 +360,52 @@ pub fn write_qc_report<P: AsRef<Path>>(
 
     // ═══ Quality Trimming ═══
     writeln!(writer, "═══ QUALITY TRIMMING ═══")?;
-    writeln!(writer, "  Bases trimmed (quality):  {} bp", stats.bases_trimmed_quality)?;
-    writeln!(writer, "  Total bases trimmed:      {} bp",
-             stats.bases_trimmed_quality + stats.bases_trimmed_adapter)?;
-    writeln!(writer, "  Bases retained:           {} bp ({:.2}%)",
-             stats.total_bases_after, bases_retained_pct)?;
+    writeln!(
+        writer,
+        "  Bases trimmed (quality):  {} bp",
+        stats.bases_trimmed_quality
+    )?;
+    writeln!(
+        writer,
+        "  Total bases trimmed:      {} bp",
+        stats.bases_trimmed_quality + stats.bases_trimmed_adapter
+    )?;
+    writeln!(
+        writer,
+        "  Bases retained:           {} bp ({:.2}%)",
+        stats.total_bases_after, bases_retained_pct
+    )?;
     writeln!(writer)?;
 
     // ═══ Output Statistics ═══
     writeln!(writer, "═══ OUTPUT STATISTICS ═══")?;
     writeln!(writer, "  Total reads:              {}", stats.reads_passed)?;
-    writeln!(writer, "  Total bases:              {} bp ({:.2} Mb)",
-             stats.total_bases_after,
-             stats.total_bases_after as f64 / 1_000_000.0)?;
-    writeln!(writer, "  Average read length:      {:.1} bp", stats.mean_length_after)?;
-    writeln!(writer, "  Average quality score:    Q{:.1}", stats.mean_quality_after)?;
-    writeln!(writer, "  Q20 bases:                {:.2}%", stats.q20_percentage_after)?;
-    writeln!(writer, "  Q30 bases:                {:.2}%", stats.q30_percentage_after)?;
+    writeln!(
+        writer,
+        "  Total bases:              {} bp ({:.2} Mb)",
+        stats.total_bases_after,
+        stats.total_bases_after as f64 / 1_000_000.0
+    )?;
+    writeln!(
+        writer,
+        "  Average read length:      {:.1} bp",
+        stats.mean_length_after
+    )?;
+    writeln!(
+        writer,
+        "  Average quality score:    Q{:.1}",
+        stats.mean_quality_after
+    )?;
+    writeln!(
+        writer,
+        "  Q20 bases:                {:.2}%",
+        stats.q20_percentage_after
+    )?;
+    writeln!(
+        writer,
+        "  Q30 bases:                {:.2}%",
+        stats.q30_percentage_after
+    )?;
     writeln!(writer)?;
 
     // ═══ Quality Improvement ═══
@@ -299,24 +415,54 @@ pub fn write_qc_report<P: AsRef<Path>>(
     let q30_improvement = stats.q30_percentage_after - stats.q30_percentage_before;
 
     writeln!(writer, "═══ QUALITY IMPROVEMENT ═══")?;
-    writeln!(writer, "  Quality score change:     {:+.1} (Q{:.1} → Q{:.1})",
-             quality_improvement, stats.mean_quality_before, stats.mean_quality_after)?;
-    writeln!(writer, "  Read length change:       {:+.1} bp ({:.1} → {:.1})",
-             length_change, stats.mean_length_before, stats.mean_length_after)?;
-    writeln!(writer, "  Q20 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
-             q20_improvement, stats.q20_percentage_before, stats.q20_percentage_after)?;
-    writeln!(writer, "  Q30 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
-             q30_improvement, stats.q30_percentage_before, stats.q30_percentage_after)?;
+    writeln!(
+        writer,
+        "  Quality score change:     {:+.1} (Q{:.1} → Q{:.1})",
+        quality_improvement, stats.mean_quality_before, stats.mean_quality_after
+    )?;
+    writeln!(
+        writer,
+        "  Read length change:       {:+.1} bp ({:.1} → {:.1})",
+        length_change, stats.mean_length_before, stats.mean_length_after
+    )?;
+    writeln!(
+        writer,
+        "  Q20 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
+        q20_improvement, stats.q20_percentage_before, stats.q20_percentage_after
+    )?;
+    writeln!(
+        writer,
+        "  Q30 improvement:          {:+.2}% ({:.2}% → {:.2}%)",
+        q30_improvement, stats.q30_percentage_before, stats.q30_percentage_after
+    )?;
     writeln!(writer)?;
 
     // ═══ Summary ═══
     writeln!(writer, "═══ SUMMARY ═══")?;
-    let quality_status = if quality_improvement > 0.0 { "✅ IMPROVED" } else { "⚠️  UNCHANGED" };
-    let retention_status = if retained_pct >= 80.0 { "✅ GOOD" } else if retained_pct >= 60.0 { "⚠️  MODERATE" } else { "❌ LOW" };
+    let quality_status = if quality_improvement > 0.0 {
+        "✅ IMPROVED"
+    } else {
+        "⚠️  UNCHANGED"
+    };
+    let retention_status = if retained_pct >= 80.0 {
+        "✅ GOOD"
+    } else if retained_pct >= 60.0 {
+        "⚠️  MODERATE"
+    } else {
+        "❌ LOW"
+    };
 
     writeln!(writer, "  Overall quality:          {}", quality_status)?;
-    writeln!(writer, "  Read retention:           {} ({:.1}%)", retention_status, retained_pct)?;
-    writeln!(writer, "  Data retained:            {:.1}% of input bases", bases_retained_pct)?;
+    writeln!(
+        writer,
+        "  Read retention:           {} ({:.1}%)",
+        retention_status, retained_pct
+    )?;
+    writeln!(
+        writer,
+        "  Data retained:            {:.1}% of input bases",
+        bases_retained_pct
+    )?;
 
     if stats.mean_quality_after >= 30.0 {
         writeln!(writer, "  📊 Output quality:        Excellent (Q30+)")?;
@@ -327,9 +473,18 @@ pub fn write_qc_report<P: AsRef<Path>>(
     }
 
     writeln!(writer)?;
-    writeln!(writer, "╔══════════════════════════════════════════════════════════════════╗")?;
-    writeln!(writer, "║  Report generated by MetaForge Quality Control Pipeline          ║")?;
-    writeln!(writer, "╚══════════════════════════════════════════════════════════════════╝")?;
+    writeln!(
+        writer,
+        "╔══════════════════════════════════════════════════════════════════╗"
+    )?;
+    writeln!(
+        writer,
+        "║  Report generated by MetaForge Quality Control Pipeline          ║"
+    )?;
+    writeln!(
+        writer,
+        "╚══════════════════════════════════════════════════════════════════╝"
+    )?;
 
     writer.flush()?;
     info!("✅ Wrote comprehensive QC report: {}", path.display());
@@ -338,7 +493,8 @@ pub fn write_qc_report<P: AsRef<Path>>(
 
 /// Calculate GC content of a sequence
 fn calculate_gc_content(sequence: &str) -> f64 {
-    let gc_count = sequence.chars()
+    let gc_count = sequence
+        .chars()
         .filter(|&c| c == 'G' || c == 'C' || c == 'g' || c == 'c')
         .count();
     let total = sequence.len();
@@ -353,7 +509,7 @@ fn calculate_gc_content(sequence: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::data_structures::{CorrectionMetadata, BaseCorrection};
+    use crate::core::data_structures::{BaseCorrection, CorrectionMetadata};
     use crate::pipeline::complete_integration::TaxonomicClassification;
 
     #[test]
@@ -366,21 +522,20 @@ mod tests {
 
     #[test]
     fn test_fastq_write() {
-        let reads = vec![
-            CorrectedRead {
-                id: 0,
-                original: "ATCG".to_string(),
-                corrected: "ATCG".to_string(),
-                corrections: Vec::new(),
-                quality_scores: vec![40, 40, 40, 40],
-                correction_metadata: CorrectionMetadata {
-                    algorithm: "test".to_string(),
-                    confidence_threshold: 0.9,
-                    context_window: 5,
-                    correction_time_ms: 0,
-                },
-            }
-        ];
+        let reads = vec![CorrectedRead {
+            id: 0,
+            original: "ATCG".to_string(),
+            corrected: "ATCG".to_string(),
+            corrections: Vec::new(),
+            quality_scores: vec![40, 40, 40, 40],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.9,
+                context_window: 5,
+                correction_time_ms: 0,
+            },
+            kmer_hash_cache: Vec::new(),
+        }];
 
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("test.fastq");
@@ -498,7 +653,11 @@ pub fn write_features_tsv<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("📊 Wrote {} feature vectors to TSV: {}", features.len(), path.display());
+    info!(
+        "📊 Wrote {} feature vectors to TSV: {}",
+        features.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -542,15 +701,26 @@ pub fn write_class_tsv<P: AsRef<Path>>(
     let mut writer = BufWriter::new(file);
 
     // Header
-    writeln!(writer, "contig_id\ttaxonomy_id\ttaxonomy_name\tconfidence\tlineage")?;
+    writeln!(
+        writer,
+        "contig_id\ttaxonomy_id\ttaxonomy_name\tconfidence\tlineage"
+    )?;
 
     // Data rows
     for (contig_id, tax_id, tax_name, confidence, lineage) in classifications {
-        writeln!(writer, "{}\t{}\t{}\t{:.4}\t{}", contig_id, tax_id, tax_name, confidence, lineage)?;
+        writeln!(
+            writer,
+            "{}\t{}\t{}\t{:.4}\t{}",
+            contig_id, tax_id, tax_name, confidence, lineage
+        )?;
     }
 
     writer.flush()?;
-    info!("🏷️  Wrote {} classifications to TSV: {}", classifications.len(), path.display());
+    info!(
+        "🏷️  Wrote {} classifications to TSV: {}",
+        classifications.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -597,14 +767,25 @@ pub fn write_abund_tsv<P: AsRef<Path>>(
         .with_context(|| format!("Failed to create abundance TSV: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
-    writeln!(writer, "taxon_name\trelative_abundance(%)\taverage_coverage\tnum_contigs")?;
+    writeln!(
+        writer,
+        "taxon_name\trelative_abundance(%)\taverage_coverage\tnum_contigs"
+    )?;
 
     for (taxon, rel_abund, avg_cov, num_contigs) in abundances {
-        writeln!(writer, "{}\t{:.4}\t{:.2}\t{}", taxon, rel_abund, avg_cov, num_contigs)?;
+        writeln!(
+            writer,
+            "{}\t{:.4}\t{:.2}\t{}",
+            taxon, rel_abund, avg_cov, num_contigs
+        )?;
     }
 
     writer.flush()?;
-    info!("📈 Wrote {} abundance entries to TSV: {}", abundances.len(), path.display());
+    info!(
+        "📈 Wrote {} abundance entries to TSV: {}",
+        abundances.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -671,7 +852,11 @@ pub fn write_classification_tsv<P: AsRef<Path>>(
     output_path: P,
 ) -> Result<()> {
     let path = output_path.as_ref();
-    info!("📊 Writing {} classifications to TSV: {}", classifications.len(), path.display());
+    info!(
+        "📊 Writing {} classifications to TSV: {}",
+        classifications.len(),
+        path.display()
+    );
 
     if classifications.is_empty() {
         info!("⚠️  WARNING: No classifications to write!");
@@ -683,7 +868,10 @@ pub fn write_classification_tsv<P: AsRef<Path>>(
     let mut writer = BufWriter::new(file);
 
     // TSV Header
-    writeln!(writer, "contig_id\tbin_id\ttaxonomy_name\tconfidence\tlineage\tmethod")?;
+    writeln!(
+        writer,
+        "contig_id\tbin_id\ttaxonomy_name\tconfidence\tlineage\tmethod"
+    )?;
 
     // Write each classification
     for classification in classifications {
@@ -700,7 +888,11 @@ pub fn write_classification_tsv<P: AsRef<Path>>(
     }
 
     writer.flush()?;
-    info!("✅ Successfully wrote {} classifications to: {}", classifications.len(), path.display());
+    info!(
+        "✅ Successfully wrote {} classifications to: {}",
+        classifications.len(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -768,8 +960,16 @@ pub fn write_md_report<P: AsRef<Path>>(
     writeln!(writer, "## Sample Information")?;
     writeln!(writer)?;
     writeln!(writer, "- **Sample Name**: {}", sample_name)?;
-    writeln!(writer, "- **Analysis Date**: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))?;
-    writeln!(writer, "- **Processing Time**: {:.1} seconds", processing_time_sec)?;
+    writeln!(
+        writer,
+        "- **Analysis Date**: {}",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    )?;
+    writeln!(
+        writer,
+        "- **Processing Time**: {:.1} seconds",
+        processing_time_sec
+    )?;
     writeln!(writer)?;
     writeln!(writer, "## Input Data")?;
     writeln!(writer)?;
@@ -787,7 +987,10 @@ pub fn write_md_report<P: AsRef<Path>>(
     writeln!(writer)?;
     writeln!(writer, "## Output Files")?;
     writeln!(writer)?;
-    writeln!(writer, "Use `ktImportText abundance/krona_input.txt -o krona_chart.html` for visualization.")?;
+    writeln!(
+        writer,
+        "Use `ktImportText abundance/krona_input.txt -o krona_chart.html` for visualization."
+    )?;
 
     writer.flush()?;
     info!("📄 Wrote Markdown report: {}", path.display());
@@ -811,12 +1014,28 @@ pub fn write_html_report<P: AsRef<Path>>(
         .with_context(|| format!("Failed to create HTML report: {}", path.display()))?;
     let mut writer = BufWriter::new(file);
 
-    writeln!(writer, "<!DOCTYPE html><html><head><title>{}</title>", sample_name)?;
+    writeln!(
+        writer,
+        "<!DOCTYPE html><html><head><title>{}</title>",
+        sample_name
+    )?;
     writeln!(writer, "<style>body{{font-family:Arial;margin:40px;background:#f5f5f5}}.container{{max-width:1200px;margin:0 auto;background:white;padding:30px;border-radius:8px}}</style></head><body><div class=\"container\">")?;
     writeln!(writer, "<h1>Metagenomics Analysis Report</h1>")?;
-    writeln!(writer, "<p>Sample: {} | Reads: {} | Contigs: {} | N50: {} bp</p>", sample_name, num_reads, num_contigs, assembly_n50)?;
-    writeln!(writer, "<p>Taxa: {} | Dominant: {} ({:.1}%)</p>", num_taxa, dominant_taxon, dominant_abundance)?;
-    writeln!(writer, "<p>Processing Time: {:.1}s</p>", processing_time_sec)?;
+    writeln!(
+        writer,
+        "<p>Sample: {} | Reads: {} | Contigs: {} | N50: {} bp</p>",
+        sample_name, num_reads, num_contigs, assembly_n50
+    )?;
+    writeln!(
+        writer,
+        "<p>Taxa: {} | Dominant: {} ({:.1}%)</p>",
+        num_taxa, dominant_taxon, dominant_abundance
+    )?;
+    writeln!(
+        writer,
+        "<p>Processing Time: {:.1}s</p>",
+        processing_time_sec
+    )?;
     writeln!(writer, "</div></body></html>")?;
 
     writer.flush()?;

@@ -87,6 +87,7 @@ mod tests {
                 context_window: 0,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         }
     }
 

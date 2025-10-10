@@ -4,12 +4,12 @@
 //! Comprehensive validation framework for ensuring optimizations maintain or improve
 //! assembly accuracy while delivering performance improvements.
 
-use anyhow::{Result, anyhow};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use crate::core::data_structures::{CorrectedRead, Contig};
 use crate::assembly::LaptopAssembler;
+use crate::core::data_structures::{Contig, CorrectedRead};
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Instant;
 
 /// Benchmark configuration for validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,27 +173,43 @@ impl BenchmarkValidator {
 
     /// Add a benchmark configuration
     pub fn add_benchmark(&mut self, benchmark: BenchmarkConfig) {
-        self.benchmarks.insert(benchmark.dataset_name.clone(), benchmark);
+        self.benchmarks
+            .insert(benchmark.dataset_name.clone(), benchmark);
     }
 
     /// Register baseline results for comparison
     pub fn set_baseline(&mut self, dataset_name: &str, baseline: BenchmarkResult) {
-        self.baseline_results.insert(dataset_name.to_string(), baseline);
+        self.baseline_results
+            .insert(dataset_name.to_string(), baseline);
     }
 
     /// Run validation benchmark on a dataset
-    pub fn run_benchmark(&self, dataset_name: &str, reads: &[CorrectedRead]) -> Result<BenchmarkResult> {
-        let config = self.benchmarks.get(dataset_name)
+    pub fn run_benchmark(
+        &self,
+        dataset_name: &str,
+        reads: &[CorrectedRead],
+    ) -> Result<BenchmarkResult> {
+        let config = self
+            .benchmarks
+            .get(dataset_name)
             .ok_or_else(|| anyhow!("Benchmark config not found: {}", dataset_name))?;
 
         println!("🚀 Running benchmark: {}", dataset_name);
-        println!("   📊 {} reads, {} iterations", reads.len(), config.validation_options.iterations);
+        println!(
+            "   📊 {} reads, {} iterations",
+            reads.len(),
+            config.validation_options.iterations
+        );
 
         let mut execution_results = Vec::new();
 
         // Run multiple iterations for statistical significance
         for iteration in 0..config.validation_options.iterations {
-            println!("   🔄 Iteration {}/{}", iteration + 1, config.validation_options.iterations);
+            println!(
+                "   🔄 Iteration {}/{}",
+                iteration + 1,
+                config.validation_options.iterations
+            );
 
             let execution_result = self.run_single_iteration(config, reads, iteration)?;
             execution_results.push(execution_result);
@@ -222,7 +238,11 @@ impl BenchmarkValidator {
         };
 
         // Determine overall pass status
-        let pass_status = self.determine_pass_status(&quality_validation, &performance_validation, &optimization_impact);
+        let pass_status = self.determine_pass_status(
+            &quality_validation,
+            &performance_validation,
+            &optimization_impact,
+        );
 
         let result = BenchmarkResult {
             config: config.clone(),
@@ -240,7 +260,10 @@ impl BenchmarkValidator {
     }
 
     /// Run validation across all configured benchmarks
-    pub fn run_all_benchmarks(&self, datasets: &HashMap<String, Vec<CorrectedRead>>) -> Result<HashMap<String, BenchmarkResult>> {
+    pub fn run_all_benchmarks(
+        &self,
+        datasets: &HashMap<String, Vec<CorrectedRead>>,
+    ) -> Result<HashMap<String, BenchmarkResult>> {
         let mut results = HashMap::new();
 
         for dataset_name in self.benchmarks.keys() {
@@ -260,7 +283,12 @@ impl BenchmarkValidator {
 
     // Private implementation methods
 
-    fn run_single_iteration(&self, config: &BenchmarkConfig, reads: &[CorrectedRead], iteration: usize) -> Result<ExecutionResult> {
+    fn run_single_iteration(
+        &self,
+        config: &BenchmarkConfig,
+        reads: &[CorrectedRead],
+        iteration: usize,
+    ) -> Result<ExecutionResult> {
         let start_time = Instant::now();
 
         // Simulate memory monitoring (in real implementation, use system APIs)
@@ -300,7 +328,8 @@ impl BenchmarkValidator {
         let n90 = self.calculate_nx(&sorted_lengths, 0.9);
 
         let largest_contig = sorted_lengths.first().copied().unwrap_or(0);
-        let avg_coverage = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len().max(1) as f64;
+        let avg_coverage =
+            contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len().max(1) as f64;
 
         // Calculate GC content
         let gc_content = self.calculate_gc_content(contigs);
@@ -339,7 +368,7 @@ impl BenchmarkValidator {
             for base in contig.sequence.chars() {
                 match base.to_ascii_uppercase() {
                     'G' | 'C' => total_gc += 1,
-                    'A' | 'T' => {},
+                    'A' | 'T' => {}
                     _ => continue,
                 }
                 total_bases += 1;
@@ -353,7 +382,11 @@ impl BenchmarkValidator {
         }
     }
 
-    fn calculate_quality_metrics(&self, contigs: &[Contig], reads: &[CorrectedRead]) -> Result<QualityMetrics> {
+    fn calculate_quality_metrics(
+        &self,
+        contigs: &[Contig],
+        reads: &[CorrectedRead],
+    ) -> Result<QualityMetrics> {
         // Simplified quality metrics calculation
         // In a real implementation, this would involve more sophisticated analysis
 
@@ -385,7 +418,8 @@ impl BenchmarkValidator {
 
     fn estimate_sequence_accuracy(&self, contigs: &[Contig]) -> f64 {
         // Simplified estimate based on coverage and contig length distribution
-        let avg_coverage = contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len().max(1) as f64;
+        let avg_coverage =
+            contigs.iter().map(|c| c.coverage).sum::<f64>() / contigs.len().max(1) as f64;
         let length_consistency = self.calculate_length_consistency(contigs);
 
         ((avg_coverage / 10.0).min(1.0) * 50.0 + length_consistency * 50.0).min(100.0)
@@ -437,9 +471,8 @@ impl BenchmarkValidator {
 
         let lengths: Vec<f64> = contigs.iter().map(|c| c.length as f64).collect();
         let mean = lengths.iter().sum::<f64>() / lengths.len() as f64;
-        let variance = lengths.iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum::<f64>() / lengths.len() as f64;
+        let variance =
+            lengths.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / lengths.len() as f64;
 
         let coefficient_of_variation = if mean > 0.0 {
             variance.sqrt() / mean
@@ -458,8 +491,12 @@ impl BenchmarkValidator {
 
         let execution_times: Vec<f64> = results.iter().map(|r| r.execution_time_secs).collect();
         let memory_usages: Vec<f64> = results.iter().map(|r| r.peak_memory_mb).collect();
-        let quality_scores: Vec<f64> = results.iter()
-            .map(|r| (r.quality_metrics.assembly_completeness + r.quality_metrics.sequence_accuracy) / 2.0)
+        let quality_scores: Vec<f64> = results
+            .iter()
+            .map(|r| {
+                (r.quality_metrics.assembly_completeness + r.quality_metrics.sequence_accuracy)
+                    / 2.0
+            })
             .collect();
 
         let avg_execution_time = execution_times.iter().sum::<f64>() / execution_times.len() as f64;
@@ -487,9 +524,8 @@ impl BenchmarkValidator {
             return 0.0;
         }
 
-        let variance = values.iter()
-            .map(|&x| (x - mean).powi(2))
-            .sum::<f64>() / (values.len() - 1) as f64;
+        let variance =
+            values.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
 
         variance.sqrt()
     }
@@ -498,7 +534,11 @@ impl BenchmarkValidator {
         let time_cv = if times.len() > 1 {
             let mean = times.iter().sum::<f64>() / times.len() as f64;
             let std = self.calculate_std_dev(times, mean);
-            if mean > 0.0 { std / mean } else { 0.0 }
+            if mean > 0.0 {
+                std / mean
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -506,7 +546,11 @@ impl BenchmarkValidator {
         let quality_cv = if qualities.len() > 1 {
             let mean = qualities.iter().sum::<f64>() / qualities.len() as f64;
             let std = self.calculate_std_dev(qualities, mean);
-            if mean > 0.0 { std / mean } else { 0.0 }
+            if mean > 0.0 {
+                std / mean
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -516,7 +560,11 @@ impl BenchmarkValidator {
         consistency.max(0.0)
     }
 
-    fn validate_quality(&self, config: &BenchmarkConfig, metrics: &AggregateMetrics) -> Result<QualityValidation> {
+    fn validate_quality(
+        &self,
+        config: &BenchmarkConfig,
+        metrics: &AggregateMetrics,
+    ) -> Result<QualityValidation> {
         // For simplified validation, we'll use estimated values
         // In a real implementation, these would come from detailed assembly analysis
 
@@ -530,7 +578,9 @@ impl BenchmarkValidator {
             expected_value: config.quality_thresholds.min_n50 as f64,
             actual_value: estimated_n50 as f64,
             passed: estimated_n50 >= config.quality_thresholds.min_n50,
-            margin: ((estimated_n50 as f64 - config.quality_thresholds.min_n50 as f64) / config.quality_thresholds.min_n50 as f64 * 100.0),
+            margin: ((estimated_n50 as f64 - config.quality_thresholds.min_n50 as f64)
+                / config.quality_thresholds.min_n50 as f64
+                * 100.0),
         };
 
         let length_validation = ValidationResult {
@@ -538,7 +588,9 @@ impl BenchmarkValidator {
             expected_value: config.quality_thresholds.min_total_length as f64,
             actual_value: estimated_length as f64,
             passed: estimated_length >= config.quality_thresholds.min_total_length,
-            margin: ((estimated_length as f64 - config.quality_thresholds.min_total_length as f64) / config.quality_thresholds.min_total_length as f64 * 100.0),
+            margin: ((estimated_length as f64 - config.quality_thresholds.min_total_length as f64)
+                / config.quality_thresholds.min_total_length as f64
+                * 100.0),
         };
 
         let coverage_validation = ValidationResult {
@@ -546,7 +598,9 @@ impl BenchmarkValidator {
             expected_value: config.quality_thresholds.min_avg_coverage,
             actual_value: estimated_coverage,
             passed: estimated_coverage >= config.quality_thresholds.min_avg_coverage,
-            margin: ((estimated_coverage - config.quality_thresholds.min_avg_coverage) / config.quality_thresholds.min_avg_coverage * 100.0),
+            margin: ((estimated_coverage - config.quality_thresholds.min_avg_coverage)
+                / config.quality_thresholds.min_avg_coverage
+                * 100.0),
         };
 
         let accuracy_validation = ValidationResult {
@@ -557,10 +611,10 @@ impl BenchmarkValidator {
             margin: ((estimated_accuracy - 80.0) / 80.0 * 100.0),
         };
 
-        let overall_quality_passed = n50_validation.passed &&
-                                    length_validation.passed &&
-                                    coverage_validation.passed &&
-                                    accuracy_validation.passed;
+        let overall_quality_passed = n50_validation.passed
+            && length_validation.passed
+            && coverage_validation.passed
+            && accuracy_validation.passed;
 
         Ok(QualityValidation {
             n50_validation,
@@ -571,34 +625,48 @@ impl BenchmarkValidator {
         })
     }
 
-    fn validate_performance(&self, config: &BenchmarkConfig, metrics: &AggregateMetrics) -> Result<PerformanceValidation> {
+    fn validate_performance(
+        &self,
+        config: &BenchmarkConfig,
+        metrics: &AggregateMetrics,
+    ) -> Result<PerformanceValidation> {
         let time_validation = ValidationResult {
             metric_name: "Execution Time".to_string(),
             expected_value: config.performance_requirements.max_execution_time_secs as f64,
             actual_value: metrics.avg_execution_time,
-            passed: metrics.avg_execution_time <= config.performance_requirements.max_execution_time_secs as f64,
-            margin: ((config.performance_requirements.max_execution_time_secs as f64 - metrics.avg_execution_time) / config.performance_requirements.max_execution_time_secs as f64 * 100.0),
+            passed: metrics.avg_execution_time
+                <= config.performance_requirements.max_execution_time_secs as f64,
+            margin: ((config.performance_requirements.max_execution_time_secs as f64
+                - metrics.avg_execution_time)
+                / config.performance_requirements.max_execution_time_secs as f64
+                * 100.0),
         };
 
         let memory_validation = ValidationResult {
             metric_name: "Memory Usage".to_string(),
             expected_value: config.performance_requirements.max_memory_usage_mb as f64,
             actual_value: metrics.avg_memory_usage,
-            passed: metrics.avg_memory_usage <= config.performance_requirements.max_memory_usage_mb as f64,
-            margin: ((config.performance_requirements.max_memory_usage_mb as f64 - metrics.avg_memory_usage) / config.performance_requirements.max_memory_usage_mb as f64 * 100.0),
+            passed: metrics.avg_memory_usage
+                <= config.performance_requirements.max_memory_usage_mb as f64,
+            margin: ((config.performance_requirements.max_memory_usage_mb as f64
+                - metrics.avg_memory_usage)
+                / config.performance_requirements.max_memory_usage_mb as f64
+                * 100.0),
         };
 
         let speedup_validation = ValidationResult {
             metric_name: "Speedup Factor".to_string(),
             expected_value: config.performance_requirements.min_speedup_factor,
             actual_value: 1.0, // Would be calculated against baseline
-            passed: true, // Simplified for now
+            passed: true,      // Simplified for now
             margin: 0.0,
         };
 
-        let efficiency_score = (time_validation.margin.max(0.0) + memory_validation.margin.max(0.0)) / 2.0;
+        let efficiency_score =
+            (time_validation.margin.max(0.0) + memory_validation.margin.max(0.0)) / 2.0;
 
-        let overall_performance_passed = time_validation.passed && memory_validation.passed && speedup_validation.passed;
+        let overall_performance_passed =
+            time_validation.passed && memory_validation.passed && speedup_validation.passed;
 
         Ok(PerformanceValidation {
             time_validation,
@@ -609,7 +677,11 @@ impl BenchmarkValidator {
         })
     }
 
-    fn calculate_optimization_impact(&self, current: &AggregateMetrics, baseline: &AggregateMetrics) -> Result<OptimizationImpact> {
+    fn calculate_optimization_impact(
+        &self,
+        current: &AggregateMetrics,
+        baseline: &AggregateMetrics,
+    ) -> Result<OptimizationImpact> {
         let speedup_factor = if current.avg_execution_time > 0.0 {
             baseline.avg_execution_time / current.avg_execution_time
         } else {
@@ -617,20 +689,23 @@ impl BenchmarkValidator {
         };
 
         let memory_reduction_percent = if baseline.avg_memory_usage > 0.0 {
-            ((baseline.avg_memory_usage - current.avg_memory_usage) / baseline.avg_memory_usage * 100.0).max(-100.0)
+            ((baseline.avg_memory_usage - current.avg_memory_usage) / baseline.avg_memory_usage
+                * 100.0)
+                .max(-100.0)
         } else {
             0.0
         };
 
         let quality_change_percent = if baseline.avg_quality_score > 0.0 {
-            ((current.avg_quality_score - baseline.avg_quality_score) / baseline.avg_quality_score * 100.0)
+            (current.avg_quality_score - baseline.avg_quality_score) / baseline.avg_quality_score
+                * 100.0
         } else {
             0.0
         };
 
-        let overall_improvement_score = (speedup_factor - 1.0) * 50.0 +
-                                       memory_reduction_percent * 0.3 +
-                                       quality_change_percent * 0.2;
+        let overall_improvement_score = (speedup_factor - 1.0) * 50.0
+            + memory_reduction_percent * 0.3
+            + quality_change_percent * 0.2;
 
         let regression_detected = speedup_factor < 0.95 || quality_change_percent < -5.0;
 
@@ -643,7 +718,12 @@ impl BenchmarkValidator {
         })
     }
 
-    fn determine_pass_status(&self, quality: &QualityValidation, performance: &PerformanceValidation, optimization: &OptimizationImpact) -> ValidationStatus {
+    fn determine_pass_status(
+        &self,
+        quality: &QualityValidation,
+        performance: &PerformanceValidation,
+        optimization: &OptimizationImpact,
+    ) -> ValidationStatus {
         if optimization.regression_detected {
             return ValidationStatus::Failed;
         }
@@ -673,28 +753,49 @@ impl BenchmarkValidator {
         println!("\n📊 Benchmark Results Summary");
         println!("   Dataset: {}", result.config.dataset_name);
         println!("   Status: {:?}", result.pass_status);
-        println!("   Quality Passed: {}", result.quality_validation.overall_quality_passed);
-        println!("   Performance Passed: {}", result.performance_validation.overall_performance_passed);
-        println!("   Speedup Factor: {:.2}x", result.optimization_impact.speedup_factor);
-        println!("   Memory Change: {:.1}%", result.optimization_impact.memory_reduction_percent);
-        println!("   Quality Change: {:.1}%", result.optimization_impact.quality_change_percent);
+        println!(
+            "   Quality Passed: {}",
+            result.quality_validation.overall_quality_passed
+        );
+        println!(
+            "   Performance Passed: {}",
+            result.performance_validation.overall_performance_passed
+        );
+        println!(
+            "   Speedup Factor: {:.2}x",
+            result.optimization_impact.speedup_factor
+        );
+        println!(
+            "   Memory Change: {:.1}%",
+            result.optimization_impact.memory_reduction_percent
+        );
+        println!(
+            "   Quality Change: {:.1}%",
+            result.optimization_impact.quality_change_percent
+        );
     }
 
     fn print_overall_summary(&self, results: &HashMap<String, BenchmarkResult>) {
         println!("\n🎯 Overall Benchmark Summary");
 
         let total_benchmarks = results.len();
-        let passed_benchmarks = results.values()
+        let passed_benchmarks = results
+            .values()
             .filter(|r| matches!(r.pass_status, ValidationStatus::Passed))
             .count();
 
-        let avg_speedup = results.values()
+        let avg_speedup = results
+            .values()
             .map(|r| r.optimization_impact.speedup_factor)
-            .sum::<f64>() / total_benchmarks as f64;
+            .sum::<f64>()
+            / total_benchmarks as f64;
 
         println!("   Total Benchmarks: {}", total_benchmarks);
         println!("   Passed: {}", passed_benchmarks);
-        println!("   Success Rate: {:.1}%", passed_benchmarks as f64 / total_benchmarks as f64 * 100.0);
+        println!(
+            "   Success Rate: {:.1}%",
+            passed_benchmarks as f64 / total_benchmarks as f64 * 100.0
+        );
         println!("   Average Speedup: {:.2}x", avg_speedup);
     }
 }
@@ -737,21 +838,20 @@ mod tests {
     use crate::core::data_structures::CorrectionMetadata;
 
     fn create_test_reads() -> Vec<CorrectedRead> {
-        vec![
-            CorrectedRead {
-                id: 0,
-                original: "ATCGATCGATCGATCGATCG".to_string(),
-                corrected: "ATCGATCGATCGATCGATCG".to_string(),
-                corrections: Vec::new(),
-                quality_scores: vec![30; 20],
-                correction_metadata: CorrectionMetadata {
-                    algorithm: "test".to_string(),
-                    confidence_threshold: 0.95,
-                    context_window: 5,
-                    correction_time_ms: 0,
-                },
+        vec![CorrectedRead {
+            id: 0,
+            original: "ATCGATCGATCGATCGATCG".to_string(),
+            corrected: "ATCGATCGATCGATCGATCG".to_string(),
+            corrections: Vec::new(),
+            quality_scores: vec![30; 20],
+            correction_metadata: CorrectionMetadata {
+                algorithm: "test".to_string(),
+                confidence_threshold: 0.95,
+                context_window: 5,
+                correction_time_ms: 0,
             },
-        ]
+            kmer_hash_cache: Vec::new(),
+        }]
     }
 
     #[test]
