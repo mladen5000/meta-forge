@@ -4,10 +4,14 @@
 
 MetaForge is a high-performance Rust-based metagenomics pipeline featuring:
 - Adaptive k-mer assembly with graph optimization
-- ML-based taxonomic classification
-- Real-time error correction
-- Comprehensive feature extraction
-- Modern terminal UI with progress tracking
+- K-mer-based taxonomic classification with ML integration
+- Real-time error correction during assembly
+- Comprehensive sequence and graph feature extraction
+- Modern terminal UI with real-time progress tracking
+- SQLite-backed k-mer and taxonomy databases
+- Streaming output with multiple format support (TSV, JSON, GFA, Kraken2)
+
+**Note**: This is a clean, maintained codebase with recent housekeeping (Oct 2025) removing dead code and unused dependencies.
 
 ## Quick Start
 
@@ -92,12 +96,50 @@ cargo flamegraph --bin meta-forge -- analyze input.fastq
 ## Architecture
 
 ### Core Modules
-- `assembly/` - k-mer assembly and graph construction
-- `ml/` - Machine learning classification
-- `database/` - SQLite backend for k-mers and taxonomy
-- `features/` - Sequence and graph feature extraction
-- `pipeline/` - Main pipeline orchestration
-- `utils/` - Shared utilities
+- **`assembly/`** - Adaptive k-mer assembly with optimized graph construction
+  - `laptop_assembly.rs` - **Production assembler** (use this!)
+  - `adaptive_k.rs` - K-mer size selection
+  - `orchestrator.rs` - Assembly workflow coordination
+  - `optimized/` - Experimental optimizations (not in main pipeline)
+
+- **`ml/`** - K-mer taxonomy and classification
+  - `kmer_taxonomy.rs` - K-mer-based taxonomic classification
+  - `simple_classifier.rs` - Contig classification
+  - `classification_reporter.rs` - Result formatting
+  - `semibin_logger.rs` - Logging utilities
+
+- **`core/`** - Core data structures
+  - `data_structures.rs` - Graph, reads, contigs
+  - `paired_reads.rs` - Paired-end read handling
+
+- **`database/`** - SQLite backend for k-mers and taxonomy
+  - `integration.rs` - Database operations
+
+- **`features/`** - Sequence and graph feature extraction
+  - `extraction.rs` - Feature extraction pipeline
+
+- **`qc/`** - Quality control and filtering
+  - `quality_filter.rs` - Read quality filtering
+  - `adapter_trimmer.rs` - Adapter removal
+  - `qc_stats.rs` - Quality metrics
+  - `presets.rs` - QC presets
+
+- **`pipeline/`** - Main pipeline orchestration
+  - `complete_integration.rs` - Full analysis pipeline
+  - `fast_pipeline.rs` - Fast mode implementation
+
+- **`reporting/`** - Output generation
+  - `report_generator.rs` - Analysis reports
+
+- **`utils/`** - Shared utilities
+  - `configuration.rs` - Config management
+  - `kraken_reporter.rs` - Kraken2-format output
+  - `output_writers.rs` - Format writers (TSV, JSON, FASTA, GFA)
+  - `streaming_abundance.rs` - Streaming abundance estimation
+  - `async_output_manager.rs` - Async output handling
+  - `progress_display.rs` - Terminal UI
+  - `genomic_validator.rs` - Sequence validation
+  - `intermediate_output.rs` - Checkpoint management
 
 ### Key Components
 
@@ -131,12 +173,14 @@ let features = extractor.extract_sequence_features(sequence)?;
 ## Output Files
 
 The pipeline generates:
-- `classifications.tsv` - Classification results (TSV format)
-- `classification_summary.txt` - Human-readable summary
-- `contigs.fasta` - Assembled contigs
-- `corrected_reads.fastq` - Error-corrected reads
-- `final_report.json` - Complete analysis report
-- `assembly_graph.gfa` - Assembly graph (GFA format)
+- `classifications.tsv` - Classification results in TSV format (MetaBAT2/MaxBin2 compatible)
+- `classification_summary.txt` - Human-readable summary with taxa distribution
+- `contigs.fasta` - Assembled contigs with coverage information
+- `corrected_reads.fastq` - Quality-filtered and error-corrected reads
+- `features.tsv` - Extracted sequence and graph features
+- `final_report.json` - Complete analysis report with metrics
+- `assembly_graph.gfa` - Assembly graph in GFA format
+- `kraken_report.txt` - Kraken2-compatible classification report
 
 ## Performance Optimizations
 
@@ -277,6 +321,31 @@ meta-forge analyze input.fastq
 - Benchmark performance changes
 - Document edge cases
 
+## Code Cleanliness
+
+This codebase follows strict organizational principles:
+
+### Recently Removed (Oct 2025 Housekeeping)
+- ❌ Dead CLI module (`src/cli/fast_mode.rs`) - unused
+- ❌ Orphaned test files referencing non-existent modules (9 files removed)
+- ❌ Unused ML dependencies (`candle-core`, `candle-nn`, `ort`, `smartcore`) - 100+ MB savings
+- ❌ Duplicate dependencies consolidated
+- ✅ Test dependencies moved to `[dev-dependencies]`
+
+### File Organization Rules
+- **Never save files to project root** - use subdirectories
+- Source code → `/src`
+- Tests → `/tests`
+- Examples → `/examples`
+- Benchmarks → `/benches`
+- Documentation → `/docs` or module-level `.md` files
+
+### Dependency Philosophy
+- **Minimal**: Only include dependencies actively used in production
+- **Performant**: Prefer zero-cost abstractions and low-overhead crates
+- **Maintained**: All dependencies actively maintained
+- **Consolidated**: No duplicate crate versions unless unavoidable
+
 ## Resources
 
 - GitHub: https://github.com/mladen5000/meta-forge
@@ -285,4 +354,7 @@ meta-forge analyze input.fastq
 
 ---
 
-**Remember**: Always put global flags BEFORE the subcommand! ✅
+**Remember**:
+1. Always put global flags BEFORE the subcommand! ✅
+2. Use `LaptopAssembler` for production assembly (not the `optimized/` module)
+3. Keep dependencies lean - remove unused crates immediately

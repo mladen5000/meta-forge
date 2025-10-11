@@ -1,5 +1,6 @@
 pub mod data_structures;
 pub mod paired_reads;
+pub mod pipeline_types;
 
 // Re-export key types for assembly integration
 pub use data_structures::{
@@ -45,4 +46,10 @@ pub use data_structures::{
     ProcessingStats,
     ReadPosition,
     Strand,
+};
+
+// Re-export pipeline types for easy access
+pub use pipeline_types::{
+    AbundanceProfile, AnalysisReport, AnalysisResults, AssemblyResults, FeatureCollection,
+    FileFormat, PerformanceMetrics, QualityMetrics, ReportSummary, TaxonomicClassification,
 };

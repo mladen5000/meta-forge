@@ -26,13 +26,13 @@ parking_lot = "0.12.4"
 
 # --- Configuration, CLI, and Utilities ---
 config = "0.15"
-toml = "0.9"
+toml = "0.9"  # Used for TOML serialization in config templates
 dirs = "6.0.0"
 num_cpus = "1.17.0"
 tempfile = "3.20.0"
 
 # --- Performance, Compression, Parallelism ---
-criterion = { version = "0.7.0", optional = true }
+# criterion = { version = "0.7.0", optional = true }  # Moved to dev-dependencies
 lz4_flex = "0.11.5"
 rayon = "1.10.0"
 tokio = { version = "1.47.1", features = ["full"] }
@@ -41,12 +41,13 @@ memmap2 = "0.9.7"
 mimalloc = "0.1.47"
 
 # --- ML/AI & Scientific Computing ---
-candle-core = "0.9.1"
-candle-nn = "0.9.1"
+# REMOVED: Unused ML libraries (not referenced in src/)
+# candle-core = "0.9.1"
+# candle-nn = "0.9.1"
+# ort = "1.16.3"
+# smartcore = "0.4.2"
 ndarray = { version = "0.16.1", features = ["serde"] }
-ort = "1.16.3"
 petgraph = { version = "0.8.2", features = ["serde"] }
-smartcore = "0.4.2"
 fastrand = "2.3.0"
 pathfinding = "4.14.0"
 bit-vec = "0.8.0"
@@ -81,7 +82,7 @@ noodles = { version = "0.82.0", features = ["fastq"] }  # High-performance seque
 rusqlite = { version = "0.37.0", features = ["chrono"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.142"
-proptest = "1.7.0"
+# proptest = "1.7.0"  # Moved to dev-dependencies
 bincode = "2.0.1"
 chrono = { version = "0.4.41", features = ["serde"] }
 md5 = "0.7.0"
@@ -98,11 +99,12 @@ crossbeam = "0.8.4"
 # sketchy = "0.3.0"  # Package not available, removing for now
 
 [features]
-# Optional/benchmarking features
-bench = ["criterion"]
+# Optional/benchmarking features (removed - criterion now only in dev-dependencies)
+# bench = ["criterion"]
 
 [dev-dependencies]
 criterion = { version = "0.7.0", features = ["html_reports"] }
+proptest = "1.7.0"  # Moved from dependencies - only needed for tests
 anyhow = "1.0.99"
 thiserror = "2.0.14"
 rand = "0.8"
