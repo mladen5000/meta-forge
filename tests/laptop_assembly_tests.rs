@@ -7,8 +7,8 @@
 //! - Memory-bounded assembly
 //! - Error handling and edge cases
 
-use meta_forge::assembly::{LaptopAssembler, LaptopConfig, LaptopAssemblyGraph};
-use meta_forge::assembly::adaptive_k::{AdaptiveKSelector, AdaptiveKConfig};
+use meta_forge::assembly::adaptive_k::{AdaptiveKConfig, AdaptiveKSelector};
+use meta_forge::assembly::{LaptopAssembler, LaptopAssemblyGraph, LaptopConfig};
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 
 /// Helper function to create test reads
@@ -25,6 +25,7 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
     }
 }
 
@@ -198,9 +199,16 @@ fn test_laptop_assembly_small_dataset() {
         assert!(!contig.sequence.is_empty());
     }
 
-    println!("Generated {} contigs from {} reads", contigs.len(), reads.len());
+    println!(
+        "Generated {} contigs from {} reads",
+        contigs.len(),
+        reads.len()
+    );
     for (i, contig) in contigs.iter().enumerate() {
-        println!("Contig {}: len={}, cov={:.2}", i, contig.length, contig.coverage);
+        println!(
+            "Contig {}: len={}, cov={:.2}",
+            i, contig.length, contig.coverage
+        );
     }
 }
 
@@ -221,8 +229,11 @@ fn test_laptop_assembly_realistic_dataset() {
     let max_contig_length = contigs.iter().map(|c| c.length).max().unwrap_or(0);
     assert!(max_contig_length >= 20); // Should assemble overlapping reads
 
-    println!("Realistic dataset: {} contigs, max length: {}",
-             contigs.len(), max_contig_length);
+    println!(
+        "Realistic dataset: {} contigs, max length: {}",
+        contigs.len(),
+        max_contig_length
+    );
 }
 
 #[test]
@@ -257,7 +268,7 @@ fn test_laptop_assembly_error_handling() {
     // Reads with invalid characters should be handled
     let invalid_reads = vec![
         create_test_read(0, "ATCGXYZGATCG"), // Invalid characters
-        create_test_read(1, "NNNNNNNNNNN"), // All Ns
+        create_test_read(1, "NNNNNNNNNNN"),  // All Ns
     ];
 
     let result = assembler.assemble(&invalid_reads);
@@ -282,8 +293,11 @@ fn test_memory_budget_enforcement() {
     assert!(result.is_ok());
 
     if let Ok(contigs) = result {
-        println!("Memory-constrained assembly: {} contigs from {} reads",
-                 contigs.len(), large_reads.len());
+        println!(
+            "Memory-constrained assembly: {} contigs from {} reads",
+            contigs.len(),
+            large_reads.len()
+        );
     }
 }
 

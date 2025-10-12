@@ -2,6 +2,7 @@
 //! Tests complete pipeline flow, field access patterns, error handling, and real-world scenarios
 
 use meta_forge::assembly::adaptive_k::*;
+use meta_forge::assembly::AssemblyGraphBuilder;
 use meta_forge::core::data_structures::*;
 
 #[cfg(test)]
@@ -415,6 +416,7 @@ mod error_handling_integration_tests {
                     context_window: 0,
                     correction_time_ms: 0,
                 },
+                kmer_hash_cache: Vec::new(),
             },
             end_to_end_pipeline_tests::create_realistic_read(1, "ATCGATCG", 35), // Valid read after error
         ];

@@ -48,7 +48,7 @@ impl LaptopConfig {
             memory_budget_mb: 6144, // 6GB = 75% of 8GB total RAM
             cpu_cores: 2,
             chunk_size: 8000, // Increased 4x for better batching and parallelism
-            max_k: 25, // Increased from 21, well under u64 limit of 32
+            max_k: 25,        // Increased from 21, well under u64 limit of 32
         }
     }
 
@@ -58,7 +58,7 @@ impl LaptopConfig {
             memory_budget_mb: 12288, // 12GB = 75% of 16GB total RAM
             cpu_cores: 4,
             chunk_size: 15000, // Increased 3x for better batching and parallelism
-            max_k: 31, // Maximum for efficient u64-based k-mer storage (31 * 2 = 62 bits)
+            max_k: 31,         // Maximum for efficient u64-based k-mer storage (31 * 2 = 62 bits)
         }
     }
 
@@ -124,7 +124,9 @@ impl LaptopConfig {
             return Err(anyhow!("CPU cores must be at least 1"));
         }
         if !(15..=31).contains(&max_k) {
-            return Err(anyhow!("Max k-mer size must be between 15 and 31 (u64 2-bit encoding limit)"));
+            return Err(anyhow!(
+                "Max k-mer size must be between 15 and 31 (u64 2-bit encoding limit)"
+            ));
         }
 
         // Aggressive chunk sizing: use more memory for better batching
@@ -379,7 +381,7 @@ pub struct BoundedKmerCounter {
     /// K-mer counts with size limit
     counts: AHashMap<u64, u32>,
     /// Memory limit in number of k-mers
-    max_kmers: usize,
+    pub max_kmers: usize,
     /// Current memory usage estimate
     memory_usage: AtomicUsize,
     /// Statistics
@@ -576,7 +578,8 @@ impl LaptopAssemblyGraph {
 
     /// Build graph from reads using memory-bounded processing with timeout
     pub fn build_from_reads(&mut self, reads: &[CorrectedRead], k: usize) -> Result<()> {
-        self.build_from_reads_with_timeout(reads, k, Duration::from_secs(300), None) // 5 minute timeout
+        self.build_from_reads_with_timeout(reads, k, Duration::from_secs(300), None)
+        // 5 minute timeout
     }
 
     /// Build graph with configurable timeout
@@ -706,7 +709,8 @@ impl LaptopAssemblyGraph {
 
                 // Update message every ~1000 reads for performance
                 if processed % 1000 < chunk.len() {
-                    let kmers_per_sec = (processed + chunk.len()) as f64 / start_time.elapsed().as_secs_f64();
+                    let kmers_per_sec =
+                        (processed + chunk.len()) as f64 / start_time.elapsed().as_secs_f64();
                     pb_kmer_clone.set_message(format!("{:.1}K reads/sec", kmers_per_sec / 1000.0));
                 }
 
@@ -760,7 +764,8 @@ impl LaptopAssemblyGraph {
 
             // Add to bounded counter if frequent enough
             if count >= 1 {
-                for _ in 0..count.min(255) { // Cap at 255 to avoid overflow
+                for _ in 0..count.min(255) {
+                    // Cap at 255 to avoid overflow
                     kmer_counter.add_kmer(*entry.key());
                 }
             }

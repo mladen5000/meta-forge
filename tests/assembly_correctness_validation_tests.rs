@@ -5,13 +5,13 @@
 //! Focuses on edge cases, boundary conditions, error handling, and consistency.
 //! Validates that optimizations don't break correctness.
 
-use meta_forge::assembly::laptop_assembly::{
-    LaptopAssembler, LaptopConfig, LaptopAssemblyGraph, CompactKmer, BoundedKmerCounter
-};
-use meta_forge::core::data_structures::{CorrectedRead, Contig, ContigType, CorrectionMetadata};
 use anyhow::Result;
-use std::time::Duration;
+use meta_forge::assembly::laptop_assembly::{
+    BoundedKmerCounter, CompactKmer, LaptopAssembler, LaptopAssemblyGraph, LaptopConfig,
+};
+use meta_forge::core::data_structures::{Contig, ContigType, CorrectedRead, CorrectionMetadata};
 use std::collections::HashSet;
+use std::time::Duration;
 
 /// Test compact k-mer encoding correctness
 #[test]
@@ -20,9 +20,18 @@ fn test_compact_kmer_encoding_correctness() {
 
     // Test basic encoding/decoding
     let test_sequences = vec![
-        "A", "T", "C", "G",
-        "AT", "CG", "TA", "GC",
-        "ATCG", "GCTA", "AAAA", "TTTT",
+        "A",
+        "T",
+        "C",
+        "G",
+        "AT",
+        "CG",
+        "TA",
+        "GC",
+        "ATCG",
+        "GCTA",
+        "AAAA",
+        "TTTT",
         "ATCGATCGATCGATCGATCGATCGATCG", // Max length (32)
     ];
 
@@ -49,21 +58,35 @@ fn test_compact_kmer_boundary_conditions() {
     // Test invalid characters
     let invalid_sequences = vec!["X", "ATCGX", "N", "ATCN"];
     for seq in &invalid_sequences {
-        assert!(CompactKmer::new(seq).is_err(), "Invalid sequence should fail: {}", seq);
+        assert!(
+            CompactKmer::new(seq).is_err(),
+            "Invalid sequence should fail: {}",
+            seq
+        );
     }
 
     // Test maximum length (32 nucleotides - fits in u64 with 2 bits per base)
     let max_seq = "A".repeat(32);
-    assert!(CompactKmer::new(&max_seq).is_ok(), "Max length sequence should work");
+    assert!(
+        CompactKmer::new(&max_seq).is_ok(),
+        "Max length sequence should work"
+    );
 
     // Test over maximum length
     let over_max = "A".repeat(33);
-    assert!(CompactKmer::new(&over_max).is_err(), "Over-max length should fail");
+    assert!(
+        CompactKmer::new(&over_max).is_err(),
+        "Over-max length should fail"
+    );
 
     // Test case insensitivity
     let lower_case = CompactKmer::new("atcg").unwrap();
     let upper_case = CompactKmer::new("ATCG").unwrap();
-    assert_eq!(lower_case.to_string(), upper_case.to_string(), "Case should be normalized");
+    assert_eq!(
+        lower_case.to_string(),
+        upper_case.to_string(),
+        "Case should be normalized"
+    );
 
     println!("✅ CompactKmer boundary conditions validated");
 }
@@ -84,9 +107,17 @@ fn test_bounded_kmer_counter_memory_management() {
     let (unique, total, dropped, memory) = counter.get_stats();
 
     // Verify memory constraints are respected
-    assert!(memory <= 2 * 1024 * 1024, "Memory usage exceeds budget: {} bytes", memory); // Allow some overhead
+    assert!(
+        memory <= 2 * 1024 * 1024,
+        "Memory usage exceeds budget: {} bytes",
+        memory
+    ); // Allow some overhead
     assert_eq!(total, 100000, "Total k-mers seen should be accurate");
-    assert!(memory <= 10 * 1024 * 1024, "Memory usage should be bounded: {} bytes", memory); // Use memory as proxy for size check
+    assert!(
+        memory <= 10 * 1024 * 1024,
+        "Memory usage should be bounded: {} bytes",
+        memory
+    ); // Use memory as proxy for size check
 
     // Test that frequent k-mers are prioritized
     counter.add_kmer(12345); // Add same k-mer multiple times
@@ -94,7 +125,10 @@ fn test_bounded_kmer_counter_memory_management() {
     counter.add_kmer(12345);
 
     let frequent = counter.get_frequent_kmers(3);
-    assert!(frequent.iter().any(|(hash, _)| *hash == 12345), "Frequent k-mer should be retained");
+    assert!(
+        frequent.iter().any(|(hash, _)| *hash == 12345),
+        "Frequent k-mer should be retained"
+    );
 
     println!("✅ BoundedKmerCounter memory management validated");
 }
@@ -108,21 +142,30 @@ fn test_assembly_graph_malformed_data() {
 
     // Test with empty reads
     let empty_reads = vec![];
-    assert!(graph.build_from_reads(&empty_reads, 21).is_ok(), "Empty reads should be handled gracefully");
+    assert!(
+        graph.build_from_reads(&empty_reads, 21).is_ok(),
+        "Empty reads should be handled gracefully"
+    );
 
     // Test with reads shorter than k
     let short_reads = vec![
-        create_test_read(0, "AT"),      // Length 2, k=21
+        create_test_read(0, "AT"),       // Length 2, k=21
         create_test_read(1, "ATCGATCG"), // Length 8, k=21
     ];
-    assert!(graph.build_from_reads(&short_reads, 21).is_ok(), "Short reads should be handled gracefully");
+    assert!(
+        graph.build_from_reads(&short_reads, 21).is_ok(),
+        "Short reads should be handled gracefully"
+    );
 
     // Test with reads containing only one type of nucleotide
     let homopolymer_reads = vec![
         create_test_read(0, "AAAAAAAAAAAAAAAAAAAAAAAAA"),
         create_test_read(1, "TTTTTTTTTTTTTTTTTTTTTTTTT"),
     ];
-    assert!(graph.build_from_reads(&homopolymer_reads, 21).is_ok(), "Homopolymer reads should be handled");
+    assert!(
+        graph.build_from_reads(&homopolymer_reads, 21).is_ok(),
+        "Homopolymer reads should be handled"
+    );
 
     // Test with extremely repetitive reads
     let repetitive_reads = vec![
@@ -130,7 +173,10 @@ fn test_assembly_graph_malformed_data() {
         create_test_read(1, "TCGATCGATCGATCGATCGATCGATCGATCGA"),
         create_test_read(2, "CGATCGATCGATCGATCGATCGATCGATCGAT"),
     ];
-    assert!(graph.build_from_reads(&repetitive_reads, 21).is_ok(), "Repetitive reads should be handled");
+    assert!(
+        graph.build_from_reads(&repetitive_reads, 21).is_ok(),
+        "Repetitive reads should be handled"
+    );
 
     println!("✅ Assembly graph malformed data handling validated");
 }
@@ -149,7 +195,10 @@ fn test_assembly_timeout_and_error_handling() {
     // Should either succeed quickly or timeout gracefully
     match result {
         Ok(contigs) => {
-            println!("✅ Assembly completed within 1ms: {} contigs", contigs.len());
+            println!(
+                "✅ Assembly completed within 1ms: {} contigs",
+                contigs.len()
+            );
         }
         Err(e) => {
             if e.to_string().contains("timeout") {
@@ -162,7 +211,10 @@ fn test_assembly_timeout_and_error_handling() {
 
     // Test with reasonable timeout
     let result = assembler.assemble_with_timeout(&reads, Duration::from_secs(30));
-    assert!(result.is_ok(), "Assembly should succeed with reasonable timeout");
+    assert!(
+        result.is_ok(),
+        "Assembly should succeed with reasonable timeout"
+    );
 
     println!("✅ Timeout and error handling validated");
 }
@@ -209,7 +261,9 @@ fn test_assembly_output_consistency() {
         assert!(
             length_diff <= tolerance,
             "Total assembly length inconsistent: {} vs {} (diff: {})",
-            first_total, current_total, length_diff
+            first_total,
+            current_total,
+            length_diff
         );
     }
 
@@ -255,7 +309,10 @@ fn test_memory_cleanup_and_emergency_recovery() {
                 "Error should be informative about memory/timeout: {}",
                 error_msg
             );
-            println!("✅ Assembly gracefully handled memory constraints: {}", error_msg);
+            println!(
+                "✅ Assembly gracefully handled memory constraints: {}",
+                error_msg
+            );
         }
     }
 
@@ -283,7 +340,11 @@ fn test_contig_generation_correctness() {
     for contig in &contigs {
         // Basic sanity checks
         assert!(contig.length > 0, "Contig length should be positive");
-        assert_eq!(contig.sequence.len(), contig.length, "Sequence length should match reported length");
+        assert_eq!(
+            contig.sequence.len(),
+            contig.length,
+            "Sequence length should match reported length"
+        );
         assert!(contig.coverage > 0.0, "Coverage should be positive");
 
         // Sequence should contain only valid DNA bases
@@ -304,10 +365,16 @@ fn test_contig_generation_correctness() {
     }
 
     // Test that contigs are non-empty and reasonable
-    assert!(!contigs.is_empty(), "Should generate at least one contig from overlapping reads");
+    assert!(
+        !contigs.is_empty(),
+        "Should generate at least one contig from overlapping reads"
+    );
 
     let total_length: usize = contigs.iter().map(|c| c.length).sum();
-    assert!(total_length >= 20, "Total assembly length should be reasonable");
+    assert!(
+        total_length >= 20,
+        "Total assembly length should be reasonable"
+    );
 
     println!("✅ Contig generation correctness validated");
 }
@@ -326,15 +393,25 @@ fn test_concurrent_kmer_processing() {
     let result = graph.build_from_reads(&reads, 21);
     let elapsed = start_time.elapsed();
 
-    assert!(result.is_ok(), "Concurrent processing should complete successfully");
+    assert!(
+        result.is_ok(),
+        "Concurrent processing should complete successfully"
+    );
 
-    println!("  Processed {} reads in {:.2}s", reads.len(), elapsed.as_secs_f64());
+    println!(
+        "  Processed {} reads in {:.2}s",
+        reads.len(),
+        elapsed.as_secs_f64()
+    );
 
     // Verify graph state is consistent after concurrent processing
     let contigs = graph.generate_contigs().unwrap();
 
     // Basic consistency checks
-    assert!(!contigs.is_empty(), "Concurrent processing should generate contigs");
+    assert!(
+        !contigs.is_empty(),
+        "Concurrent processing should generate contigs"
+    );
 
     let total_length: usize = contigs.iter().map(|c| c.length).sum();
     assert!(total_length > 0, "Total assembly length should be positive");
@@ -355,7 +432,7 @@ fn test_concurrent_kmer_processing() {
 fn test_adaptive_k_selection_correctness() {
     println!("📏 Testing adaptive k-mer selection correctness...");
 
-    use meta_forge::assembly::adaptive_k::{AdaptiveKSelector, AdaptiveKConfig};
+    use meta_forge::assembly::adaptive_k::{AdaptiveKConfig, AdaptiveKSelector};
 
     // Test with different read characteristics
     let test_cases = vec![
@@ -378,20 +455,29 @@ fn test_adaptive_k_selection_correctness() {
         let k = selector.select_optimal_k(&reads).unwrap();
 
         // K should be within bounds
-        assert!(k >= 15 && k <= 31, "K should be within configured bounds: {}", k);
+        assert!(
+            k >= 15 && k <= 31,
+            "K should be within configured bounds: {}",
+            k
+        );
 
         // K should be odd (conventional for assembly)
         assert!(k % 2 == 1, "K should be odd: {}", k);
 
         // K should be reasonable for the read lengths
-        let avg_read_len: f64 = reads.iter().map(|r| r.corrected.len()).sum::<usize>() as f64 / reads.len() as f64;
+        let avg_read_len: f64 =
+            reads.iter().map(|r| r.corrected.len()).sum::<usize>() as f64 / reads.len() as f64;
         assert!(
             k as f64 <= avg_read_len * 0.8,
             "K should not be too large relative to read length: k={}, avg_len={:.1}",
-            k, avg_read_len
+            k,
+            avg_read_len
         );
 
-        println!("    Selected k={} for avg read length {:.1}", k, avg_read_len);
+        println!(
+            "    Selected k={} for avg read length {:.1}",
+            k, avg_read_len
+        );
     }
 
     println!("✅ Adaptive k-mer selection correctness validated");
@@ -412,6 +498,7 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
     }
 }
 
@@ -443,9 +530,7 @@ fn create_short_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
     let bases = ['A', 'T', 'C', 'G'];
     (0..count)
         .map(|i| {
-            let sequence: String = (0..length)
-                .map(|j| bases[(i + j) % 4])
-                .collect();
+            let sequence: String = (0..length).map(|j| bases[(i + j) % 4]).collect();
             create_test_read(i, &sequence)
         })
         .collect()
@@ -497,16 +582,24 @@ fn test_complete_assembly_pipeline_correctness() {
 
         match result {
             Ok(contigs) => {
-                println!("    ✅ Assembly completed in {:.2}s with {} contigs",
-                        elapsed.as_secs_f64(), contigs.len());
+                println!(
+                    "    ✅ Assembly completed in {:.2}s with {} contigs",
+                    elapsed.as_secs_f64(),
+                    contigs.len()
+                );
 
                 // Validate assembly quality
                 validate_assembly_quality(&contigs, &reads);
             }
             Err(e) => {
                 // Allow timeout or memory errors for low-end configurations
-                if config_name == "low_memory" && (e.to_string().contains("timeout") || e.to_string().contains("memory")) {
-                    println!("    ⚠️ {} configuration hit resource limits (acceptable): {}", config_name, e);
+                if config_name == "low_memory"
+                    && (e.to_string().contains("timeout") || e.to_string().contains("memory"))
+                {
+                    println!(
+                        "    ⚠️ {} configuration hit resource limits (acceptable): {}",
+                        config_name, e
+                    );
                 } else {
                     panic!("Unexpected assembly failure for {}: {}", config_name, e);
                 }
@@ -531,7 +624,8 @@ fn generate_realistic_test_dataset() -> Vec<CorrectedRead> {
     for segment in &reference_segments {
         // Generate overlapping reads from each segment
         for i in 0..=(segment.len().saturating_sub(40)) {
-            if i % 5 == 0 { // Every 5th position to create overlaps
+            if i % 5 == 0 {
+                // Every 5th position to create overlaps
                 let read_seq = &segment[i..i + 40];
                 reads.push(create_test_read(read_id, read_seq));
                 read_id += 1;
@@ -553,13 +647,17 @@ fn validate_assembly_quality(contigs: &[Contig], original_reads: &[CorrectedRead
     assert!(
         total_assembled >= total_read_length / 10, // Should recover at least 10% of total read length
         "Assembly length too small: {} vs {} read length",
-        total_assembled, total_read_length
+        total_assembled,
+        total_read_length
     );
 
     // Check contigs are properly formed
     for contig in contigs {
         assert!(contig.length >= 15, "Contig too short: {}", contig.length);
-        assert!(contig.coverage > 0.0, "Contig should have positive coverage");
+        assert!(
+            contig.coverage > 0.0,
+            "Contig should have positive coverage"
+        );
 
         // Sequence should be valid DNA
         for c in contig.sequence.chars() {
@@ -577,6 +675,10 @@ fn validate_assembly_quality(contigs: &[Contig], original_reads: &[CorrectedRead
 
     if !lengths.is_empty() {
         let largest = lengths[0];
-        assert!(largest >= 20, "Largest contig should be reasonable: {}", largest);
+        assert!(
+            largest >= 20,
+            "Largest contig should be reasonable: {}",
+            largest
+        );
     }
 }

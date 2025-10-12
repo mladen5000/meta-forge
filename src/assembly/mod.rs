@@ -7,6 +7,7 @@
 pub mod laptop_assembly;
 pub mod adaptive_k;
 pub mod orchestrator;
+pub mod coordinator;
 
 // Experimental data structures (not used in production pipeline)
 pub mod optimized;
@@ -20,3 +21,4 @@ pub use laptop_assembly::{
     RollingKmerHash,
 };
 pub use orchestrator::AssemblyOrchestrator;
+pub use coordinator::AssemblyCoordinator;

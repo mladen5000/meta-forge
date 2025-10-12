@@ -950,7 +950,7 @@ fn create_paired_end_reads(
                 context_window: 5,
                 correction_time_ms: 1,
             },
-            kmer_hash_cache: AHashMap::new(),
+            kmer_hash_cache: Vec::new(),
         });
 
         // Reverse read (from other end of fragment)
@@ -968,7 +968,7 @@ fn create_paired_end_reads(
                 context_window: 5,
                 correction_time_ms: 1,
             },
-            kmer_hash_cache: AHashMap::new(),
+            kmer_hash_cache: Vec::new(),
         });
     }
 
@@ -994,7 +994,7 @@ fn create_repeated_reads(
                 context_window: 5,
                 correction_time_ms: 0,
             },
-            kmer_hash_cache: AHashMap::new(),
+            kmer_hash_cache: Vec::new(),
         })
         .collect()
 }
@@ -1024,7 +1024,7 @@ fn create_overlapping_sequence_reads(
                     context_window: 5,
                     correction_time_ms: 0,
                 },
-                kmer_hash_cache: AHashMap::new(),
+                kmer_hash_cache: Vec::new(),
             }
         })
         .collect()
@@ -1053,7 +1053,7 @@ fn create_diverse_reads(count: usize, length: usize) -> Vec<CorrectedRead> {
                     context_window: 3 + (i % 5),
                     correction_time_ms: i % 5,
                 },
-                kmer_hash_cache: AHashMap::new(),
+                kmer_hash_cache: Vec::new(),
             }
         })
         .collect()

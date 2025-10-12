@@ -3,12 +3,24 @@
 //!
 //! This file contains before/after code examples demonstrating the specific
 //! optimizations identified in the performance bottleneck analysis.
+//!
+//! Note: SIMD optimizations (AVX2) are only available on x86_64 architectures.
+//! On other platforms (like ARM), the code will fall back to scalar implementations.
 
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use ahash::AHashMap;
 use dashmap::DashMap;
 use crossbeam::queue::SegQueue;
+
+fn main() {
+    println!("Optimization patterns example");
+    println!("This file demonstrates performance optimization techniques for metagenomics assembly.");
+    println!("\nNote: This is a documentation/example file.");
+    println!("SIMD features are only available on x86_64 platforms.");
+}
 
 // ============================================================================
 // 1. OPTIMIZED COMPACT K-MER IMPLEMENTATION
@@ -116,6 +128,7 @@ mod optimized {
         }
 
         /// SIMD-optimized batch comparison (compare 8 k-mers simultaneously)
+        #[cfg(target_arch = "x86_64")]
         #[target_feature(enable = "avx2")]
         pub unsafe fn batch_compare_simd(kmers: &[Self], target_data: u64) -> u64 {
             if kmers.is_empty() {
@@ -217,6 +230,7 @@ pub mod simd_nucleotide_ops {
     use super::*;
 
     /// SIMD-optimized nucleotide counting (16x parallel with AVX2)
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     pub unsafe fn count_nucleotides_simd(sequence: &[u8]) -> [u32; 4] {
         let mut counts = [0u32; 4];  // A, C, G, T
@@ -245,6 +259,7 @@ pub mod simd_nucleotide_ops {
     }
 
     /// Process 32 bytes with AVX2 (8-12x faster than scalar)
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn count_nucleotides_avx2_chunk(chunk: &[u8]) -> [u32; 4] {
         // Load 32 bytes into AVX2 register
@@ -277,6 +292,7 @@ pub mod simd_nucleotide_ops {
     }
 
     /// Count set bits in AVX2 mask
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn count_mask_bits(mask: __m256i) -> u32 {
         // Convert to scalar and count bits
@@ -285,6 +301,7 @@ pub mod simd_nucleotide_ops {
     }
 
     /// SIMD-optimized GC content calculation
+    #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     pub unsafe fn calculate_gc_content_simd(sequence: &[u8]) -> f64 {
         let counts = count_nucleotides_simd(sequence);
