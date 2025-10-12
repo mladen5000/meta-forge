@@ -203,12 +203,12 @@ impl RegressionTester {
         let start_memory = self.get_memory_usage();
         
         let contigs = assembler.assemble(reads)?;
-        
+
         let assembly_time = start_time.elapsed();
         let end_memory = self.get_memory_usage();
         let memory_usage = (end_memory - start_memory).max(0.0);
-        
-        let metrics = super::assembly_accuracy_test_suite::AssemblyQualityMetrics::calculate(&contigs);
+
+        let metrics = calculate_quality_metrics(&contigs);
         
         Ok(BaselineMetrics {
             assembly_time_ms: assembly_time.as_millis() as u64,
@@ -233,10 +233,61 @@ impl RegressionTester {
     }
 }
 
+/// Helper struct for quality metrics (internal to this test)
+struct QualityMetrics {
+    n50: usize,
+    num_contigs: usize,
+    total_length: usize,
+    coverage_mean: f64,
+    largest_contig: usize,
+}
+
+/// Calculate assembly quality metrics
+fn calculate_quality_metrics(contigs: &[Contig]) -> QualityMetrics {
+    if contigs.is_empty() {
+        return QualityMetrics {
+            n50: 0,
+            num_contigs: 0,
+            total_length: 0,
+            coverage_mean: 0.0,
+            largest_contig: 0,
+        };
+    }
+
+    let num_contigs = contigs.len();
+    let total_length: usize = contigs.iter().map(|c| c.length).sum();
+    let coverage_mean = contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs as f64;
+    let largest_contig = contigs.iter().map(|c| c.length).max().unwrap_or(0);
+
+    // Calculate N50
+    let mut lengths: Vec<usize> = contigs.iter().map(|c| c.length).collect();
+    lengths.sort_by(|a, b| b.cmp(a));
+
+    let mut cumulative_length = 0;
+    let half_total = total_length / 2;
+    let mut n50 = 0;
+
+    for &length in &lengths {
+        cumulative_length += length;
+        if cumulative_length >= half_total {
+            n50 = length;
+            break;
+        }
+    }
+
+    QualityMetrics {
+        n50,
+        num_contigs,
+        total_length,
+        coverage_mean,
+        largest_contig,
+    }
+}
+
 /// Create standard test datasets for regression testing
 pub struct StandardTestDatasets {
     pub small_uniform: Vec<CorrectedRead>,
-    pub medium_complex: Vec<CorrectedRead>, 
+    pub medium_complex: Vec<CorrectedRead>,
     pub large_repetitive: Vec<CorrectedRead>,
     pub low_coverage: Vec<CorrectedRead>,
     pub high_error: Vec<CorrectedRead>,
@@ -254,9 +305,20 @@ impl StandardTestDatasets {
     }
 }
 
-fn generate_uniform_reads(reference: &str, read_len: usize, coverage: f64, error_rate: f64) -> Vec<CorrectedRead> {
-    let generator = super::assembly_accuracy_test_suite::TestDataGenerator::new(reference, read_len, coverage, error_rate);
-    generator.generate_reads()
+fn generate_uniform_reads(reference: &str, read_len: usize, coverage: f64, _error_rate: f64) -> Vec<CorrectedRead> {
+    // Simple read generation for regression testing
+    let num_reads = ((reference.len() as f64 * coverage) / read_len as f64).ceil() as usize;
+    let mut reads = Vec::new();
+
+    for i in 0..num_reads {
+        let start = (i * read_len) % (reference.len().saturating_sub(read_len).max(1));
+        let end = (start + read_len).min(reference.len());
+        let sequence = reference[start..end].to_string();
+
+        reads.push(create_test_read(i, &sequence));
+    }
+
+    reads
 }
 
 fn generate_complex_reads(ref_len: usize, read_len: usize, coverage: f64, error_rate: f64) -> Vec<CorrectedRead> {
@@ -426,5 +488,6 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
     }
 }

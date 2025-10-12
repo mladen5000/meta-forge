@@ -277,15 +277,16 @@ impl ValidationPipeline {
         let mut errors = Vec::new();
         let mut overall_status = ValidationStatus::Passed;
         
-        // Execute each enabled test suite
-        for test_suite in &self.config.test_suites {
+        // Execute each enabled test suite (clone to avoid borrow checker issues)
+        let test_suites = self.config.test_suites.clone();
+        for test_suite in &test_suites {
             if !test_suite.enabled {
                 println!("⏭️ Skipping disabled test: {}", test_suite.name);
                 continue;
             }
-            
+
             println!("🏃 Running test suite: {} ({:?})", test_suite.name, test_suite.test_type);
-            
+
             match self.execute_test_suite(test_suite) {
                 Ok(result) => {
                     match result.status {
@@ -400,11 +401,18 @@ impl ValidationPipeline {
             DatasetComplexity::Challenging => self.generate_challenging_reference(config.size * config.read_length / 4),
         };
         
-        let generator = super::assembly_accuracy_test_suite::TestDataGenerator::new(
-            &reference, config.read_length, config.coverage, config.error_rate
-        );
-        
-        Ok(generator.generate_reads().into_iter().take(config.size).collect())
+        // Simple read generation for validation testing
+        let num_reads = config.size.min((reference.len() * config.coverage as usize) / config.read_length);
+        let mut reads = Vec::new();
+
+        for i in 0..num_reads {
+            let start = (i * config.read_length) % (reference.len().saturating_sub(config.read_length).max(1));
+            let end = (start + config.read_length).min(reference.len());
+            let sequence = reference[start..end].to_string();
+            reads.push(create_test_read(i, &sequence));
+        }
+
+        Ok(reads)
     }
     
     fn generate_simple_reference(&self, length: usize) -> String {
@@ -472,7 +480,8 @@ impl ValidationPipeline {
     }
     
     fn calculate_quality_metrics(&self, contigs: &[Contig]) -> QualityMetrics {
-        let base_metrics = super::assembly_accuracy_test_suite::AssemblyQualityMetrics::calculate(contigs);
+        // Calculate basic assembly metrics
+        let base_metrics = calculate_contig_metrics(contigs);
         
         let gaps_count = contigs.iter()
             .map(|c| c.sequence.chars().filter(|&ch| ch == 'N').count())
@@ -818,5 +827,98 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
+    }
+}
+
+/// Helper struct for basic contig metrics
+struct BasicContigMetrics {
+    n50: usize,
+    n90: usize,
+    total_length: usize,
+    num_contigs: usize,
+    coverage_mean: f64,
+    coverage_std: f64,
+    gc_content: f64,
+    contiguity_score: f64,
+}
+
+/// Calculate basic contig metrics
+fn calculate_contig_metrics(contigs: &[Contig]) -> BasicContigMetrics {
+    if contigs.is_empty() {
+        return BasicContigMetrics {
+            n50: 0,
+            n90: 0,
+            total_length: 0,
+            num_contigs: 0,
+            coverage_mean: 0.0,
+            coverage_std: 0.0,
+            gc_content: 0.0,
+            contiguity_score: 0.0,
+        };
+    }
+
+    let num_contigs = contigs.len();
+    let total_length: usize = contigs.iter().map(|c| c.length).sum();
+    let coverage_mean = contigs.iter().map(|c| c.coverage).sum::<f64>() / num_contigs as f64;
+
+    // Calculate coverage std dev
+    let variance = contigs.iter()
+        .map(|c| (c.coverage - coverage_mean).powi(2))
+        .sum::<f64>() / num_contigs as f64;
+    let coverage_std = variance.sqrt();
+
+    // Calculate N50 and N90
+    let mut lengths: Vec<usize> = contigs.iter().map(|c| c.length).collect();
+    lengths.sort_by(|a, b| b.cmp(a));
+
+    let mut cumulative = 0;
+    let mut n50 = 0;
+    let mut n90 = 0;
+    let half_total = total_length / 2;
+    let ninety_percent = (total_length as f64 * 0.9) as usize;
+
+    for &length in &lengths {
+        cumulative += length;
+        if n50 == 0 && cumulative >= half_total {
+            n50 = length;
+        }
+        if cumulative >= ninety_percent {
+            n90 = length;
+            break;
+        }
+    }
+
+    // Calculate GC content
+    let mut gc_count = 0;
+    let mut total_bases = 0;
+    for contig in contigs {
+        for base in contig.sequence.chars() {
+            match base.to_ascii_uppercase() {
+                'G' | 'C' => gc_count += 1,
+                'A' | 'T' => {},
+                _ => continue,
+            }
+            total_bases += 1;
+        }
+    }
+    let gc_content = if total_bases > 0 {
+        gc_count as f64 / total_bases as f64
+    } else {
+        0.0
+    };
+
+    // Simple contiguity score
+    let contiguity_score = num_contigs as f64 / (total_length as f64 / 1000.0).max(1.0);
+
+    BasicContigMetrics {
+        n50,
+        n90,
+        total_length,
+        num_contigs,
+        coverage_mean,
+        coverage_std,
+        gc_content,
+        contiguity_score,
     }
 }

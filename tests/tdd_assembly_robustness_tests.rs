@@ -4,8 +4,7 @@
 //! Test-driven development focused on assembly pipeline robustness, error handling,
 //! and edge cases that aren't fully covered in existing tests.
 
-use meta_forge::assembly::adaptive_k::AssemblyGraphBuilder;
-use meta_forge::assembly::bioinformatics_optimizations::BitPackedKmer;
+use meta_forge::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig};
 use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 
 #[cfg(test)]
@@ -30,7 +29,7 @@ mod assembly_robustness_tests {
                 context_window: 5,
                 correction_time_ms: 0,
             },
-            kmer_hash_cache: HashMap::new(),
+            kmer_hash_cache: Vec::new(),
         }
     }
 

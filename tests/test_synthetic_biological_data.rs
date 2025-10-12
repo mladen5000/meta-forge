@@ -752,6 +752,7 @@ mod biological_accuracy_validation {
                     context_window: 8,
                     correction_time_ms: 100,
                 },
+                kmer_hash_cache: Vec::new(),
             });
         }
 

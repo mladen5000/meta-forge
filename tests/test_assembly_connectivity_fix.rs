@@ -2,8 +2,8 @@
 //! This test ensures that the 1:1:1 ratio issue has been resolved
 
 use anyhow::Result;
-use metagenomic_llm::assembly::graph_construction::*;
-use metagenomic_llm::core::data_structures::*;
+use meta_forge::core::data_structures::*;
+use meta_forge::assembly::laptop_assembly::LaptopAssembler;
 
 #[test]
 fn test_kmer_edge_connectivity() -> Result<()> {
@@ -25,6 +25,7 @@ fn test_kmer_edge_connectivity() -> Result<()> {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
     };
 
     // Create assembly chunk and process the read
@@ -118,6 +119,7 @@ fn test_multiple_reads_clustering() -> Result<()> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         };
         chunk.add_read(corrected_read)?;
     }
@@ -221,7 +223,6 @@ fn test_assembly_produces_fewer_contigs_than_reads() -> Result<()> {
     ];
 
     let k = 8; // Larger k-mer for better specificity
-    let mut builder = AdvancedAssemblyGraphBuilder::new(k, 21, 1, 2)?;
 
     let mut corrected_reads = Vec::new();
     for (id, seq) in overlapping_reads.iter().enumerate() {
@@ -237,6 +238,7 @@ fn test_assembly_produces_fewer_contigs_than_reads() -> Result<()> {
                 context_window: 5,
                 correction_time_ms: 0,
             },
+            kmer_hash_cache: Vec::new(),
         });
     }
 

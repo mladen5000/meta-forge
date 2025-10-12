@@ -29,7 +29,7 @@ use std::arch::x86_64::*;
 use std::arch::aarch64::*;
 
 /// Memory budget targets for different laptop configurations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LaptopConfig {
     /// Target memory usage in MB
     pub memory_budget_mb: usize,

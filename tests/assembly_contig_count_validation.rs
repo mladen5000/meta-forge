@@ -23,6 +23,7 @@ fn create_test_read(id: usize, sequence: &str) -> CorrectedRead {
             context_window: 5,
             correction_time_ms: 0,
         },
+        kmer_hash_cache: Vec::new(),
         kmer_hash_cache: AHashMap::new(),
     }
 }
