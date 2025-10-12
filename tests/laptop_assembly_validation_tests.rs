@@ -29,7 +29,7 @@ use std::time::Instant;
 /* ========================================================================= */
 
 /// Quality metrics for assembly validation
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct AssemblyQualityMetrics {
     num_contigs: usize,
     total_length: usize,
@@ -177,23 +177,15 @@ mod laptop_constraints {
     #[test]
     #[ignore]
     fn test_cpu_constrained_configuration() {
-        // let config = OptimizationConfig::low_cpu();
+        // This test requires OptimizationConfig which doesn't exist yet
         unimplemented!("OptimizationConfig module not implemented");
 
-        assert_eq!(
-            config.max_threads, 2,
-            "CPU-constrained config should limit threads"
-        );
-        assert!(
-            !config.enable_simd,
-            "CPU-constrained config should disable SIMD"
-        );
-        assert_eq!(
-            config.chunk_size, 5_000,
-            "CPU-constrained config should use moderate chunks"
-        );
-
-        println!("✅ CPU-constrained laptop configuration validated");
+        // Original test code (commented out until module is implemented):
+        // let config = OptimizationConfig::low_cpu();
+        // assert_eq!(config.max_threads, 2, "CPU-constrained config should limit threads");
+        // assert!(!config.enable_simd, "CPU-constrained config should disable SIMD");
+        // assert_eq!(config.chunk_size, 5_000, "CPU-constrained config should use moderate chunks");
+        // println!("✅ CPU-constrained laptop configuration validated");
     }
 
     /// Test storage I/O patterns for laptop SSDs
@@ -468,7 +460,7 @@ mod assembly_quality_tests {
         // Quality should be comparable across configurations
         let coverages: Vec<f64> = results.iter().map(|(_, m)| m.avg_coverage).collect();
         let min_coverage = coverages.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let max_coverage = coverages.iter().fold(0.0, |a, &b| a.max(b));
+        let max_coverage = coverages.iter().fold(0.0_f64, |a, &b| a.max(b));
 
         assert!(
             max_coverage / min_coverage < 2.0,
@@ -667,7 +659,7 @@ mod realistic_workload_tests {
         // Check for reasonable coverage distribution
         let coverages: Vec<f64> = contigs.iter().map(|c| c.coverage).collect();
         let min_coverage = coverages.iter().fold(f64::INFINITY, |a, &b| a.min(b));
-        let max_coverage = coverages.iter().fold(0.0, |a, &b| a.max(b));
+        let max_coverage = coverages.iter().fold(0.0_f64, |a, &b| a.max(b));
 
         println!(
             "✅ Mixed coverage assembly: coverage range {:.1} - {:.1}",
