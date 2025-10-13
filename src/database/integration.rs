@@ -974,7 +974,74 @@ impl DatabaseMigrator {
         Self { db }
     }
 
-    /// Import taxonomy data from standard files
+    /// Import taxonomy data from GTDB format
+    /// Format: genome_id<tab>d__Domain;p__Phylum;c__Class;o__Order;f__Family;g__Genus;s__Species
+    pub fn import_taxonomy_from_gtdb<P: AsRef<Path>>(&self, taxonomy_file: P) -> Result<()> {
+        println!("📥 Importing GTDB taxonomy data...");
+        println!("   File: {}", taxonomy_file.as_ref().display());
+
+        let file_content = std::fs::read_to_string(&taxonomy_file)
+            .context("Failed to read taxonomy file")?;
+
+        let mut entries = Vec::new();
+        let mut species_map: AHashMap<String, u32> = AHashMap::new();
+        let mut next_id: u32 = 1;
+
+        for (line_num, line) in file_content.lines().enumerate() {
+            let fields: Vec<&str> = line.split('\t').collect();
+
+            if fields.len() < 2 {
+                tracing::warn!("Skipping malformed line {}: {:?}", line_num + 1, line);
+                continue;
+            }
+
+            // Parse GTDB lineage: d__Bacteria;p__Pseudomonadota;...;s__Escherichia coli
+            let lineage = fields[1];
+            let parts: Vec<&str> = lineage.split(';').collect();
+
+            // Extract species name (last element, after s__)
+            if let Some(species_part) = parts.last() {
+                if let Some(species_name) = species_part.strip_prefix("s__") {
+                    // Only add each unique species once
+                    if !species_map.contains_key(species_name) {
+                        let species_id = next_id;
+                        next_id += 1;
+
+                        entries.push(TaxonomyEntry {
+                            id: species_id,
+                            name: species_name.to_string(),
+                            lineage: lineage.to_string(),
+                            rank: "species".to_string(),
+                            parent_id: None, // Could extract genus as parent if needed
+                        });
+
+                        species_map.insert(species_name.to_string(), species_id);
+                    }
+                }
+            }
+
+            // Progress indicator
+            if (line_num + 1) % 50000 == 0 {
+                println!("   Processed {} lines, {} unique species...", line_num + 1, entries.len());
+            }
+        }
+
+        println!("   Extracted {} unique species from {} genomes", entries.len(), file_content.lines().count());
+
+        // Insert in batches for performance
+        let batch_size = 1000;
+        for (i, chunk) in entries.chunks(batch_size).enumerate() {
+            self.db.insert_taxonomy_entries(chunk)?;
+            if (i + 1) % 10 == 0 {
+                println!("   Inserted {} / {} species...", (i + 1) * batch_size, entries.len());
+            }
+        }
+
+        println!("✅ Imported {} unique species", entries.len());
+        Ok(())
+    }
+
+    /// Import taxonomy data from NCBI format (numeric IDs)
     pub fn import_taxonomy_from_ncbi<P: AsRef<Path>>(&self, taxonomy_file: P) -> Result<()> {
         println!("📥 Importing NCBI taxonomy data...");
 

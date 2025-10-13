@@ -4082,7 +4082,21 @@ pub async fn handle_database_operation(operation: DatabaseOps) -> Result<()> {
             let config = DatabaseConfig::default();
             let db = MetagenomicsDatabase::new(&database, config)?;
             let migrator = DatabaseMigrator::new(db);
-            migrator.import_taxonomy_from_ncbi(&taxonomy_file)?;
+
+            // Auto-detect format: GTDB uses genome IDs (RS_/GB_), NCBI uses numeric IDs
+            let first_line = std::fs::read_to_string(&taxonomy_file)?
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
+
+            if first_line.starts_with("RS_") || first_line.starts_with("GB_") {
+                println!("📋 Detected GTDB format");
+                migrator.import_taxonomy_from_gtdb(&taxonomy_file)?;
+            } else {
+                println!("📋 Detected NCBI format");
+                migrator.import_taxonomy_from_ncbi(&taxonomy_file)?;
+            }
             println!("✅ Taxonomy data imported");
         }
 

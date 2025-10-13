@@ -86,6 +86,19 @@ pub struct ContigClassification {
     pub features: Vec<f64>,
 }
 
+/// Taxonomic classification result with actual species names
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaxonomicContigClassification {
+    pub contig_id: usize,
+    pub bin_id: usize,
+    pub taxon: String,              // e.g., "Escherichia coli"
+    pub rank: String,                // e.g., "species", "genus"
+    pub confidence: f64,             // Combined binning + taxonomy confidence
+    pub binning_confidence: f64,     // Original binning confidence
+    pub taxonomy_confidence: f64,    // Taxonomy assignment confidence
+    pub features: Vec<f64>,
+}
+
 impl SimpleContigClassifier {
     /// Create a new classifier with given configuration
     pub fn new(config: SimpleClassifierConfig) -> Result<Self> {
@@ -425,6 +438,79 @@ impl SimpleContigClassifier {
         let merged_classifications = self.merge_bins_by_coverage(classifications, &contig_refs)?;
 
         Ok(merged_classifications)
+    }
+
+    /// Classify contigs with taxonomy assignment
+    ///
+    /// This method extends the basic binning with actual species names by:
+    /// 1. Performing standard ML binning (clustering by k-mer composition + coverage)
+    /// 2. Assigning taxonomy to each bin using k-mer-based classification
+    /// 3. Returning TaxonomicContigClassification with species names
+    pub fn classify_contigs_with_taxonomy(
+        &self,
+        contigs: &[Contig],
+    ) -> Result<Vec<TaxonomicContigClassification>> {
+        use crate::ml::kmer_taxonomy::KmerTaxonomyClassifier;
+
+        tracing::info!("Starting taxonomic classification for {} contigs", contigs.len());
+
+        // Step 1: Perform standard binning
+        let bin_classifications = self.classify_contigs(contigs)?;
+
+        if bin_classifications.is_empty() {
+            tracing::warn!("No contigs classified during binning step");
+            return Ok(Vec::new());
+        }
+
+        // Step 2: Initialize taxonomy classifier
+        let mut taxonomy_classifier = KmerTaxonomyClassifier::new(4);
+        taxonomy_classifier.load_default_references()?;
+
+        tracing::info!(
+            "Binning complete: {} contigs in {} bins. Assigning taxonomy...",
+            bin_classifications.len(),
+            bin_classifications.iter().map(|c| c.bin_id).max().unwrap_or(0) + 1
+        );
+
+        // Step 3: Assign taxonomy to each contig
+        let mut taxon_classifications = Vec::new();
+
+        for classification in bin_classifications {
+            // Find the contig
+            let contig = contigs.iter()
+                .find(|c| c.id == classification.contig_id)
+                .ok_or_else(|| anyhow::anyhow!("Contig {} not found", classification.contig_id))?;
+
+            // Classify sequence taxonomically
+            let taxon_result = taxonomy_classifier.classify_sequence(&contig.sequence)?;
+
+            // Calculate combined confidence
+            let combined_confidence = classification.confidence * taxon_result.confidence;
+
+            taxon_classifications.push(TaxonomicContigClassification {
+                contig_id: classification.contig_id,
+                bin_id: classification.bin_id,
+                taxon: taxon_result.taxon.clone(),
+                rank: taxon_result.rank.clone(),
+                confidence: combined_confidence,
+                binning_confidence: classification.confidence,
+                taxonomy_confidence: taxon_result.confidence,
+                features: classification.features,
+            });
+        }
+
+        // Log taxonomy distribution
+        let mut taxon_counts: AHashMap<String, usize> = AHashMap::new();
+        for tc in &taxon_classifications {
+            *taxon_counts.entry(tc.taxon.clone()).or_insert(0) += 1;
+        }
+
+        tracing::info!("Taxonomy assignment complete:");
+        for (taxon, count) in taxon_counts.iter() {
+            tracing::info!("  {}: {} contigs", taxon, count);
+        }
+
+        Ok(taxon_classifications)
     }
 
     /// FIX 2: Merge bins that have identical/similar coverage profiles

@@ -75,6 +75,47 @@ impl KmerTaxonomyClassifier {
             .insert(profile.taxon_name.clone(), profile);
     }
 
+    /// Load taxonomy reference profiles from database
+    pub fn load_reference_database(
+        &mut self,
+        db: &crate::database::integration::MetagenomicsDatabase,
+    ) -> Result<()> {
+
+        tracing::info!("Loading taxonomy reference profiles from database...");
+
+        // Get database statistics to see what's available
+        let stats = db.get_database_stats()
+            .context("Failed to get database statistics")?;
+
+        if stats.taxonomy_count == 0 {
+            tracing::warn!("No taxonomy entries found in database, falling back to default references");
+            return self.load_default_references();
+        }
+
+        if stats.sequences_count == 0 {
+            tracing::warn!("No reference sequences found in database, falling back to default references");
+            return self.load_default_references();
+        }
+
+        tracing::info!(
+            "Database has {} taxonomy entries and {} sequences",
+            stats.taxonomy_count,
+            stats.sequences_count
+        );
+
+        // TODO: Implement actual profile loading from sequences
+        // For now, this would:
+        // 1. Query sequences table joined with taxonomy
+        // 2. Calculate k-mer profiles for each taxonomy
+        // 3. Store in reference_profiles map
+
+        // Fallback to default references until full implementation
+        tracing::warn!("Full database profile loading not yet implemented, using defaults");
+        self.load_default_references()?;
+
+        Ok(())
+    }
+
     /// Load common bacterial reference profiles (placeholder for real DB)
     pub fn load_default_references(&mut self) -> Result<()> {
         // In production, this would load from a database
