@@ -1,16 +1,18 @@
 // Assembly Performance Benchmarks
 // Comprehensive criterion-based benchmarking suite for assembly pipeline phases
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use meta_forge::assembly::laptop_assembly::{LaptopAssembler, LaptopConfig, CompactKmer, RollingKmerHash};
-use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use ahash::AHashMap;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use meta_forge::assembly::laptop_assembly::{
+    CompactKmer, LaptopAssembler, LaptopConfig, RollingKmerHash,
+};
+use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
 use std::time::Duration;
 
 /// Generate synthetic reads for benchmarking
 fn generate_synthetic_reads(count: usize, length: usize, seed: u64) -> Vec<CorrectedRead> {
-    use rand::{SeedableRng, Rng};
     use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     let mut rng = StdRng::seed_from_u64(seed);
     let bases = b"ACGT";
@@ -33,7 +35,7 @@ fn generate_synthetic_reads(count: usize, length: usize, seed: u64) -> Vec<Corre
                     context_window: 0,
                     correction_time_ms: 0,
                 },
-                kmer_hash_cache: AHashMap::new(),
+                kmer_hash_cache: Vec::new(),
             }
         })
         .collect()
@@ -58,7 +60,8 @@ fn bench_kmer_counting(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Benchmark full assembly (includes k-mer counting)
-                    let _contigs = assembler.assemble(black_box(&reads))
+                    let _contigs = assembler
+                        .assemble(black_box(&reads))
                         .expect("Assembly failed");
                 });
             },
@@ -87,7 +90,8 @@ fn bench_graph_construction(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Benchmark full assembly (graph construction is main cost)
-                    let _contigs = assembler.assemble(black_box(&reads))
+                    let _contigs = assembler
+                        .assemble(black_box(&reads))
                         .expect("Assembly failed");
                 });
             },
@@ -115,7 +119,8 @@ fn bench_full_assembly(c: &mut Criterion) {
             read_count,
             |b, _| {
                 b.iter(|| {
-                    let _contigs = assembler.assemble(black_box(&reads))
+                    let _contigs = assembler
+                        .assemble(black_box(&reads))
                         .expect("Assembly failed");
                 });
             },
@@ -154,7 +159,7 @@ fn bench_kmer_operations(c: &mut Criterion) {
     group.bench_function("kmer_creation", |b| {
         b.iter(|| {
             for i in 0..=(sequence.len() - k) {
-                let _kmer = CompactKmer::new(black_box(&sequence[i..i+k])).unwrap();
+                let _kmer = CompactKmer::new(black_box(&sequence[i..i + k])).unwrap();
             }
         });
     });
@@ -173,16 +178,13 @@ fn bench_memory_efficiency(c: &mut Criterion) {
         config.max_k = *k;
         let assembler = LaptopAssembler::new(config);
 
-        group.bench_with_input(
-            BenchmarkId::new("k_value", k),
-            k,
-            |b, _| {
-                b.iter(|| {
-                    let _contigs = assembler.assemble(black_box(&reads))
-                        .expect("Assembly failed");
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("k_value", k), k, |b, _| {
+            b.iter(|| {
+                let _contigs = assembler
+                    .assemble(black_box(&reads))
+                    .expect("Assembly failed");
+            });
+        });
     }
 
     group.finish();
@@ -205,7 +207,8 @@ fn bench_parallelism(c: &mut Criterion) {
             cpu_cores,
             |b, _| {
                 b.iter(|| {
-                    let _contigs = assembler.assemble(black_box(&reads))
+                    let _contigs = assembler
+                        .assemble(black_box(&reads))
                         .expect("Assembly failed");
                 });
             },
@@ -226,7 +229,8 @@ fn bench_contig_generation(c: &mut Criterion) {
 
     group.bench_function("generate_contigs", |b| {
         b.iter(|| {
-            let _contigs = assembler.assemble(black_box(&reads))
+            let _contigs = assembler
+                .assemble(black_box(&reads))
                 .expect("Assembly failed");
         });
     });
@@ -248,7 +252,8 @@ fn bench_read_lengths(c: &mut Criterion) {
             read_length,
             |b, _| {
                 b.iter(|| {
-                    let _contigs = assembler.assemble(black_box(&reads))
+                    let _contigs = assembler
+                        .assemble(black_box(&reads))
                         .expect("Assembly failed");
                 });
             },

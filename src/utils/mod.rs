@@ -10,3 +10,4 @@ pub mod streaming_abundance;
 pub mod assembly_profiler;
 pub mod performance_analyzer;
 pub mod benchmark_validator;
+pub mod memory_tracker;

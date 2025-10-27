@@ -2,13 +2,13 @@
 //!
 //! Validates that assembly optimizations maintain quality while improving performance.
 
-use meta_forge::utils::benchmark_validator::{
-    BenchmarkValidator, BenchmarkConfig, QualityThresholds,
-    PerformanceRequirements, ValidationOptions
-};
-use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
-use std::collections::HashMap;
 use ahash::AHashMap;
+use meta_forge::core::data_structures::{CorrectedRead, CorrectionMetadata};
+use meta_forge::utils::benchmark_validator::{
+    BenchmarkConfig, BenchmarkValidator, PerformanceRequirements, QualityThresholds,
+    ValidationOptions,
+};
+use std::collections::HashMap;
 
 /// Create test dataset for benchmarking
 fn create_benchmark_dataset(name: &str, size: usize) -> Vec<CorrectedRead> {
@@ -28,7 +28,7 @@ fn create_benchmark_dataset(name: &str, size: usize) -> Vec<CorrectedRead> {
                     context_window: 5,
                     correction_time_ms: 0,
                 },
-                kmer_hash_cache: AHashMap::new(),
+                kmer_hash_cache: Vec::new(),
             }
         })
         .collect()
@@ -82,8 +82,16 @@ fn test_small_dataset_validation() {
 
     let benchmark_result = result.unwrap();
     println!("Benchmark Status: {:?}", benchmark_result.pass_status);
-    println!("Quality Passed: {}", benchmark_result.quality_validation.overall_quality_passed);
-    println!("Performance Passed: {}", benchmark_result.performance_validation.overall_performance_passed);
+    println!(
+        "Quality Passed: {}",
+        benchmark_result.quality_validation.overall_quality_passed
+    );
+    println!(
+        "Performance Passed: {}",
+        benchmark_result
+            .performance_validation
+            .overall_performance_passed
+    );
 }
 
 #[test]
@@ -123,18 +131,30 @@ fn test_benchmark_suite() {
     let validator = BenchmarkValidator::default();
 
     let mut datasets = HashMap::new();
-    datasets.insert("small_test".to_string(), create_benchmark_dataset("small_test", 50));
+    datasets.insert(
+        "small_test".to_string(),
+        create_benchmark_dataset("small_test", 50),
+    );
 
     let results = validator.run_all_benchmarks(&datasets);
     assert!(results.is_ok(), "Benchmark suite should complete");
 
     let benchmark_results = results.unwrap();
-    assert!(!benchmark_results.is_empty(), "Should have benchmark results");
+    assert!(
+        !benchmark_results.is_empty(),
+        "Should have benchmark results"
+    );
 
     for (name, result) in benchmark_results.iter() {
         println!("\nBenchmark: {}", name);
         println!("  Status: {:?}", result.pass_status);
-        println!("  Speedup: {:.2}x", result.optimization_impact.speedup_factor);
-        println!("  Memory: {:.1}% change", result.optimization_impact.memory_reduction_percent);
+        println!(
+            "  Speedup: {:.2}x",
+            result.optimization_impact.speedup_factor
+        );
+        println!(
+            "  Memory: {:.1}% change",
+            result.optimization_impact.memory_reduction_percent
+        );
     }
 }

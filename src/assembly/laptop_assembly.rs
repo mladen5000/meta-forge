@@ -751,6 +751,9 @@ impl LaptopAssemblyGraph {
 
         pb_kmer.finish_with_message("K-mer counting complete");
 
+        let _post_count_time = Instant::now();
+        tracing::debug!("Finished k-mer counting at {:.2}s", start_time.elapsed().as_secs_f64());
+
         // Convert DashMap to BoundedKmerCounter format
         // OPTIMIZATION: Use more memory for k-mer counter (50% instead of 25% of budget)
         // Trade memory for speed - larger hash tables = fewer collisions
@@ -771,6 +774,8 @@ impl LaptopAssemblyGraph {
             }
         }
 
+        tracing::debug!("Converted to BoundedKmerCounter at {:.2}s", start_time.elapsed().as_secs_f64());
+
         let (unique_kmers, _total_counted, dropped, memory_used) = kmer_counter.get_stats();
         eprintln!(
             "{} K-mer counting: {} unique (raw: {}), {} total, {} dropped, {:.1} MB used",
@@ -782,11 +787,15 @@ impl LaptopAssemblyGraph {
             (memory_used as f64 / (1024.0 * 1024.0))
         );
 
+        tracing::debug!("Printed k-mer stats at {:.2}s", start_time.elapsed().as_secs_f64());
+
         // Phase 2: Build graph using frequent k-mers
         // IDIOM FIX: Use into_iter() to consume directly, avoid intermediate allocation
         let frequent_kmers = kmer_counter.get_frequent_kmers(2); // Min coverage of 2
+        tracing::debug!("Got frequent k-mers at {:.2}s", start_time.elapsed().as_secs_f64());
         let frequent_set: AHashSet<u64> =
             frequent_kmers.into_iter().map(|(hash, _)| hash).collect();
+        tracing::debug!("Collected frequent set at {:.2}s", start_time.elapsed().as_secs_f64());
 
         eprintln!(
             "{} Building graph with {} frequent k-mers",

@@ -290,6 +290,7 @@ pub struct MetagenomicsPipeline {
     resource_monitor: ResourceMonitor,
     output_manager: IntermediateOutputManager,
     performance_profiler: PerformanceProfiler,
+    memory_tracker: crate::utils::memory_tracker::MemoryTracker,
 }
 
 impl MetagenomicsPipeline {
@@ -408,6 +409,7 @@ impl MetagenomicsPipeline {
             resource_monitor,
             output_manager,
             performance_profiler,
+            memory_tracker: crate::utils::memory_tracker::MemoryTracker::new(),
         })
     }
 
@@ -2244,72 +2246,57 @@ impl MetagenomicsPipeline {
         assembly_results: &AssemblyResults,
         features: &FeatureCollection,
     ) -> Result<Vec<TaxonomicClassification>> {
-        info!("🧬 Classifying sequences with coverage-based binning...");
+        info!("🧬 Classifying sequences with ML-based taxonomy assignment...");
         info!(
             "   📊 Using {} extracted features for classification",
             features.sequence_features.len()
         );
 
-        // CRITICAL FIX: Bin contigs by coverage before classification
-        // This prevents counting fragments of same genome as separate species
-        let bins = self.bin_contigs_by_coverage(&assembly_results.contigs);
+        // Initialize ML-based contig classifier with taxonomy support
+        use crate::ml::simple_classifier::{SimpleClassifierConfig, SimpleContigClassifier};
 
-        info!(
-            "   📦 Binned {} contigs into {} genome bins",
-            assembly_results.contigs.len(),
-            bins.len()
-        );
+        let classifier_config = SimpleClassifierConfig {
+            kmer_size: 4,
+            min_contig_length: 1000,
+            auto_detect_bins: true,
+            max_bins: 50,
+            coverage_variance_threshold: 0.05,
+            use_coverage_features: true,
+            ..Default::default()
+        };
 
+        let classifier = SimpleContigClassifier::new(classifier_config)?;
+
+        info!("   🔬 Running k-mer-based taxonomic classification...");
+
+        // FIXED: Use taxonomy-aware classification to get actual species names
+        let taxon_classifications = classifier.classify_contigs_with_taxonomy(&assembly_results.contigs)?;
+
+        // Convert to pipeline format
         let mut classifications = Vec::new();
-
-        // Classify each BIN (not each contig) to get species count
-        for (bin_id, contig_indices) in bins.iter().enumerate() {
-            // Get representative contig (longest in bin)
-            let representative_idx = contig_indices
-                .iter()
-                .max_by_key(|&&idx| assembly_results.contigs[idx].length)
-                .copied()
-                .unwrap_or(0);
-
-            let representative_contig = &assembly_results.contigs[representative_idx];
-
-            // Calculate bin statistics
-            let bin_total_length: usize = contig_indices
-                .iter()
-                .map(|&idx| assembly_results.contigs[idx].length)
-                .sum();
-            let bin_avg_coverage: f64 = contig_indices
-                .iter()
-                .map(|&idx| assembly_results.contigs[idx].coverage)
-                .sum::<f64>()
-                / contig_indices.len() as f64;
-
-            info!(
-                "   🔬 Bin {}: {} contigs, {:.1} kb total, {:.1}x coverage",
-                bin_id + 1,
-                contig_indices.len(),
-                bin_total_length as f64 / 1000.0,
-                bin_avg_coverage
-            );
-
-            // Simple mock classification - would use actual ML models
-            // In production, this would analyze k-mer composition, marker genes, etc.
+        for taxon_class in taxon_classifications {
             let classification = TaxonomicClassification {
-                contig_id: representative_contig.id,
-                taxonomy_id: 511145, // E. coli as default
-                taxonomy_name: "Escherichia coli".to_string(),
-                confidence: 0.85,
-                lineage: "Bacteria;Proteobacteria;Gammaproteobacteria;Enterobacterales;Enterobacteriaceae;Escherichia".to_string(),
-                method: "coverage_binning".to_string(),
+                contig_id: taxon_class.contig_id,
+                taxonomy_id: taxon_class.bin_id as u32,
+                taxonomy_name: taxon_class.taxon.clone(),
+                confidence: taxon_class.confidence,
+                lineage: format!("{}|{}", taxon_class.rank, taxon_class.taxon),
+                method: "KmerTaxonomy+MLBinning".to_string(),
             };
-
             classifications.push(classification);
         }
 
-        info!(
-            "✅ Classification complete: {} species identified",
-            classifications.len()
-        );
+        // Log taxonomy distribution
+        let mut taxon_counts = std::collections::HashMap::new();
+        for c in &classifications {
+            *taxon_counts.entry(c.taxonomy_name.clone()).or_insert(0) += 1;
+        }
+
+        info!("✅ Classification complete:");
+        for (taxon, count) in taxon_counts.iter() {
+            info!("   - {}: {} contigs", taxon, count);
+        }
+
         Ok(classifications)
     }
 
@@ -3395,26 +3382,26 @@ impl MetagenomicsPipeline {
 
         multi_progress.update_line(
             line_id,
-            "🏷️  Classification: Analyzing sequences with ML model...".to_string(),
+            "🏷️  Classification: Analyzing sequences with ML model and taxonomy database...".to_string(),
         );
 
-        // Use real ML classification
-        let bin_classifications = classifier.classify_contigs(&assembly.contigs)?;
+        // FIXED: Use taxonomy-aware classification instead of just binning
+        let taxon_classifications = classifier.classify_contigs_with_taxonomy(&assembly.contigs)?;
 
-        // Convert bin classifications to taxonomic classifications
+        // Convert taxonomic classifications to our pipeline format
         let mut classifications = Vec::new();
-        for bin_class in bin_classifications {
+        for taxon_class in taxon_classifications {
             let classification = TaxonomicClassification {
-                contig_id: bin_class.contig_id,
-                taxonomy_id: bin_class.bin_id as u32,
-                taxonomy_name: format!("Bin_{}", bin_class.bin_id),
-                confidence: bin_class.confidence,
-                lineage: format!("Unclassified|Bin_{}", bin_class.bin_id),
-                method: "SimpleContigClassifier".to_string(),
+                contig_id: taxon_class.contig_id,
+                taxonomy_id: taxon_class.bin_id as u32,
+                taxonomy_name: taxon_class.taxon.clone(),  // FIXED: Use actual species name
+                confidence: taxon_class.confidence,
+                lineage: format!("{}|{}", taxon_class.rank, taxon_class.taxon),  // FIXED: Use real taxonomy
+                method: "SimpleContigClassifier+KmerTaxonomy".to_string(),
             };
             classifications.push(classification);
 
-            let i = bin_class.contig_id;
+            let i = taxon_class.contig_id;
             if i % 50 == 0 && i > 0 {
                 multi_progress.update_line(
                     line_id,
